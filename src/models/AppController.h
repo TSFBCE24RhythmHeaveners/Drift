@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/EffectStackStore.h"
 #include "core/Project.h"
 #include "core/TimelineOps.h"
 #include "core/Time.h"
@@ -27,6 +28,8 @@
 #include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QProcess>
+#include <QMap>
 
 #include <memory>
 #include <optional>
@@ -35,9 +38,11 @@ struct EffectTemplateEntry;
 
 class QTimer;
 
+#ifndef Q_OS_ANDROID
 namespace drift::mcp {
 class McpServer;
 }
+#endif
 
 #include "playback/ClipPreviewPlayer.h"
 #include "playback/PlaybackEngine.h"
@@ -57,6 +62,12 @@ class AppController : public QObject
     Q_PROPERTY(QString audioOutputDeviceId READ audioOutputDeviceId WRITE setAudioOutputDeviceId
                    NOTIFY audioOutputDeviceIdChanged)
     Q_PROPERTY(QVariantList tracks READ tracks NOTIFY tracksChanged)
+    // Whether the touch shell's grow/shrink-all-lanes buttons have anywhere left to go, for their
+    // enabled state. Properties rather than invokables so QML gets real bindings: an invokable
+    // would have to be given a dependency to re-evaluate on, and the only one available is
+    // `tracks`, which rebuilds a QVariantList of every clip in the project each time it is read.
+    Q_PROPERTY(bool canGrowTrackHeights READ canGrowTrackHeights NOTIFY tracksChanged)
+    Q_PROPERTY(bool canShrinkTrackHeights READ canShrinkTrackHeights NOTIFY tracksChanged)
     Q_PROPERTY(double playheadSeconds READ playheadSeconds WRITE setPlayheadSeconds NOTIFY playheadSecondsChanged)
     Q_PROPERTY(double durationSeconds READ durationSeconds NOTIFY tracksChanged)
     Q_PROPERTY(bool playing READ playing WRITE setPlaying NOTIFY playingChanged)
@@ -99,6 +110,11 @@ class AppController : public QObject
     // "en" is the source catalog (no .qm). Other codes match i18n/drift_<code>.qm.
     Q_PROPERTY(QString uiLanguage READ uiLanguage WRITE setUiLanguage NOTIFY uiLanguageChanged)
     Q_PROPERTY(QVariantList uiLanguages READ uiLanguages NOTIFY uiLanguageChanged)
+    // Extra UI scale on top of the OS display scale. QSettings("ui/scale"), 1.0..2.0 in
+    // 0.25 steps. Applied as QT_SCALE_FACTOR before QApplication; a change needs a restart.
+    Q_PROPERTY(double uiScale READ uiScale WRITE setUiScale NOTIFY uiScaleChanged)
+    Q_PROPERTY(double appliedUiScale READ appliedUiScale CONSTANT)
+    Q_PROPERTY(bool uiScaleNeedsRestart READ uiScaleNeedsRestart NOTIFY uiScaleChanged)
     // The keyframe strip draws every animated property of the selected clip. This is the subset
     // the user has folded away: a view filter only — hiding a curve never changes what renders.
     Q_PROPERTY(QStringList keyframeGraphHiddenProperties READ keyframeGraphHiddenProperties
@@ -121,6 +137,7 @@ class AppController : public QObject
     Q_PROPERTY(bool redoAvailable READ redoAvailable NOTIFY undoStackChanged)
     Q_PROPERTY(bool exportInProgress READ exportInProgress NOTIFY exportInProgressChanged)
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY exportProgressChanged)
+    Q_PROPERTY(bool canShareExport READ canShareExport NOTIFY canShareExportChanged)
     Q_PROPERTY(bool subtitleGenerating READ subtitleGenerating NOTIFY subtitleGeneratingChanged)
     // Id of the asset whose replacement is being probed, empty when idle. Only that one bin row
     // goes busy: the rest of the panel stays usable, and the wait belongs to the row the user
@@ -272,6 +289,14 @@ public:
     bool reopenLastProject() const { return m_reopenLastProject; }
     QString uiLanguage() const { return m_uiLanguage; }
     QVariantList uiLanguages() const;
+    double uiScale() const { return m_uiScale; }
+    double appliedUiScale() const;
+    bool uiScaleNeedsRestart() const;
+    // Snaps to 1.0, 1.25, 1.5, 1.75, or 2.0. Safe before any AppController exists.
+    static double storedUiScale();
+    // Writes QT_SCALE_FACTOR from ui/scale unless the environment already set one.
+    // Call once before QApplication; organization/application names must already be set.
+    static void applyStoredUiScale();
     // Installs the .qm for ui/language (or the system locale). Call once after QApplication
     // is named, and again from setUiLanguage. Safe before any AppController exists.
     static void installUiTranslators();
@@ -282,6 +307,7 @@ public:
     bool redoAvailable() const { return m_undoStack.canRedo(); }
     bool exportInProgress() const { return m_exportInProgress; }
     double exportProgress() const;
+    bool canShareExport() const;
     bool subtitleGenerating() const { return m_subtitleGenerating; }
     QString replacingAssetId() const { return m_replacingAssetId; }
     double subtitleGenProgress() const { return m_subtitleGenProgress; }
@@ -365,6 +391,9 @@ public:
     Q_INVOKABLE void copyMcpStdioSnippet();
     Q_INVOKABLE void copyMcpAgentGuide();
     QString mcpAgentGuide() const;
+    Q_INVOKABLE QVariantMap debugInfo() const;
+    Q_INVOKABLE QString debugInfoText() const;
+    Q_INVOKABLE void copyDebugInfo();
 
     // MCP helpers (GUI thread). Used by src/mcp, not QML.
     QPair<int, int> mcpLocateClip(const QString &id) const;
@@ -415,6 +444,7 @@ public:
     void mcpBeginBatch();
     void mcpEndBatch(const QString &text, bool pushUndo);
     void setUiLanguage(const QString &code);
+    void setUiScale(double scale);
     // Strip chip click — folds `prop`'s curve away, or brings it back. Purely a view filter: the
     // chip stays put either way, and the animation keeps playing while it is hidden.
     Q_INVOKABLE void toggleKeyframeGraphPropertyVisible(const QString &prop);
@@ -561,6 +591,11 @@ public:
     Q_INVOKABLE void detectScenesForClip(int trackIndex, int clipIndex, bool withObjects,
                                          double minSceneSeconds = 0.0);
     Q_INVOKABLE void cancelSceneDetection();
+    Q_INVOKABLE void stabilizeClip(int trackIndex, int clipIndex);
+    Q_INVOKABLE void cancelStabilization();
+    Q_INVOKABLE void removeClipStabilization(int trackIndex, int clipIndex);
+    Q_INVOKABLE void setClipStabilizeSmoothing(int trackIndex, int clipIndex, int value);
+    Q_INVOKABLE void setClipStabilizeTripod(int trackIndex, int clipIndex, bool enabled);
     // Whether the optional object-labelling pass can run. False until the object-model
     // addon is installed, which is what the panel's toggle is gated on.
     Q_INVOKABLE bool objectDetectionAvailable() const;
@@ -672,6 +707,14 @@ public:
     Q_INVOKABLE void setTextStyle(int trackIndex, int clipIndex, const QVariantMap &style);
     Q_INVOKABLE void applyTextPreset(int trackIndex, int clipIndex, const QString &presetId);
     Q_INVOKABLE QVariantList textPresets() const;
+    // Style packs the user saved from the inspector. Kept out of textPresets() so the built-in
+    // catalog (and the MCP list it feeds) stays a stable, shippable set.
+    Q_INVOKABLE QVariantList userTextPresets() const;
+    Q_INVOKABLE QString saveTextStyleAsPreset(int trackIndex, int clipIndex, const QString &label);
+    Q_INVOKABLE bool renameUserTextPreset(const QString &presetId, const QString &label);
+    Q_INVOKABLE bool deleteUserTextPreset(const QString &presetId);
+    Q_INVOKABLE bool exportUserTextPreset(const QString &presetId, const QUrl &fileUrl);
+    Q_INVOKABLE bool importUserTextPreset(const QUrl &fileUrl);
     Q_INVOKABLE QVariantList fontCatalog() const;
     Q_INVOKABLE QVariantList fontCategories() const;
     Q_INVOKABLE void setClipBlendMode(int trackIndex, int clipIndex, const QString &mode);
@@ -779,6 +822,29 @@ public:
                                          const QString &key, double value);
     Q_INVOKABLE void previewSetAudioEffectParam(int trackIndex, int clipIndex, int effectIndex,
                                                 const QString &key, double value);
+
+    // Effect stacks travel as JSON on the system clipboard, so a copy also crosses to a second
+    // running instance. -1 for both indices means the whole clip.
+    Q_INVOKABLE void copyEffectToClipboard(int trackIndex, int clipIndex, int effectIndex);
+    Q_INVOKABLE void copyAudioEffectToClipboard(int trackIndex, int clipIndex, int effectIndex);
+    Q_INVOKABLE void copyClipEffectsToClipboard(int trackIndex, int clipIndex);
+    // Reading the clipboard is a synchronous round-trip to whichever process owns the selection,
+    // so callers ask this when a menu opens rather than binding it.
+    Q_INVOKABLE bool clipboardHasEffects() const;
+    Q_INVOKABLE void pasteEffectsFromClipboard(int trackIndex, int clipIndex);
+
+    Q_INVOKABLE QVariantList userEffectPresets() const;
+    Q_INVOKABLE QString saveEffectAsPreset(int trackIndex, int clipIndex, int effectIndex,
+                                           const QString &label);
+    Q_INVOKABLE QString saveAudioEffectAsPreset(int trackIndex, int clipIndex, int effectIndex,
+                                                const QString &label);
+    Q_INVOKABLE QString saveClipEffectsAsPreset(int trackIndex, int clipIndex,
+                                                const QString &label);
+    Q_INVOKABLE void applyEffectPreset(int trackIndex, int clipIndex, const QString &presetId);
+    Q_INVOKABLE bool renameUserEffectPreset(const QString &presetId, const QString &label);
+    Q_INVOKABLE bool deleteUserEffectPreset(const QString &presetId);
+    Q_INVOKABLE bool exportUserEffectPreset(const QString &presetId, const QUrl &fileUrl);
+    Q_INVOKABLE bool importUserEffectPreset(const QUrl &fileUrl);
     Q_INVOKABLE void setTrackMuted(int trackIndex, bool muted);
     Q_INVOKABLE void setTrackHidden(int trackIndex, bool hidden);
     Q_INVOKABLE bool trackMuted(int trackIndex) const;
@@ -790,6 +856,12 @@ public:
     Q_INVOKABLE void setTrackHeightScale(int trackIndex, double scale);
     Q_INVOKABLE double trackHeightScale(int trackIndex) const;
     Q_INVOKABLE void nudgeTrackHeightScale(int trackIndex, int steps);
+    // The touch timeline has no per-lane resize handle and no room in the tool strip for a control
+    // per lane, so its buttons move the whole stack. One tracksChanged for the sweep rather than
+    // one per track — each emission relays the entire track list into QML.
+    Q_INVOKABLE void nudgeAllTrackHeightScales(int steps);
+    bool canGrowTrackHeights() const;
+    bool canShrinkTrackHeights() const;
     Q_INVOKABLE double trackHeightScaleMin() const { return 0.6; }
     Q_INVOKABLE double trackHeightScaleMax() const { return 4.0; }
     Q_INVOKABLE void moveTrack(int fromIndex, int toIndex);
@@ -880,6 +952,14 @@ public:
     Q_INVOKABLE void saveProject(const QUrl &url);
     // Same container, every source asset embedded. Runs off the GUI thread — it copies the media.
     Q_INVOKABLE void packageProject(const QUrl &url);
+    // Export-only: the raw document JSON, no container and no media. Leaves the open project's
+    // path, dirty flag and recents alone — the .drift stays the project of record.
+    Q_INVOKABLE void saveProjectJson(const QUrl &url);
+    // Inverse of saveProjectJson. Replaces the open timeline from that document; media stays as
+    // referenced paths. Does not become the project of record (no recents, empty path, dirty) so
+    // Save cannot overwrite the .json with a .drift bundle. loadProject routes here when the file
+    // is JSON, so a dropped / CLI / MCP path works without a second entry point.
+    Q_INVOKABLE void loadProjectJson(const QUrl &url);
     Q_INVOKABLE void cancelPackage();
     Q_INVOKABLE void loadProject(const QUrl &url);
     Q_INVOKABLE void newProject();
@@ -895,6 +975,16 @@ public:
     // When reopenLastProject is on: restore recovery silently, else load lastSessionPath.
     // Returns true if a restore/load was started (caller should skip RecoveryDialog).
     Q_INVOKABLE bool restoreLastSessionIfEnabled();
+    // The autosave timer and aboutToQuit cover desktop, but Android never emits aboutToQuit when
+    // the OS reclaims a backgrounded process — and backgrounding is how a phone app normally ends.
+    // The shell calls this on the way out so the floor is the last edit, not the last 15s tick.
+    Q_INVOKABLE void flushRecoverySnapshot();
+    // Drops every cache that exists only to make the next composite faster — decoder workers,
+    // still images, rasterised text, uploaded textures and the FBO pool. All of it is rebuilt on
+    // demand, and a backgrounded app that hangs on to it is the one the OS picks to kill first.
+    // Only for the leaving-foreground handler: calling it while active throws away exactly what
+    // the current composite is about to reuse.
+    Q_INVOKABLE void releaseTransientCaches();
     // First non-flag positional argument as a local file URL (paths, file://, portal URIs).
     static QUrl startupProjectUrlFromArguments(const QStringList &args);
     // argv / QFileOpenEvent. Queued until consumeStartupProject(); after that, emits
@@ -923,6 +1013,10 @@ public:
     Q_INVOKABLE void exportWithPreset(const QUrl &outputUrl, const QString &presetId);
     Q_INVOKABLE void exportWithSettings(const QUrl &outputUrl, const QVariantMap &settings);
     Q_INVOKABLE void cancelExport();
+    // Copies the finished export into the shared media collection and hands it to the system share
+    // sheet. Deferred to this point rather than done as part of the export because it is a second
+    // full copy of the video, and most exports are never shared. Android only; false/no-op elsewhere.
+    Q_INVOKABLE void shareLastExport();
     Q_INVOKABLE QUrl fileUrl(const QString &path) const;
     Q_INVOKABLE QString imageUrl(const QString &path) const;
     // Same as imageUrl but requests a single frame of a filmstrip strip (see DriftImageProvider).
@@ -953,12 +1047,14 @@ signals:
     void mcpRunningChanged();
     void mcpErrorChanged();
     void uiLanguageChanged();
+    void uiScaleChanged();
     void keyframeGraphVisibilityChanged();
     void subtitleEditingChanged();
     void selectedSubtitleCueChanged();
     void undoStackChanged();
     void exportInProgressChanged();
     void exportProgressChanged();
+    void canShareExportChanged();
     void subtitleGeneratingChanged();
     void subtitleGenProgressChanged();
     void subtitleGenStatusChanged();
@@ -1014,6 +1110,9 @@ signals:
     void packagingChanged();
     void packageProgressChanged();
     void packageFinished(bool ok, const QString &message);
+    // Save completion when saveProject took the Android streaming path (see saveProject). Never
+    // emitted on desktop or for a plain, synchronous save — setLastMessage already covers those.
+    void projectSaved(bool ok);
     // Addons the freshly opened project needs but that are not installed. Each entry is
     // id / name / version / kinds, for MissingAddonsDialog.
     void missingAddons(const QVariantList &addons);
@@ -1031,6 +1130,8 @@ signals:
     void guidesChanged();
     void shortcutsChanged();
     void assetFavoritesChanged();
+    void userTextPresetsChanged();
+    void userEffectPresetsChanged();
     void canvasCropModeChanged();
     void backgroundChanged();
     void dirtyChanged();
@@ -1054,6 +1155,17 @@ signals:
 
 protected:
     void pushProjectEdit(const drift::Project &before, const QString &text);
+
+    // Lifts one effect, one audio effect, or the whole stack off a clip. Every copy and
+    // save-as-preset entry point funnels through this, so all of them produce one payload shape.
+    drift::EffectStackPreset effectStackFor(int trackIndex, int clipIndex, int effectIndex,
+                                            int audioEffectIndex) const;
+    // Rescales, rebuilds against the catalog, then appends. Shared by paste and preset-apply.
+    void applyEffectStack(int trackIndex, int clipIndex, const drift::EffectStackPreset &stack,
+                          const QString &undoLabel);
+    void copyEffectStack(const drift::EffectStackPreset &stack, const QString &message);
+    QString saveEffectStack(const drift::EffectStackPreset &stack, const QString &label);
+    static drift::EffectStackPreset effectStackOnClipboard();
     void finishEdit(const QString &message);
     // Applies a finished replace probe as one undoable transaction, or reports why it cannot be.
     void finalizeAssetReplace(const QString &assetId, const drift::MediaAsset &filled, bool ok);
@@ -1162,6 +1274,11 @@ protected:
     // Repoint every path field the extraction moved. Clips duplicate their asset's path, so this
     // matches on the value rather than walking by id.
     void remapProjectPaths(const QHash<QString, QString> &remap);
+    // Android: re-copy assets whose app-storage file is gone but whose originating SAF document is
+    // still recorded and still granted. Cheap when nothing is missing — one stat per asset — and
+    // the copies themselves run off-thread, so a project with gigabytes to restore still opens at
+    // once and repoints its rows as they land. No-op on desktop.
+    void rehydrateMissingSources();
     // Drops <AppData>/projects/<id> directories no project in the recents list still refers to.
     void sweepExtractionDirs();
     // Effects and transitions render as no-ops when their package is absent, which is silent and
@@ -1207,14 +1324,24 @@ protected:
     bool m_autoKeyEnabled = false;
     bool m_reopenLastProject = false;
     QString m_uiLanguage;
+    double m_uiScale = 1.0;
     QStringList m_keyframeGraphHiddenProperties;
     bool m_subtitleEditing = false;
     int m_selectedSubtitleCue = -1;
     bool m_exportInProgress = false;
     double m_exportProgress = 0.0;
     QAtomicInt m_exportCancel = 0;
+    QUrl m_lastExportUrl;
+    QString m_lastExportName;
+    // Android: the publish-to-gallery copy behind Share is on a worker, so canShareExport reports
+    // false while it runs — that both hides the button (the dialog binds its visibility to it) and
+    // stops a second tap from starting the copy again. Unused on desktop.
+    bool m_sharingExport = false;
     bool m_subtitleGenerating = false;
     QString m_replacingAssetId;
+    // The content:// URI the in-flight replace picked, held across the probe so it can be put back
+    // on the asset once applyProbedSource has overwritten the struct.
+    QString m_replacingAssetSourceUri;
     double m_subtitleGenProgress = 0.0;
     QString m_subtitleGenStatus;
     QAtomicInt m_subtitleGenCancel = 0;
@@ -1302,6 +1429,7 @@ protected:
     double m_sceneDetectProgress = 0.0;
     QString m_sceneDetectStatus;
     QAtomicInt m_sceneDetectCancel = 0;
+    QMap<QString, QProcess*> m_stabilizeProcesses;
     quint64 m_sceneGeneration = 0;
     bool m_segSessionActive = false;
     bool m_segForTemplate = false;
@@ -1392,7 +1520,9 @@ protected:
     // Launch layout picker / first-clip setup completed for this empty project.
     bool m_projectLayoutChosen = false;
 
+#ifndef Q_OS_ANDROID
     std::unique_ptr<drift::mcp::McpServer> m_mcp;
+#endif
     bool m_mcpUndoSuspended = false;
     int m_mcpBatchDepth = 0;
     drift::Project m_mcpBatchBefore;

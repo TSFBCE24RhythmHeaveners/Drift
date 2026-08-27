@@ -11,15 +11,21 @@
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QUrl>
+#include <QByteArray>
 
 #include <QScopeGuard>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QJsonDocument>
 
+#include "engine/HwAccel.h"
 #include "models/AppController.h"
 #include "models/AssetLibrary.h"
 #include "MulticamImageProvider.h"
 #include "MulticamImageStore.h"
 
 #include "core/Clip.h"
+#include "core/EffectStackStore.h"
 #include "core/Project.h"
 #include "core/Track.h"
 
@@ -29,6 +35,14 @@ class EditorStateTest : public QObject
 
 private slots:
     void snapTimeEnabled();
+    void retimeKeepsDisabledKeyframeTrackDisabled();
+    void effectStackCopyPasteAppendsAndRescales();
+    void pastedEffectsKeepTheKeyframeGraphSelection();
+    void copiedSingleEffectRoutesToTheRightList();
+    void pastedAudioEffectsAreDroppedOnClipsWithNoAudio();
+    void pastedUnknownEffectIsKeptAndReported();
+    void clipboardHasEffectsIgnoresOrdinaryText();
+    void savedEffectPresetAppliesToAnotherClip();
     void addTextClip();
     void addTextClipEmptyUsesPlaceholder();
     void addTextClipWithTextDoesNotRequestEdit();
@@ -44,9 +58,13 @@ private slots:
     void moveTrackReordersAndRemapsSelection();
     void addTrackInsertsEmptyTrackByType();
     void projectPersistenceRoundTrip();
+    void projectJsonExportImportRoundTrip();
+    void projectJsonImportRejectsGarbageAndLeavesTimeline();
     void newProjectClearsEverything();
     void projectSetupOnPristineProjectStaysClean();
     void darkModePreferencePersistsAcrossSessions();
+    void uiScalePersistsAcrossSessions();
+    void decodeModePickerListsOnlyWorkingBackends();
     void exportFrameRatePersistsAcrossSessions();
     void lastExportSettingsNormalisesStringTypedValues();
     void textStyleBlendModeKeyframesAndEffects();
@@ -456,6 +474,82 @@ void EditorStateTest::projectPersistenceRoundTrip()
     QCOMPARE(state.mediaGridMode(), false);
 }
 
+void EditorStateTest::projectJsonExportImportRoundTrip()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.addTextClip(QStringLiteral("JsonRoundTrip"), 0.0);
+    state.setTrackMuted(0, true);
+    state.addBookmark(2.0, QStringLiteral("Mark"));
+    state.setMediaGridMode(false);
+    state.setProjectMetadata(QStringLiteral("FromJson"), QStringLiteral("Ada"), QString());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString jsonPath = dir.filePath(QStringLiteral("project.json"));
+    const QString driftPath = dir.filePath(QStringLiteral("project.drift"));
+
+    state.saveProject(QUrl::fromLocalFile(driftPath));
+    QVERIFY(!state.hasUnsavedChanges());
+    QCOMPARE(state.currentProjectPath(), driftPath);
+
+    state.saveProjectJson(QUrl::fromLocalFile(jsonPath));
+    QVERIFY(QFileInfo::exists(jsonPath));
+    // Export leaves the .drift association and dirty flag alone.
+    QCOMPARE(state.currentProjectPath(), driftPath);
+    QVERIFY(!state.hasUnsavedChanges());
+    QCOMPARE(state.lastMessage(), QStringLiteral("Project JSON saved"));
+
+    state.newProject();
+    QVERIFY(state.currentProjectPath().isEmpty());
+
+    state.loadProjectJson(QUrl::fromLocalFile(jsonPath));
+    QCOMPARE(state.lastMessage(), QStringLiteral("Project JSON loaded"));
+    QCOMPARE(state.projectMetadata().value(QStringLiteral("title")).toString(),
+             QStringLiteral("FromJson"));
+    QCOMPARE(state.projectMetadata().value(QStringLiteral("author")).toString(),
+             QStringLiteral("Ada"));
+    QCOMPARE(state.tracks().size(), 2);
+    QVERIFY(state.trackMuted(0));
+    QCOMPARE(state.bookmarks().size(), 1);
+    QCOMPARE(state.mediaGridMode(), false);
+    // Import is not a project of record: Save must ask for a .drift path.
+    QVERIFY(state.currentProjectPath().isEmpty());
+    QVERIFY(state.hasUnsavedChanges());
+
+    // loadProject sniffs JSON so a dropped file, CLI arg or MCP load_project works.
+    state.newProject();
+    state.loadProject(QUrl::fromLocalFile(jsonPath));
+    QCOMPARE(state.lastMessage(), QStringLiteral("Project JSON loaded"));
+    QCOMPARE(state.projectMetadata().value(QStringLiteral("title")).toString(),
+             QStringLiteral("FromJson"));
+    QVERIFY(state.currentProjectPath().isEmpty());
+    QVERIFY(state.hasUnsavedChanges());
+}
+
+void EditorStateTest::projectJsonImportRejectsGarbageAndLeavesTimeline()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.addTextClip(QStringLiteral("KeepMe"), 0.0);
+    QCOMPARE(state.tracks().size(), 2);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("nope.json"));
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{ \"hello\": true }");
+    }
+
+    state.loadProjectJson(QUrl::fromLocalFile(path));
+    QCOMPARE(state.lastMessageSeverity(), QStringLiteral("error"));
+    QCOMPARE(state.lastMessage(), QStringLiteral("This file isn’t a Drift project."));
+    QCOMPARE(state.tracks().size(), 2);
+    QCOMPARE(state.tracks().at(0).toMap().value(QStringLiteral("clips")).toList().size(), 1);
+}
+
 // resetToDefaultTimeline() only clears the tracks, so New Project used to keep the asset pool,
 // name, canvas size, bookmarks and work area of the project it replaced.
 void EditorStateTest::newProjectClearsEverything()
@@ -531,6 +625,62 @@ void EditorStateTest::projectSetupOnPristineProjectStaysClean()
     QCOMPARE(state.projectHeight(), 1920);
 }
 
+// The picker offers a backend only when its device opens here, and a mode naming one
+// this machine lacks has to fall back to Auto rather than to a choice that would never
+// engage — settings outlive the GPU they were written on.
+void EditorStateTest::decodeModePickerListsOnlyWorkingBackends()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftTest"));
+    const auto restore = qScopeGuard([&] {
+        QSettings().remove(QStringLiteral("preview/decodeMode"));
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        QStandardPaths::setTestModeEnabled(false);
+    });
+    QSettings().remove(QStringLiteral("preview/decodeMode"));
+
+    AssetLibrary library;
+    AppController state(&library);
+    PlaybackEngine *playback = state.playback();
+
+    const QVariantList modes = playback->decodeModes();
+    QVERIFY(modes.size() >= 2);
+    QCOMPARE(modes.at(0).toMap().value(QStringLiteral("id")).toString(), QStringLiteral("auto"));
+    QCOMPARE(modes.at(1).toMap().value(QStringLiteral("id")).toString(), QStringLiteral("software"));
+
+    QStringList hardwareIds;
+    for (qsizetype i = 2; i < modes.size(); ++i) {
+        const QVariantMap row = modes.at(i).toMap();
+        const QString id = row.value(QStringLiteral("id")).toString();
+        QVERIFY(id.startsWith(QStringLiteral("hw:")));
+        QVERIFY(!row.value(QStringLiteral("label")).toString().isEmpty());
+        hardwareIds.append(id);
+    }
+    QCOMPARE(hardwareIds.size(), drift::hwaccel::availableDecodeBackends().size());
+
+    QCOMPARE(playback->decodeMode(), QStringLiteral("auto"));
+
+    playback->setDecodeMode(QStringLiteral("software"));
+    QCOMPARE(playback->decodeMode(), QStringLiteral("software"));
+
+    playback->setDecodeMode(QStringLiteral("hw:nosuchgpu"));
+    QCOMPARE(playback->decodeMode(), QStringLiteral("auto"));
+
+    // The previous two-state value resolves to whichever backend the probe would pick.
+    playback->setDecodeMode(QStringLiteral("hardware"));
+    QCOMPARE(playback->decodeMode(),
+             hardwareIds.isEmpty() ? QStringLiteral("auto") : hardwareIds.first());
+
+    for (const QString &id : std::as_const(hardwareIds)) {
+        playback->setDecodeMode(id);
+        QCOMPARE(playback->decodeMode(), id);
+    }
+}
+
 void EditorStateTest::darkModePreferencePersistsAcrossSessions()
 {
     QStandardPaths::setTestModeEnabled(true);
@@ -562,6 +712,58 @@ void EditorStateTest::darkModePreferencePersistsAcrossSessions()
     AppController relaunched(&library);
     QVERIFY(relaunched.darkModeOverridden());
     QCOMPARE(relaunched.darkModePreferred(), false);
+}
+
+void EditorStateTest::uiScalePersistsAcrossSessions()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    const QByteArray previousScale = qgetenv("QT_SCALE_FACTOR");
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftTest"));
+    const auto restore = qScopeGuard([&] {
+        QSettings().remove(QStringLiteral("ui/scale"));
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        QStandardPaths::setTestModeEnabled(false);
+        if (previousScale.isNull())
+            qunsetenv("QT_SCALE_FACTOR");
+        else
+            qputenv("QT_SCALE_FACTOR", previousScale);
+    });
+    QSettings().remove(QStringLiteral("ui/scale"));
+
+    AssetLibrary library;
+    {
+        AppController state(&library);
+        QCOMPARE(state.uiScale(), 1.0);
+
+        QSignalSpy spy(&state, &AppController::uiScaleChanged);
+        state.setUiScale(1.3);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(state.uiScale(), 1.25);
+
+        state.setUiScale(9.0);
+        QCOMPARE(state.uiScale(), 2.0);
+        state.setUiScale(0.1);
+        QCOMPARE(state.uiScale(), 1.0);
+        QVERIFY(!QSettings().contains(QStringLiteral("ui/scale")));
+
+        state.setUiScale(1.5);
+        QCOMPARE(state.uiScale(), 1.5);
+    }
+
+    AppController relaunched(&library);
+    QCOMPARE(relaunched.uiScale(), 1.5);
+
+    qunsetenv("QT_SCALE_FACTOR");
+    AppController::applyStoredUiScale();
+    QCOMPARE(qgetenv("QT_SCALE_FACTOR"), QByteArray("1.5"));
+
+    qputenv("QT_SCALE_FACTOR", "3");
+    AppController::applyStoredUiScale();
+    QCOMPARE(qgetenv("QT_SCALE_FACTOR"), QByteArray("3"));
 }
 
 void EditorStateTest::exportFrameRatePersistsAcrossSessions()
@@ -2322,6 +2524,276 @@ void EditorStateTest::multicamSetUpBuildsAWorkingRigFromTheBin()
     state.undo();
     QVERIFY(!state.multicamActive());
     QVERIFY(state.multicamCanSetUp());
+}
+
+namespace {
+
+// Two video clips on one track, the second twice as long, so a paste between them has to rescale.
+void appendTwoVideoClips(drift::Project &project)
+{
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+
+    for (int i = 0; i < 2; ++i) {
+        drift::Clip clip;
+        clip.id = QStringLiteral("clip-%1").arg(i);
+        clip.type = drift::ClipType::Video;
+        clip.name = QStringLiteral("Shot %1").arg(i);
+        clip.timelineStart = i == 0 ? 0 : drift::secondsToUs(2.0);
+        clip.timelineDuration = drift::secondsToUs(i == 0 ? 2.0 : 4.0);
+        clip.srcIn = 0;
+        clip.srcOut = clip.timelineDuration;
+        project.tracks()[0].clips.append(clip);
+    }
+}
+
+QList<drift::TimeUs> keyTimes(const drift::Effect &effect, const QString &param)
+{
+    return effect.paramKeyframes.value(param).keyframes().keys();
+}
+
+} // namespace
+
+// Retiming carries each key across through the moment of source it sat on, but it used to rebuild
+// the track from scratch and lose the enabled flag with it — silently switching an animation the
+// user had turned off back on.
+void EditorStateTest::retimeKeepsDisabledKeyframeTrackDisabled()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    drift::Clip clip;
+    clip.id = QStringLiteral("clip-retime");
+    clip.type = drift::ClipType::Video;
+    clip.name = QStringLiteral("Shot");
+    clip.path = QStringLiteral("/tmp/does-not-need-to-exist.mp4");
+    clip.timelineStart = 0;
+    clip.timelineDuration = drift::secondsToUs(4.0);
+    clip.srcIn = 0;
+    clip.srcOut = drift::secondsToUs(4.0);
+
+    drift::Track track{.type = drift::TrackType::Video};
+    track.clips.append(clip);
+    state.project()->tracks().clear();
+    state.project()->tracks().append(track);
+
+    state.selectClip(0, 0);
+    state.setClipKeyframe(0, 0, QStringLiteral("opacity"), 0.0, 1.0);
+    state.setClipKeyframe(0, 0, QStringLiteral("opacity"), 4.0, 0.0);
+    state.setClipPropertyKeyframesEnabled(0, 0, QStringLiteral("opacity"), false);
+    QVERIFY(!state.clipPropertyKeyframesEnabled(0, 0, QStringLiteral("opacity")));
+
+    state.beginSpeedCurveSession(0, 0);
+    QVERIFY2(state.speedCurveSessionActive(), qPrintable(state.lastMessage()));
+    state.setSpeedCurvePoints(QVariantList{
+        QVariantMap{{QStringLiteral("x"), 0.0}, {QStringLiteral("y"), 0.5}},
+        QVariantMap{{QStringLiteral("x"), 1.0}, {QStringLiteral("y"), 0.5}},
+    });
+    state.applySpeedCurve();
+
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    state.selectClip(0, 0);
+    QVERIFY(!state.clipPropertyKeyframesEnabled(0, 0, QStringLiteral("opacity")));
+}
+
+// The headline behaviour: a copied stack lands on top of what the target already has, and its
+// animation is stretched to the target's length rather than sliding against the picture.
+void EditorStateTest::effectStackCopyPasteAppendsAndRescales()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+
+    state.selectClip(0, 0);
+    state.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+    state.setClipKeyframe(0, 0, QStringLiteral("fx.0.contrast"), 0.0, 1.0);
+    state.setClipKeyframe(0, 0, QStringLiteral("fx.0.contrast"), 2.0, 2.0);
+    QCOMPARE(keyTimes(state.project()->tracks().at(0).clips.at(0).effects.at(0),
+                      QStringLiteral("contrast")).size(), 2);
+
+    state.copyClipEffectsToClipboard(0, 0);
+    QVERIFY(state.clipboardHasEffects());
+
+    state.selectClip(0, 1);
+    state.addEffect(0, 1, QStringLiteral("adjust.brightness"));
+    state.pasteEffectsFromClipboard(0, 1);
+
+    const drift::Clip &target = state.project()->tracks().at(0).clips.at(1);
+    QCOMPARE(target.effects.size(), 2);
+    // Appended, not prepended and not replacing.
+    QCOMPARE(target.effects.at(0).catalogId, QStringLiteral("adjust.brightness"));
+    QCOMPARE(target.effects.at(1).catalogId, QStringLiteral("adjust.contrast"));
+    // 2s of source stretched over a 4s clip.
+    QCOMPARE(keyTimes(target.effects.at(1), QStringLiteral("contrast")),
+             (QList<drift::TimeUs>{0, drift::secondsToUs(4.0)}));
+    // The clip it was copied from is untouched.
+    QCOMPARE(state.project()->tracks().at(0).clips.at(0).effects.size(), 1);
+
+    QVERIFY(state.undoAvailable());
+    state.undo();
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).effects.size(), 1);
+}
+
+// The executable form of "appending never shifts an existing effect index": keyframe-graph
+// properties are addressed "fx.<n>.<key>", so a paste that prepended or replaced would silently
+// repoint every one of them.
+void EditorStateTest::pastedEffectsKeepTheKeyframeGraphSelection()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+
+    state.selectClip(0, 0);
+    state.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+    state.copyClipEffectsToClipboard(0, 0);
+
+    state.selectClip(0, 1);
+    state.addEffect(0, 1, QStringLiteral("adjust.brightness"));
+    state.toggleKeyframeGraphPropertyVisible(QStringLiteral("fx.0.brightness"));
+    const QStringList before = state.keyframeGraphHiddenProperties();
+    QVERIFY(before.contains(QStringLiteral("fx.0.brightness")));
+
+    state.pasteEffectsFromClipboard(0, 1);
+    QCOMPARE(state.keyframeGraphHiddenProperties(), before);
+}
+
+void EditorStateTest::copiedSingleEffectRoutesToTheRightList()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+
+    state.selectClip(0, 0);
+    state.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+    state.addAudioEffect(0, 0, QStringLiteral("space.autopan"));
+    QCOMPARE(state.project()->tracks().at(0).clips.at(0).audioEffects.size(), 1);
+
+    // One video effect: video side only.
+    state.copyEffectToClipboard(0, 0, 0);
+    state.pasteEffectsFromClipboard(0, 1);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).effects.size(), 1);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).audioEffects.size(), 0);
+
+    // One audio effect: audio side only.
+    state.copyAudioEffectToClipboard(0, 0, 0);
+    state.pasteEffectsFromClipboard(0, 1);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).effects.size(), 1);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).audioEffects.size(), 1);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).audioEffects.at(0).catalogId,
+             QStringLiteral("space.autopan"));
+}
+
+// Audio effects run in the mixer and the audio inspector is hidden for clips with no audio, so
+// pasting them onto a title would leave them invisible and inert.
+void EditorStateTest::pastedAudioEffectsAreDroppedOnClipsWithNoAudio()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+
+    state.selectClip(0, 0);
+    state.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+    state.addAudioEffect(0, 0, QStringLiteral("space.autopan"));
+    state.copyClipEffectsToClipboard(0, 0);
+
+    state.addTextClip(QStringLiteral("Title"), 0.0);
+    const int track = state.selectedTrack();
+    const int clip = state.selectedClip();
+    QCOMPARE(state.project()->tracks().at(track).clips.at(clip).type, drift::ClipType::Text);
+
+    state.pasteEffectsFromClipboard(track, clip);
+    QCOMPARE(state.project()->tracks().at(track).clips.at(clip).effects.size(), 1);
+    QVERIFY(state.project()->tracks().at(track).clips.at(clip).audioEffects.isEmpty());
+}
+
+// An effect from an addon the user has not installed is kept, exactly as project load keeps it, so
+// the stack survives the round-trip and starts working once the pack is installed.
+void EditorStateTest::pastedUnknownEffectIsKeptAndReported()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+
+    drift::EffectStackPreset stack;
+    stack.sourceDurationUs = drift::secondsToUs(2.0);
+    drift::Effect known;
+    known.catalogId = QStringLiteral("adjust.contrast");
+    stack.effects.append(known);
+    drift::Effect unknown;
+    unknown.catalogId = QStringLiteral("nope.not_installed");
+    stack.effects.append(unknown);
+
+    QGuiApplication::clipboard()->setText(QString::fromUtf8(
+        QJsonDocument(drift::effectStackToJson(stack)).toJson(QJsonDocument::Compact)));
+
+    state.selectClip(0, 1);
+    state.pasteEffectsFromClipboard(0, 1);
+
+    const drift::Clip &target = state.project()->tracks().at(0).clips.at(1);
+    QCOMPARE(target.effects.size(), 2);
+    QCOMPARE(target.effects.at(1).catalogId, QStringLiteral("nope.not_installed"));
+    // finishEdit() clears lastMessage, so the warning has to survive being emitted after it.
+    QVERIFY(state.lastMessage().contains(QStringLiteral("nope.not_installed")));
+}
+
+void EditorStateTest::clipboardHasEffectsIgnoresOrdinaryText()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+
+    QGuiApplication::clipboard()->setText(QStringLiteral("just some prose about \"drift\" wood"));
+    QVERIFY(!state.clipboardHasEffects());
+
+    state.selectClip(0, 1);
+    state.pasteEffectsFromClipboard(0, 1);
+    QVERIFY(state.project()->tracks().at(0).clips.at(1).effects.isEmpty());
+
+    state.selectClip(0, 0);
+    state.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+    state.copyClipEffectsToClipboard(0, 0);
+    QVERIFY(state.clipboardHasEffects());
+}
+
+void EditorStateTest::savedEffectPresetAppliesToAnotherClip()
+{
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QStandardPaths::setTestModeEnabled(true);
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftTestEffectPresetApply"));
+    QFile::remove(drift::EffectStackStore::storePath());
+    drift::EffectStackStore::instance().reload();
+
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+
+    state.selectClip(0, 0);
+    state.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+    state.setClipKeyframe(0, 0, QStringLiteral("fx.0.contrast"), 0.0, 1.0);
+    state.setClipKeyframe(0, 0, QStringLiteral("fx.0.contrast"), 2.0, 2.0);
+
+    const QString id = state.saveClipEffectsAsPreset(0, 0, QStringLiteral("Grade"));
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(state.userEffectPresets().size(), 1);
+
+    state.selectClip(0, 1);
+    state.addEffect(0, 1, QStringLiteral("adjust.brightness"));
+    state.applyEffectPreset(0, 1, id);
+
+    const drift::Clip &target = state.project()->tracks().at(0).clips.at(1);
+    QCOMPARE(target.effects.size(), 2);
+    QCOMPARE(target.effects.at(0).catalogId, QStringLiteral("adjust.brightness"));
+    QCOMPARE(keyTimes(target.effects.at(1), QStringLiteral("contrast")),
+             (QList<drift::TimeUs>{0, drift::secondsToUs(4.0)}));
+
+    QVERIFY(state.deleteUserEffectPreset(id));
+    QFile::remove(drift::EffectStackStore::storePath());
+    drift::EffectStackStore::instance().reload();
+    QCoreApplication::setOrganizationName(org);
+    QCoreApplication::setApplicationName(app);
+    QStandardPaths::setTestModeEnabled(false);
 }
 
 QTEST_MAIN(EditorStateTest)

@@ -1,9 +1,9 @@
 import QtQuick
-import QtQuick.Effects
+import QtQuick.Controls.impl
 import Drift
 
-// Renders a Lucide icon from resources/icons/<name>.png (white-mask PNGs
-// rasterised from lucide-icons-1.25.0 SVGs; tinted via MultiEffect).
+// Renders a Lucide icon from resources/icons/<name>.svg. IconImage applies its
+// color property directly to the SVG icon.
 // `glyph` is the Lucide file name without extension.
 Item {
     id: root
@@ -17,30 +17,20 @@ Item {
     implicitWidth: iconSize
     implicitHeight: iconSize
 
-    Image {
+    IconImage {
         id: iconImage
         anchors.centerIn: parent
         width: root.iconSize
         height: root.iconSize
         source: root.glyph.length > 0
-                ? "qrc:/qt/qml/Drift/resources/icons/" + root.glyph + ".png"
+                ? "qrc:/qt/qml/Drift/resources/icons/" + root.glyph + ".svg"
                 : ""
-        sourceSize: Qt.size(Math.ceil(root.iconSize * 2), Math.ceil(root.iconSize * 2))
+
         fillMode: Image.PreserveAspectFit
-        visible: false
-    }
+        color: root.iconColor
 
-    MultiEffect {
-        id: tint
-        anchors.fill: iconImage
-        source: iconImage
-        colorization: 1.0
-        colorizationColor: root.iconColor
-
-        // The MultiEffect *samples* iconImage, so rotating the Image has no
-        // visible effect — the effect item itself is what has to turn.
         RotationAnimator {
-            target: tint
+            target: iconImage
             from: 0
             to: 360
             duration: 1100          // matches CircularProgress.qml

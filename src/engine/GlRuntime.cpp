@@ -14,9 +14,64 @@
 #include <cmath>
 #include <mutex>
 
+// Qt for Android is built against the GLES 2.0 headers so it can still run on ES2-only devices, and
+// qopengl.h includes <GLES2/gl2.h> accordingly. The ES 3.0 *functions* this file uses still resolve,
+// because QOpenGLExtraFunctions looks them up at runtime — but the ES 3.0 *enum constants* are
+// simply absent from the ES2 header, so they are supplied here.
+#ifndef GL_RED
+#define GL_RED 0x1903
+#endif
+#ifndef GL_RG
+#define GL_RG 0x8227
+#endif
+#ifndef GL_R8
+#define GL_R8 0x8229
+#endif
+#ifndef GL_RG8
+#define GL_RG8 0x822B
+#endif
+#ifndef GL_SYNC_GPU_COMMANDS_COMPLETE
+#define GL_SYNC_GPU_COMMANDS_COMPLETE 0x9117
+#endif
+#ifndef GL_SYNC_FLUSH_COMMANDS_BIT
+#define GL_SYNC_FLUSH_COMMANDS_BIT 0x00000001
+#endif
+
 namespace drift::gl {
 
 namespace {
+
+// Every shader in the project is written as `#version 330 core`. Android has no desktop GL, so the
+// version line is swapped for `#version 300 es` and the default precision qualifiers ES requires
+// are prepended. Done at the compile sites so package .frag files stay shared with desktop.
+QByteArray translateShaderSource(QByteArray body, bool fragment)
+{
+    if (body.startsWith("#version")) {
+        const int newline = body.indexOf('\n');
+        body = (newline < 0) ? QByteArray() : body.mid(newline + 1);
+    }
+
+    const QOpenGLContext *current = QOpenGLContext::currentContext();
+    if (!current || !current->isOpenGLES())
+        return QByteArray("#version 330 core\n") + body;
+
+    QByteArray preamble("#version 300 es\n");
+    preamble += "precision highp float;\n";
+    preamble += "precision highp int;\n";
+    if (fragment)
+        preamble += "precision highp sampler2D;\n";
+    return preamble + body;
+}
+
+QByteArray translateShader(const char *source, bool fragment)
+{
+    return translateShaderSource(QByteArray(source), fragment);
+}
+
+QByteArray translateShader(const QString &source, bool fragment)
+{
+    return translateShaderSource(source.toUtf8(), fragment);
+}
 
 constexpr const char *kCopyFragShader = R"(#version 330 core
 in vec2 v_texCoord;
@@ -104,15 +159,38 @@ GlRuntime &runtime()
 
 bool GlRuntime::initGlObjects()
 {
-    QSurfaceFormat format;
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    format.setDepthBufferSize(0);
-    format.setStencilBufferSize(0);
+    QOpenGLContext *shared = QOpenGLContext::globalShareContext();
+    const bool sharingRequired = QCoreApplication::testAttribute(Qt::AA_ShareOpenGLContexts);
 
-    // Surface and context are both created here, on the GL thread, and never
-    // leave it. Creating the context on one thread and using it on another is
-    // what QOpenGLContext forbids ("cannot make current in a different thread").
+    // In the application, use the share context's realized format: EGL may
+    // adjust the requested format during creation. Command-line tools and
+    // tests have no Qt Quick share context, so retain an independent context.
+    if (shared && !shared->isValid())
+        shared = nullptr;
+
+    if (sharingRequired && !shared) {
+        qWarning("GlRuntime: required global OpenGL share context is unavailable");
+        return false;
+    }
+
+    QSurfaceFormat format;
+    if (shared) {
+        format = shared->format();
+    } else if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGLES) {
+        // Asking for a 3.3 core profile on Android makes QOpenGLContext::create() fail outright.
+        format.setRenderableType(QSurfaceFormat::OpenGLES);
+        format.setVersion(3, 0);
+        format.setProfile(QSurfaceFormat::NoProfile);
+        format.setDepthBufferSize(0);
+        format.setStencilBufferSize(0);
+    } else {
+        format.setRenderableType(QSurfaceFormat::OpenGL);
+        format.setVersion(3, 3);
+        format.setProfile(QSurfaceFormat::CoreProfile);
+        format.setDepthBufferSize(0);
+        format.setStencilBufferSize(0);
+    }
+
     surface = std::make_unique<QOffscreenSurface>();
     surface->setFormat(format);
     surface->create();
@@ -123,18 +201,19 @@ bool GlRuntime::initGlObjects()
     }
 
     context = std::make_unique<QOpenGLContext>();
-    context->setFormat(format);
-    // Share with the Qt Quick scene-graph context so composited textures can be
-    // handed to the preview item without a readback. Requires
-    // Qt::AA_ShareOpenGLContexts, set in main() before the QApplication.
-    if (QOpenGLContext *shared = QOpenGLContext::globalShareContext())
+    if (shared)
         context->setShareContext(shared);
+    context->setFormat(format);
     if (!context->create()) {
         qWarning("GlRuntime: failed to create OpenGL context");
         context.reset();
         surface.reset();
         return false;
     }
+
+    // create() succeeds even when the driver refuses to share, dropping the request
+    // on the floor, so whether sharing actually happened has to be read back.
+    m_sharesWithGui = shared && QOpenGLContext::areSharing(context.get(), shared);
 
     if (!context->makeCurrent(surface.get())) {
         qWarning("GlRuntime: makeCurrent failed on the GL thread");
@@ -147,6 +226,23 @@ bool GlRuntime::initGlObjects()
     if (!gl) {
         qWarning("GlRuntime: OpenGL extra functions unavailable");
         context->doneCurrent();
+        return false;
+    }
+
+    // setVersion() above is a request; the driver decides. Everything after this line
+    // assumes ES 3.0 / GL 3.3.
+    const bool isEs = context->isOpenGLES();
+    const int major = context->format().majorVersion();
+    const int minor = context->format().minorVersion();
+    if (isEs ? major < 3 : (major < 3 || (major == 3 && minor < 3))) {
+        qCritical("GlRuntime: this device reports OpenGL%s %d.%d; Drift needs OpenGL ES 3.0 or "
+                  "OpenGL 3.3. GPU rendering is unavailable. (vendor: %s, renderer: %s)",
+                  isEs ? " ES" : "", major, minor,
+                  reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR)),
+                  reinterpret_cast<const char *>(gl->glGetString(GL_RENDERER)));
+        context->doneCurrent();
+        context.reset();
+        surface.reset();
         return false;
     }
 
@@ -163,8 +259,10 @@ bool GlRuntime::initGlObjects()
     gl->glBindVertexArray(0);
 
     copyProgram = std::make_unique<QOpenGLShaderProgram>();
-    if (!copyProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, kQuadVertexShader)
-        || !copyProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, kCopyFragShader)
+    if (!copyProgram->addShaderFromSourceCode(QOpenGLShader::Vertex,
+                                              translateShader(kQuadVertexShader, false))
+        || !copyProgram->addShaderFromSourceCode(QOpenGLShader::Fragment,
+                                                 translateShader(kCopyFragShader, true))
         || !copyProgram->link()) {
         qWarning("GlRuntime: copy shader failed: %s", qPrintable(copyProgram->log()));
         copyProgram.reset();
@@ -218,6 +316,11 @@ bool GlRuntime::available()
     return ensureReady();
 }
 
+bool GlRuntime::sharesWithGuiContext()
+{
+    return ensureReady() && m_sharesWithGui;
+}
+
 bool GlRuntime::exec(const std::function<void()> &fn)
 {
     if (!ensureReady())
@@ -242,6 +345,23 @@ bool GlRuntime::exec(const std::function<void()> &fn)
 QOpenGLExtraFunctions *GlRuntime::functions()
 {
     return context ? context->extraFunctions() : nullptr;
+}
+
+void GlRuntime::releaseCaches()
+{
+    {
+        QMutexLocker lock(&m_initMutex);
+        if (!m_ok)
+            return;
+    }
+
+    exec([this] {
+        destroyImageUploadCache();
+        m_targetPool.clear();
+        m_pooledTargets = 0;
+        if (auto *gl = functions())
+            destroyGlModels(*this, gl);
+    });
 }
 
 void GlRuntime::shutdown()
@@ -449,9 +569,11 @@ QOpenGLShaderProgram *GlRuntime::builtinProgram(const QString &id, const char *v
 
     CompiledPass pass;
     pass.program = std::make_unique<QOpenGLShaderProgram>();
-    if (!pass.program->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexSource)
+    if (!pass.program->addShaderFromSourceCode(QOpenGLShader::Vertex,
+                                               translateShader(vertexSource, false))
         || (geom && !pass.program->addShaderFromSourceCode(QOpenGLShader::Geometry, geom))
-        || !pass.program->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentSource)
+        || !pass.program->addShaderFromSourceCode(QOpenGLShader::Fragment,
+                                                  translateShader(fragmentSource, true))
         || !pass.program->link()) {
         qWarning("GlRuntime: builtin program '%s' failed: %s", qPrintable(id),
                  qPrintable(pass.program->log()));
@@ -484,13 +606,15 @@ CompiledEffect *GlRuntime::compile(const QString &cacheKey, const drift::GpuEffe
     for (const drift::GpuEffectPass &pass : gpu.passes) {
         CompiledPass cp;
         cp.program = std::make_unique<QOpenGLShaderProgram>();
-        if (!cp.program->addShaderFromSourceCode(QOpenGLShader::Vertex, kQuadVertexShader)) {
+        if (!cp.program->addShaderFromSourceCode(QOpenGLShader::Vertex,
+                                                translateShader(kQuadVertexShader, false))) {
             qWarning("GlRuntime: vertex shader compile failed for %s: %s", qPrintable(cacheKey),
                      qPrintable(cp.program->log()));
             programs.erase(cacheKey);
             return nullptr;
         }
-        if (!cp.program->addShaderFromSourceCode(QOpenGLShader::Fragment, pass.fragmentShaderSource)) {
+        if (!cp.program->addShaderFromSourceCode(QOpenGLShader::Fragment,
+                                                translateShader(pass.fragmentShaderSource, true))) {
             qWarning("GlRuntime: fragment compile failed for %s pass %d (%s): %s", qPrintable(cacheKey),
                      pass.passIndex, qPrintable(pass.fragmentShaderFile), qPrintable(cp.program->log()));
             programs.erase(cacheKey);

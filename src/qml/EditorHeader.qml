@@ -67,6 +67,29 @@ Rectangle {
         return !EditorState.hasUnsavedChanges
     }
 
+    // Raw document JSON: an export, not a project file. Always asks for a path and leaves the
+    // current .drift association untouched.
+    function saveProjectJson() {
+        var url = FileDialogs.saveFile(qsTr("Save Project JSON"),
+                                       [qsTr("JSON document (*.json)")],
+                                       EditorState.projectName, "json", "",
+                                       ["application/json"])
+        if (url != "")
+            EditorState.saveProjectJson(url)
+    }
+
+    // Inverse of saveProjectJson. Confirms unsaved work like Open, because it replaces the
+    // timeline. The JSON does not become the current project path.
+    function openProjectJson() {
+        root.confirmIfDirty(function () {
+            var url = FileDialogs.openFile(qsTr("Open Project JSON"),
+                                           [qsTr("JSON document (*.json)")],
+                                           ["application/json"])
+            if (url != "")
+                EditorState.loadProjectJson(url)
+        })
+    }
+
     // Save As with every source file copied in, so the result opens on a machine that has none of
     // the media. Always asks for a path: it is a different artefact from the working save.
     function packageProject() {
@@ -246,6 +269,8 @@ Rectangle {
                     onNewProjectRequested: root.requestNewProject()
                     onOpenRecentRequested: (path) => root.openRecent(path)
                     onPackageRequested: root.packageProject()
+                    onSaveJsonRequested: root.saveProjectJson()
+                    onOpenJsonRequested: root.openProjectJson()
                     onPropertiesRequested: projectPropertiesDialog.openDialog()
                 }
             }
@@ -393,6 +418,19 @@ Rectangle {
                              ? qsTr("Recommended packs and updates")
                              : qsTr("Extras")
                     onClicked: root.Window.window.openExtras()
+                }
+            }
+
+            // Decoder capability and host facts for bug reports.
+            IconButton {
+                glyph: Theme.icons.bug
+                variant: "ghost"
+                tooltip: qsTr("Debug info")
+                anchors.verticalCenter: parent.verticalCenter
+                onClicked: {
+                    const win = root.Window.window
+                    if (win)
+                        win.openDebugInfo()
                 }
             }
 

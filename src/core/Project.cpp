@@ -13,294 +13,6 @@ namespace drift {
 
 namespace {
 
-QJsonObject keyframesToJson(const KeyframeTrack<double> &track)
-{
-    QJsonArray keyframes;
-    for (auto it = track.keyframes().constBegin(); it != track.keyframes().constEnd(); ++it) {
-        const Keyframe<double> &key = it.value();
-        QJsonObject object{
-            {QStringLiteral("timeUs"), static_cast<double>(it.key())},
-            {QStringLiteral("value"), key.value},
-        };
-        // Tangents are omitted when they are the straight-line default, which keeps files
-        // written by the common case no larger than they were before handles existed.
-        if (!qFuzzyIsNull(key.inDx) || !qFuzzyIsNull(key.inDy) || !qFuzzyIsNull(key.outDx)
-            || !qFuzzyIsNull(key.outDy)) {
-            object.insert(QStringLiteral("inDx"), key.inDx);
-            object.insert(QStringLiteral("inDy"), key.inDy);
-            object.insert(QStringLiteral("outDx"), key.outDx);
-            object.insert(QStringLiteral("outDy"), key.outDy);
-        }
-        if (key.corner)
-            object.insert(QStringLiteral("corner"), true);
-        if (key.hold)
-            object.insert(QStringLiteral("hold"), true);
-        keyframes.append(object);
-    }
-    QJsonObject out{{QStringLiteral("keyframes"), keyframes}};
-    // Written only when switched off, so files from the common case are byte-identical to before.
-    if (!track.enabled())
-        out.insert(QStringLiteral("enabled"), false);
-    return out;
-}
-
-KeyframeTrack<double> keyframesFromJson(const QJsonObject &object)
-{
-    KeyframeTrack<double> track;
-    track.setEnabled(object.value(QStringLiteral("enabled")).toBool(true));
-
-    // Projects written before keyframes had tangents carry one interpolation mode for the
-    // whole track. Both legacy shapes are reproduced exactly by handles — Linear by
-    // zero-length ones, Ease by flat tangents at a third of each gap — so the migration is
-    // applied after loading, once every neighbour is known, and changes nothing on screen.
-    const QString legacyMode = object.value(QStringLiteral("interpolation")).toString();
-
-    for (const QJsonValue &value : object.value(QStringLiteral("keyframes")).toArray()) {
-        const QJsonObject keyframe = value.toObject();
-        Keyframe<double> key;
-        key.value = keyframe.value(QStringLiteral("value")).toDouble(1.0);
-        key.inDx = keyframe.value(QStringLiteral("inDx")).toDouble(0.0);
-        key.inDy = keyframe.value(QStringLiteral("inDy")).toDouble(0.0);
-        key.outDx = keyframe.value(QStringLiteral("outDx")).toDouble(0.0);
-        key.outDy = keyframe.value(QStringLiteral("outDy")).toDouble(0.0);
-        key.corner = keyframe.value(QStringLiteral("corner")).toBool(false);
-        key.hold = keyframe.value(QStringLiteral("hold")).toBool(false);
-        track.setKeyframe(static_cast<TimeUs>(keyframe.value(QStringLiteral("timeUs")).toDouble()),
-                          key);
-    }
-
-    if (!legacyMode.isEmpty()) {
-        const Interpolation mode = interpolationFromString(legacyMode);
-        if (mode != Interpolation::Linear) {
-            const QList<TimeUs> times = track.keyframes().keys();
-            for (TimeUs at : times)
-                track.setEasing(at, mode);
-        }
-    }
-    return track;
-}
-
-QJsonArray effectsToJson(const QList<Effect> &effects)
-{
-    QJsonArray array;
-    for (const Effect &effect : effects) {
-        QJsonObject params;
-        for (auto it = effect.parameters.constBegin(); it != effect.parameters.constEnd(); ++it)
-            params.insert(it.key(), QJsonValue::fromVariant(it.value()));
-        QJsonObject paramKeyframes;
-        for (auto it = effect.paramKeyframes.constBegin(); it != effect.paramKeyframes.constEnd(); ++it) {
-            // Tangents live on the keys now, so an empty track no longer carries a user choice
-            // worth persisting the way a track-wide interpolation mode used to.
-            if (!it->isEmpty())
-                paramKeyframes.insert(it.key(), keyframesToJson(it.value()));
-        }
-        QJsonObject object{
-            {QStringLiteral("name"), effect.name},
-            {QStringLiteral("catalogId"), effect.catalogId},
-            {QStringLiteral("parameters"), params},
-        };
-        if (!effect.enabled)
-            object.insert(QStringLiteral("enabled"), false);
-        if (!paramKeyframes.isEmpty())
-            object.insert(QStringLiteral("paramKeyframes"), paramKeyframes);
-        array.append(object);
-    }
-    return array;
-}
-
-QList<Effect> effectsFromJson(const QJsonArray &array)
-{
-    QList<Effect> effects;
-    for (const QJsonValue &value : array) {
-        const QJsonObject object = value.toObject();
-        Effect effect;
-        effect.name = object.value(QStringLiteral("name")).toString();
-        effect.catalogId = object.value(QStringLiteral("catalogId")).toString();
-        effect.enabled = object.value(QStringLiteral("enabled")).toBool(true);
-        const QJsonObject params = object.value(QStringLiteral("parameters")).toObject();
-        for (auto it = params.constBegin(); it != params.constEnd(); ++it)
-            effect.parameters.insert(it.key(), it.value().toVariant());
-        const QJsonObject paramKeyframes = object.value(QStringLiteral("paramKeyframes")).toObject();
-        for (auto it = paramKeyframes.constBegin(); it != paramKeyframes.constEnd(); ++it)
-            effect.paramKeyframes.insert(it.key(), keyframesFromJson(it.value().toObject()));
-        effects.append(effect);
-    }
-    return effects;
-}
-
-QJsonObject textHighlightToJson(const TextHighlight &h)
-{
-    return QJsonObject{
-        {QStringLiteral("enabled"), h.enabled},
-        {QStringLiteral("color"), h.color.name(QColor::HexArgb)},
-        {QStringLiteral("padding"), h.padding},
-        {QStringLiteral("radius"), h.radius},
-    };
-}
-
-TextHighlight textHighlightFromJson(const QJsonObject &o, const TextHighlight &fallback)
-{
-    TextHighlight h = fallback;
-    if (o.isEmpty())
-        return h;
-    h.enabled = o.value(QStringLiteral("enabled")).toBool(h.enabled);
-    h.color = QColor(o.value(QStringLiteral("color")).toString(h.color.name(QColor::HexArgb)));
-    h.padding = o.value(QStringLiteral("padding")).toDouble(h.padding);
-    h.radius = o.value(QStringLiteral("radius")).toDouble(h.radius);
-    return h;
-}
-
-QJsonObject wordAccentToJson(const WordAccent &a)
-{
-    return QJsonObject{
-        {QStringLiteral("rule"), wordAccentRuleToString(a.rule)},
-        {QStringLiteral("n"), a.n},
-        {QStringLiteral("phase"), a.phase},
-        {QStringLiteral("colorEnabled"), a.colorEnabled},
-        {QStringLiteral("color"), a.color.name(QColor::HexArgb)},
-        {QStringLiteral("sizeScale"), a.sizeScale},
-        {QStringLiteral("outlineEnabled"), a.outlineEnabled},
-        {QStringLiteral("outlineWidth"), a.outlineWidth},
-        {QStringLiteral("outlineColor"), a.outlineColor.name(QColor::HexArgb)},
-        {QStringLiteral("highlight"), textHighlightToJson(a.highlight)},
-    };
-}
-
-WordAccent wordAccentFromJson(const QJsonObject &o)
-{
-    WordAccent a;
-    if (o.isEmpty())
-        return a; // projects predating style packs: no accent at all
-    a.rule = wordAccentRuleFromString(o.value(QStringLiteral("rule")).toString());
-    a.n = o.value(QStringLiteral("n")).toInt(a.n);
-    a.phase = o.value(QStringLiteral("phase")).toInt(a.phase);
-    a.colorEnabled = o.value(QStringLiteral("colorEnabled")).toBool(a.colorEnabled);
-    a.color = QColor(o.value(QStringLiteral("color")).toString(a.color.name(QColor::HexArgb)));
-    a.sizeScale = o.value(QStringLiteral("sizeScale")).toDouble(a.sizeScale);
-    a.outlineEnabled = o.value(QStringLiteral("outlineEnabled")).toBool(a.outlineEnabled);
-    a.outlineWidth = o.value(QStringLiteral("outlineWidth")).toDouble(a.outlineWidth);
-    a.outlineColor = QColor(o.value(QStringLiteral("outlineColor")).toString(a.outlineColor.name(QColor::HexArgb)));
-    a.highlight = textHighlightFromJson(o.value(QStringLiteral("highlight")).toObject(), a.highlight);
-    return a;
-}
-
-QJsonObject textStyleToJson(const TextStyle &s)
-{
-    return QJsonObject{
-        {QStringLiteral("packId"), s.packId},
-        {QStringLiteral("fontFamily"), s.fontFamily},
-        {QStringLiteral("pixelSize"), s.pixelSize},
-        {QStringLiteral("fontWeight"), s.fontWeight},
-        {QStringLiteral("italic"), s.italic},
-        {QStringLiteral("color"), s.color.name(QColor::HexArgb)},
-        {QStringLiteral("align"), textAlignToString(s.align)},
-        {QStringLiteral("valign"), textVAlignToString(s.valign)},
-        {QStringLiteral("wordWrap"), s.wordWrap},
-        {QStringLiteral("lineHeight"), s.lineHeight},
-        {QStringLiteral("letterSpacing"), s.letterSpacing},
-        {QStringLiteral("outlineEnabled"), s.outlineEnabled},
-        {QStringLiteral("outlineWidth"), s.outlineWidth},
-        {QStringLiteral("outlineColor"), s.outlineColor.name(QColor::HexArgb)},
-        {QStringLiteral("shadowEnabled"), s.shadowEnabled},
-        {QStringLiteral("shadowOffsetX"), s.shadowOffsetX},
-        {QStringLiteral("shadowOffsetY"), s.shadowOffsetY},
-        {QStringLiteral("shadowBlur"), s.shadowBlur},
-        {QStringLiteral("shadowOpacity"), s.shadowOpacity},
-        {QStringLiteral("shadowColor"), s.shadowColor.name(QColor::HexArgb)},
-        {QStringLiteral("glowEnabled"), s.glowEnabled},
-        {QStringLiteral("glowColor"), s.glowColor.name(QColor::HexArgb)},
-        {QStringLiteral("glowRadius"), s.glowRadius},
-        {QStringLiteral("glowOpacity"), s.glowOpacity},
-        {QStringLiteral("boxEnabled"), s.boxEnabled},
-        {QStringLiteral("boxColor"), s.boxColor.name(QColor::HexArgb)},
-        {QStringLiteral("boxPadding"), s.boxPadding},
-        {QStringLiteral("boxRadius"), s.boxRadius},
-        {QStringLiteral("wordHighlight"), textHighlightToJson(s.wordHighlight)},
-        {QStringLiteral("underlineEnabled"), s.underlineEnabled},
-        {QStringLiteral("underlineColor"), s.underlineColor.name(QColor::HexArgb)},
-        {QStringLiteral("underlineWidth"), s.underlineWidth},
-        {QStringLiteral("underlineOffset"), s.underlineOffset},
-        {QStringLiteral("accent"), wordAccentToJson(s.accent)},
-        {QStringLiteral("animInKind"), textAnimKindToString(s.animIn.kind)},
-        {QStringLiteral("animInDurationUs"), static_cast<qint64>(s.animIn.durationUs)},
-        {QStringLiteral("animInEase"), textEaseToString(s.animIn.ease)},
-        {QStringLiteral("animInUnit"), textAnimUnitToString(s.animIn.unit)},
-        {QStringLiteral("animInStaggerUs"), static_cast<qint64>(s.animIn.staggerUs)},
-        {QStringLiteral("animInOrder"), textAnimOrderToString(s.animIn.order)},
-        {QStringLiteral("animOutKind"), textAnimKindToString(s.animOut.kind)},
-        {QStringLiteral("animOutDurationUs"), static_cast<qint64>(s.animOut.durationUs)},
-        {QStringLiteral("animOutEase"), textEaseToString(s.animOut.ease)},
-        {QStringLiteral("animOutUnit"), textAnimUnitToString(s.animOut.unit)},
-        {QStringLiteral("animOutStaggerUs"), static_cast<qint64>(s.animOut.staggerUs)},
-        {QStringLiteral("animOutOrder"), textAnimOrderToString(s.animOut.order)},
-    };
-}
-
-TextStyle textStyleFromJson(const QJsonObject &o)
-{
-    TextStyle s;
-    if (o.isEmpty())
-        return s; // old projects: keep defaults
-    s.packId = o.value(QStringLiteral("packId")).toString(s.packId);
-    s.fontFamily = o.value(QStringLiteral("fontFamily")).toString(s.fontFamily);
-    s.pixelSize = o.value(QStringLiteral("pixelSize")).toInt(s.pixelSize);
-    // Projects written before the weight ladder only had a bold flag.
-    if (o.contains(QStringLiteral("fontWeight")))
-        s.fontWeight = qBound(100, o.value(QStringLiteral("fontWeight")).toInt(s.fontWeight), 900);
-    else
-        s.fontWeight = o.value(QStringLiteral("bold")).toBool(true) ? 700 : 400;
-    s.italic = o.value(QStringLiteral("italic")).toBool(s.italic);
-    s.color = QColor(o.value(QStringLiteral("color")).toString(s.color.name(QColor::HexArgb)));
-    s.align = textAlignFromString(o.value(QStringLiteral("align")).toString());
-    s.valign = textVAlignFromString(o.value(QStringLiteral("valign")).toString());
-    s.wordWrap = o.value(QStringLiteral("wordWrap")).toBool(s.wordWrap);
-    s.lineHeight = o.value(QStringLiteral("lineHeight")).toDouble(s.lineHeight);
-    s.letterSpacing = o.value(QStringLiteral("letterSpacing")).toDouble(s.letterSpacing);
-    s.outlineWidth = o.value(QStringLiteral("outlineWidth")).toDouble(s.outlineWidth);
-    s.outlineColor = QColor(o.value(QStringLiteral("outlineColor")).toString(s.outlineColor.name(QColor::HexArgb)));
-    // Projects written before outlineEnabled treated any positive width as on.
-    if (o.contains(QStringLiteral("outlineEnabled")))
-        s.outlineEnabled = o.value(QStringLiteral("outlineEnabled")).toBool(s.outlineEnabled);
-    else
-        s.outlineEnabled = s.outlineWidth > 0.0;
-    s.shadowEnabled = o.value(QStringLiteral("shadowEnabled")).toBool(s.shadowEnabled);
-    s.shadowOffsetX = o.value(QStringLiteral("shadowOffsetX")).toDouble(s.shadowOffsetX);
-    s.shadowOffsetY = o.value(QStringLiteral("shadowOffsetY")).toDouble(s.shadowOffsetY);
-    s.shadowBlur = o.value(QStringLiteral("shadowBlur")).toDouble(s.shadowBlur);
-    s.shadowOpacity = o.value(QStringLiteral("shadowOpacity")).toDouble(s.shadowOpacity);
-    s.shadowColor = QColor(o.value(QStringLiteral("shadowColor")).toString(s.shadowColor.name(QColor::HexArgb)));
-    s.glowEnabled = o.value(QStringLiteral("glowEnabled")).toBool(s.glowEnabled);
-    s.glowColor = QColor(o.value(QStringLiteral("glowColor")).toString(s.glowColor.name(QColor::HexArgb)));
-    s.glowRadius = o.value(QStringLiteral("glowRadius")).toDouble(s.glowRadius);
-    s.glowOpacity = o.value(QStringLiteral("glowOpacity")).toDouble(s.glowOpacity);
-    s.boxEnabled = o.value(QStringLiteral("boxEnabled")).toBool(s.boxEnabled);
-    s.boxColor = QColor(o.value(QStringLiteral("boxColor")).toString(s.boxColor.name(QColor::HexArgb)));
-    s.boxPadding = o.value(QStringLiteral("boxPadding")).toDouble(s.boxPadding);
-    s.boxRadius = o.value(QStringLiteral("boxRadius")).toDouble(s.boxRadius);
-    s.wordHighlight =
-        textHighlightFromJson(o.value(QStringLiteral("wordHighlight")).toObject(), s.wordHighlight);
-    s.underlineEnabled = o.value(QStringLiteral("underlineEnabled")).toBool(s.underlineEnabled);
-    s.underlineColor = QColor(o.value(QStringLiteral("underlineColor")).toString(s.underlineColor.name(QColor::HexArgb)));
-    s.underlineWidth = o.value(QStringLiteral("underlineWidth")).toDouble(s.underlineWidth);
-    s.underlineOffset = o.value(QStringLiteral("underlineOffset")).toDouble(s.underlineOffset);
-    s.accent = wordAccentFromJson(o.value(QStringLiteral("accent")).toObject());
-    s.animIn.kind = textAnimKindFromString(o.value(QStringLiteral("animInKind")).toString());
-    s.animIn.durationUs = o.value(QStringLiteral("animInDurationUs")).toInteger(s.animIn.durationUs);
-    s.animIn.ease = textEaseFromString(o.value(QStringLiteral("animInEase")).toString());
-    // Missing keys keep the Block/default reveal, so projects predating per-span animation are
-    // deserialized identically to how they render today.
-    s.animIn.unit = textAnimUnitFromString(o.value(QStringLiteral("animInUnit")).toString());
-    s.animIn.staggerUs = o.value(QStringLiteral("animInStaggerUs")).toInteger(s.animIn.staggerUs);
-    s.animIn.order = textAnimOrderFromString(o.value(QStringLiteral("animInOrder")).toString());
-    s.animOut.kind = textAnimKindFromString(o.value(QStringLiteral("animOutKind")).toString());
-    s.animOut.durationUs = o.value(QStringLiteral("animOutDurationUs")).toInteger(s.animOut.durationUs);
-    s.animOut.ease = textEaseFromString(o.value(QStringLiteral("animOutEase")).toString());
-    s.animOut.unit = textAnimUnitFromString(o.value(QStringLiteral("animOutUnit")).toString());
-    s.animOut.staggerUs = o.value(QStringLiteral("animOutStaggerUs")).toInteger(s.animOut.staggerUs);
-    s.animOut.order = textAnimOrderFromString(o.value(QStringLiteral("animOutOrder")).toString());
-    return s;
-}
-
 QJsonObject shapeStyleToJson(const ShapeStyle &s)
 {
     return QJsonObject{
@@ -509,6 +221,9 @@ QJsonObject clipToJson(const Clip &clip)
         {QStringLiteral("mask"), maskToJson(clip.mask)},
         {QStringLiteral("faceTrackPath"), clip.faceTrackPath},
         {QStringLiteral("faceTrackSrcOffsetUs"), qint64(clip.faceTrackSrcOffsetUs)},
+        {QStringLiteral("stabilizePath"), clip.stabilizePath},
+        {QStringLiteral("stabilizeSmoothing"), clip.stabilizeSmoothing},
+        {QStringLiteral("stabilizeTripod"), clip.stabilizeTripod},
         {QStringLiteral("fadeInUs"), static_cast<double>(clip.fadeInUs)},
         {QStringLiteral("fadeOutUs"), static_cast<double>(clip.fadeOutUs)},
         {QStringLiteral("fadeCurve"), fadeCurveToString(clip.fadeCurve)},
@@ -592,6 +307,9 @@ Clip clipFromJsonV2(const QJsonObject &object, int canvasW = 1920, int canvasH =
     clip.faceTrackPath = object.value(QStringLiteral("faceTrackPath")).toString();
     clip.faceTrackSrcOffsetUs =
         TimeUs(object.value(QStringLiteral("faceTrackSrcOffsetUs")).toInteger(0));
+    clip.stabilizePath = object.value(QStringLiteral("stabilizePath")).toString();
+    clip.stabilizeSmoothing = object.value(QStringLiteral("stabilizeSmoothing")).toInt(15);
+    clip.stabilizeTripod = object.value(QStringLiteral("stabilizeTripod")).toBool(false);
     clip.fadeInUs = static_cast<TimeUs>(object.value(QStringLiteral("fadeInUs")).toDouble());
     clip.fadeOutUs = static_cast<TimeUs>(object.value(QStringLiteral("fadeOutUs")).toDouble());
     clip.fadeCurve = fadeCurveFromString(object.value(QStringLiteral("fadeCurve")).toString());
@@ -672,6 +390,10 @@ QJsonObject assetToJson(const MediaAsset &asset)
     };
     if (asset.hasAudioKnown)
         object.insert(QStringLiteral("hasAudio"), asset.hasAudio);
+    // Only when set, so a desktop project's JSON is byte-for-byte what it was before the key
+    // existed. Older builds ignore the key; a project without it simply reads back empty.
+    if (!asset.sourceUri.isEmpty())
+        object.insert(QStringLiteral("sourceUri"), asset.sourceUri);
     return object;
 }
 
@@ -684,6 +406,7 @@ MediaAsset assetFromJsonV2(const QJsonObject &object)
     asset.durationUs = static_cast<TimeUs>(object.value(QStringLiteral("durationUs")).toDouble());
     asset.durationLabel = object.value(QStringLiteral("duration")).toString();
     asset.path = object.value(QStringLiteral("path")).toString();
+    asset.sourceUri = object.value(QStringLiteral("sourceUri")).toString();
     asset.width = object.value(QStringLiteral("width")).toInt();
     asset.height = object.value(QStringLiteral("height")).toInt();
     asset.fps = object.value(QStringLiteral("fps")).toDouble();

@@ -13,6 +13,8 @@ Popup {
     signal newProjectRequested()
     signal openRecentRequested(string path)
     signal packageRequested()
+    signal saveJsonRequested()
+    signal openJsonRequested()
     signal propertiesRequested()
 
     component ActionRow: Rectangle {
@@ -402,6 +404,18 @@ Popup {
             glyph: Theme.icons.package
             text: qsTr("Save with media…")
             onTriggered: root.packageRequested()
+        }
+
+        ActionRow {
+            glyph: Theme.icons.download
+            text: qsTr("Save as JSON…")
+            onTriggered: root.saveJsonRequested()
+        }
+
+        ActionRow {
+            glyph: Theme.icons.upload
+            text: qsTr("Open JSON…")
+            onTriggered: root.openJsonRequested()
         }
 
         ActionRow {

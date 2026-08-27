@@ -11,9 +11,14 @@ on:
         required: true
         type: string
       platforms:
-        description: "all, flatpak, linux, windows, macos or arch"
+        description: "all, flatpak, linux, windows, macos, arch or android"
         required: false
         default: all
+        type: string
+      android_identity:
+        description: "release (org.cutwire.drift) or ci (org.cutwire.drift.ci) package id"
+        required: false
+        default: ci
         type: string
 
 permissions:
@@ -127,10 +132,10 @@ jobs:
 
       # cmake is deliberately not installed from apt: the runner image already carries a newer one
       # on PATH and apt's would only add ambiguity.
-      # libva* are runtime, not build, deps: Qt Multimedia's FFmpeg backend reaches VA-API
-      # through implib-gen stubs whose generated dlopen failure path is assert(0), so any test
-      # that constructs a QMediaDevices SIGABRTs on a runner without them rather than falling
-      # back to software decode.
+      # libva* are runtime, not build, deps: FFmpeg reaches VA-API through implib-gen stubs
+      # whose generated dlopen failure path is assert(0). hwaccel::deviceAvailable() now
+      # guards that, so their absence no longer SIGABRTs — they stay so the tests probe VAAPI
+      # for real instead of taking the guard's early-out on every run.
       - name: Install native build dependencies
         timeout-minutes: 10
         env:
@@ -253,20 +258,26 @@ jobs:
           export EXTRA_QT_MODULES="waylandcompositor"
           #
           # The -l lines are libraries dlopened by soname, so linuxdeploy sees no NEEDED entry
-          # to follow: OpenSSL (Qt's ossl TLS backend — without it the AppImage ships the
-          # cert-only backend and addon downloads have no HTTPS) and libva (Qt Multimedia's
-          # FFmpeg backend reaches VA-API through implib-gen stubs whose generated dlopen
-          # failure path is assert(0), so a host without libva SIGABRTs rather than falling
-          # back to software decode).
+          # to follow: OpenSSL is Qt's ossl TLS backend — without it the AppImage ships the
+          # cert-only backend and addon downloads have no HTTPS.
+          #
+          # libva is deliberately NOT bundled, and must not be re-added. AppRun puts usr/lib on
+          # LD_LIBRARY_PATH, so a bundled libva.so.2 wins every dlopen and caps VA-API at
+          # whatever this runner image ships (22.04: libva 1.14). libva refuses a driver whose
+          # VA-API version is newer than its own, so that copy rejects the host's driver on any
+          # current distro and hardware decode silently disappears. Resolving from the host is
+          # the only version pairing that can be right.
+          #
+          # A host with no libva at all is handled in code, not here: FFmpeg reaches VA-API
+          # through implib-gen stubs whose generated dlopen failure path is assert(0), so
+          # hwaccel::deviceAvailable() dlopens libva.so.2 and libva-drm.so.2 itself before
+          # letting FFmpeg near VAAPI. See vaapiLoadable() in src/engine/HwAccel.cpp.
           ./linuxdeploy.AppImage --appdir AppDir --plugin qt --output appimage \
             -d flatpak/org.cutwire.Drift.desktop \
             -i flatpak/share/icons/hicolor/256x256/apps/org.cutwire.Drift.png \
             -e AppDir/usr/bin/drift \
             -l /usr/lib/x86_64-linux-gnu/libssl.so.3 \
-            -l /usr/lib/x86_64-linux-gnu/libcrypto.so.3 \
-            -l /usr/lib/x86_64-linux-gnu/libva.so.2 \
-            -l /usr/lib/x86_64-linux-gnu/libva-drm.so.2 \
-            -l /usr/lib/x86_64-linux-gnu/libva-x11.so.2
+            -l /usr/lib/x86_64-linux-gnu/libcrypto.so.3
           appimage="$(ls ./*.AppImage | grep -iv linuxdeploy | head -n 1)"
           mv "${appimage}" "dist/Drift-${{ inputs.version }}-x86_64.AppImage"
 
@@ -609,3 +620,191 @@ jobs:
         with:
           name: arch-package
           path: dist/*.pkg.tar.zst
+
+  # Multi-ABI APKs. Push-time compile coverage is android.yml (arm64, no packaging); this job is
+  # what build.yml and release.yml call for installable artifacts.
+  android:
+    name: Android APK (${{ matrix.abi }})
+    runs-on: ubuntu-24.04
+    if: inputs.platforms == 'all' || inputs.platforms == 'android'
+    timeout-minutes: 240
+    strategy:
+      # Every ABI reports its own result: one failing arch should not hide whether the
+      # other two compile.
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            qt_arch: android_arm64_v8a
+          # Qt names the 32-bit ARM kit after the architecture, not after the Android ABI.
+          - abi: armeabi-v7a
+            qt_arch: android_armv7
+          - abi: x86_64
+            qt_arch: android_x86_64
+
+    env:
+      ABI: ${{ matrix.abi }}
+      # Android kit Qt version — independent of the desktop QT_VERSION above. scripts/build.sh
+      # pins the same number.
+      QT_ANDROID_VERSION: 6.11.1
+      NDK_VERSION: 27.2.12479018
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/node_modules \
+                      /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          sudo rm -rf "$ANDROID_SDK_ROOT"/ndk
+          df -h /
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Resolve SDK and NDK paths
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build nasm pkg-config ccache \
+            libgl1 libegl1 libxkbcommon0 libfontconfig1
+
+      - name: Install Android NDK ${{ env.NDK_VERSION }} and SDK platform 36
+        run: |
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null
+          "$SDKMANAGER" --install "ndk;$NDK_VERSION" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install Qt ${{ env.QT_ANDROID_VERSION }} (host + Android)
+        run: |
+          pipx install aqtinstall
+          export PATH="$HOME/.local/bin:$PATH"
+          aqt install-qt linux desktop "$QT_ANDROID_VERSION" linux_gcc_64 \
+            -m qtmultimedia qtshadertools -O "$HOME/Qt"
+          aqt install-qt all_os android "$QT_ANDROID_VERSION" "${{ matrix.qt_arch }}" \
+            -m qtmultimedia qtshadertools -O "$HOME/Qt"
+          # Qt builds each Android kit on whichever host it happens to use — the ARMv7 one comes
+          # from a Windows machine, and that 7z carries no POSIX permission bits, so every script
+          # in the kit extracts non-executable and scripts/build.sh finds no runnable qt-cmake.
+          KIT="$HOME/Qt/$QT_ANDROID_VERSION/${{ matrix.qt_arch }}"
+          find "$KIT/bin" "$KIT/libexec" -maxdepth 1 -type f ! -name '*.bat' -exec chmod +x {} +
+
+      - name: Restore prebuilt native dependencies
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: third_party/prebuilt
+          key: android-deps-${{ matrix.abi }}-${{ env.NDK_VERSION }}-${{ hashFiles('third_party/build-android.sh') }}
+
+      - name: Build native dependencies
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: ./third_party/build-android.sh "$ABI"
+
+      - name: Save prebuilt native dependencies
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: third_party/prebuilt
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
+
+      - name: Drop native dependency sources
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: rm -rf third_party/src
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-android-${{ matrix.abi }}-${{ github.sha }}
+          restore-keys: ccache-android-${{ matrix.abi }}-
+
+      # versionName comes from CMake PROJECT_VERSION (same as desktop). versionCode: release
+      # builds leave it unset so CMake derives major*10000+minor*100+patch; CI side-loads use
+      # run_number so each dry-run can replace the previous install under the .ci package id.
+      - name: Resolve Android package identity
+        id: identity
+        shell: bash
+        run: |
+          if [ "${{ inputs.android_identity }}" = "release" ]; then
+            echo "package=org.cutwire.drift" >> "$GITHUB_OUTPUT"
+            echo "app_name=Drift" >> "$GITHUB_OUTPUT"
+            echo "version_code=" >> "$GITHUB_OUTPUT"
+          else
+            echo "package=org.cutwire.drift.ci" >> "$GITHUB_OUTPUT"
+            echo "app_name=Drift CI" >> "$GITHUB_OUTPUT"
+            echo "version_code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release APK
+        env:
+          DRIFT_ANDROID_PACKAGE_NAME: ${{ steps.identity.outputs.package }}
+          DRIFT_ANDROID_APP_NAME: ${{ steps.identity.outputs.app_name }}
+          DRIFT_ANDROID_VERSION_CODE: ${{ steps.identity.outputs.version_code }}
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          CCACHE_MAXSIZE: 2G
+        run: |
+          export QT_ANDROID_ROOT="$HOME/Qt/$QT_ANDROID_VERSION/${{ matrix.qt_arch }}"
+          export QT_HOST_PATH="$HOME/Qt/$QT_ANDROID_VERSION/gcc_64"
+          # Empty VERSION_CODE must not reach the environment as "", which would still override
+          # CMake's derived default — unset it instead.
+          if [ -z "${DRIFT_ANDROID_VERSION_CODE}" ]; then
+            unset DRIFT_ANDROID_VERSION_CODE
+          fi
+          ./scripts/build.sh "$ABI" Release
+          ccache -s
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-android-${{ matrix.abi }}-${{ github.sha }}
+
+      - name: Collect and sign APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ABI: ${{ matrix.abi }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          BUILD="build/android-$ABI"
+          APK="$(find "$BUILD/android-build/build/outputs/apk/release" -name '*.apk' -print -quit 2>/dev/null || true)"
+          [ -n "$APK" ] || APK="$(find "$BUILD/android-build" -name '*release*.apk' -print -quit)"
+          [ -n "$APK" ] || { echo "no release APK under $BUILD/android-build" >&2; exit 1; }
+
+          mkdir -p dist
+          OUT="dist/Drift-${VERSION}-${ABI}.apk"
+
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 not set; uploading unsigned APK"
+            cp "$APK" "$OUT"
+            exit 0
+          fi
+
+          BT="$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)"
+          KS="$RUNNER_TEMP/release.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$KS"
+          "$BT/zipalign" -p -f 4 "$APK" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign \
+            --ks "$KS" --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" \
+            --out "$OUT" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --print-certs "$OUT"
+          rm -f "$KS"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-${{ matrix.abi }}
+          path: dist/Drift-${{ inputs.version }}-${{ matrix.abi }}.apk
+          if-no-files-found: error

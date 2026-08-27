@@ -2,11 +2,29 @@
 
 #include "AudioMixer.h"
 #include "FrameCompositor.h"
+#include "HwAccel.h"
 #include "core/Project.h"
 #include "core/Time.h"
 
 #include <QFile>
+#include <QHash>
 #include <QImage>
+#include <QMutex>
+
+#ifdef Q_OS_ANDROID
+#include "AndroidUri.h"
+
+#include <QDir>
+#include <QFileInfo>
+#include <QJniEnvironment>
+#include <QJniObject>
+#include <QMimeDatabase>
+#include <QStandardPaths>
+#include <QTemporaryFile>
+#include <QtCore/qcoreapplication_platform.h>
+
+#include <atomic>
+#endif
 
 #include <climits>
 #include <cmath>
@@ -18,8 +36,11 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/dict.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/log.h>
 #include <libavutil/opt.h>
+#include <libavutil/pixdesc.h>
 #include <libavutil/rational.h>
 #include <libswscale/swscale.h>
 
@@ -74,7 +95,91 @@ void resolveExportRange(const drift::Project &project, const ExportSettings &set
 
 namespace {
 
+#ifdef Q_OS_ANDROID
+
+constexpr const char *kExportServiceClass = "org/cutwire/drift/ExportService";
+
+std::atomic<int> g_backgroundHolds{0};
+std::atomic<int> g_notifiedPercent{-1};
+
+// Set by the notification's Cancel action, read by whatever job the outermost hold is protecting.
+// Cleared when that hold is taken, so a cancel can never carry into the next job.
+std::atomic<bool> g_serviceCancelRequested{false};
+
+// The Cancel action's PendingIntent lands in ExportService.onStartCommand, which has no way back
+// into the render except this. Nothing else in the tree registers a native, so the registration
+// is done once, lazily, beside the first hold.
+void JNICALL exportServiceCancel(JNIEnv *, jclass)
+{
+    g_serviceCancelRequested.store(true, std::memory_order_relaxed);
+}
+
+// False when the Java side predates the Cancel action, which is also the case where calling the
+// native would throw. The service still runs; the action simply never appears, because
+// startExportService only offers it when this returned true.
+bool registerExportServiceNatives()
+{
+    static const bool registered = []() {
+        const JNINativeMethod methods[] = {
+            {"nativeCancelRequested", "()V", reinterpret_cast<void *>(exportServiceCancel)},
+        };
+        return QJniEnvironment().registerNativeMethods(kExportServiceClass, methods, 1);
+    }();
+    return registered;
+}
+
+void startExportService(const QString &title, bool cancellable)
+{
+    QJniObject context = QNativeInterface::QAndroidApplication::context();
+    if (!context.isValid())
+        return;
+
+    QJniEnvironment env;
+    jclass clazz = env.findClass(kExportServiceClass);
+    if (!clazz)
+        return;
+
+    // A Cancel button whose native never registered would crash on the first tap.
+    cancellable = cancellable && registerExportServiceNatives();
+
+    // Each overload arrives with a Java side; until it does, the job borrows the previous one's
+    // signature — a wrong notification title or a missing Cancel button, but the process is still
+    // held in the foreground. Probing is what makes the fallback work at all: QJniObject clears the
+    // NoSuchMethodError itself and turns the missing method into a silent no-op, so calling and
+    // checking afterwards would report success and start nothing.
+    if (jmethodID cancellableForm = env.findStaticMethod(
+            clazz, "start", "(Landroid/content/Context;Ljava/lang/String;Z)V")) {
+        QJniObject::callStaticMethod<void>(clazz, cancellableForm, context.object(),
+                                           QJniObject::fromString(title).object<jstring>(),
+                                           static_cast<jboolean>(cancellable));
+    } else if (jmethodID titled = env.findStaticMethod(
+                   clazz, "start", "(Landroid/content/Context;Ljava/lang/String;)V")) {
+        QJniObject::callStaticMethod<void>(clazz, titled, context.object(),
+                                           QJniObject::fromString(title).object<jstring>());
+    } else {
+        QJniObject::callStaticMethod<void>(clazz, "start", "(Landroid/content/Context;)V",
+                                           context.object());
+    }
+    env.checkAndClearExceptions();
+}
+
+void stopExportService()
+{
+    QJniObject context = QNativeInterface::QAndroidApplication::context();
+    if (!context.isValid())
+        return;
+    QJniObject::callStaticMethod<void>(kExportServiceClass, "stop", "(Landroid/content/Context;)V",
+                                       context.object());
+    // A job that cannot raise its notification still has to run: the JNI failure is the service
+    // being unavailable, not the render being wrong.
+    QJniEnvironment().checkAndClearExceptions();
+}
+
+#endif
+
 enum class RateMode { Crf, Bitrate, Lossless };
+
+enum class HwBackend { None, Nvenc, Qsv, Amf, Vaapi, VideoToolbox, MediaCodec };
 
 struct VideoCodecDef {
     const char *id;
@@ -89,6 +194,7 @@ struct VideoCodecDef {
     int defaultCrf;
     // "mp4" | "webm" | "mkv" preferred when paired with a friendly audio codec.
     const char *preferredContainer;
+    HwBackend hw = HwBackend::None;
 };
 
 struct AudioCodecDef {
@@ -112,20 +218,75 @@ const char *const kDnxhd[] = {"dnxhd", nullptr};
 const char *const kProres[] = {"prores_ks", "prores", nullptr};
 const char *const kLibtheora[] = {"libtheora", nullptr};
 
+const char *const kH264Nvenc[] = {"h264_nvenc", nullptr};
+const char *const kHevcNvenc[] = {"hevc_nvenc", nullptr};
+const char *const kAv1Nvenc[] = {"av1_nvenc", nullptr};
+const char *const kH264Qsv[] = {"h264_qsv", nullptr};
+const char *const kHevcQsv[] = {"hevc_qsv", nullptr};
+const char *const kAv1Qsv[] = {"av1_qsv", nullptr};
+const char *const kH264Amf[] = {"h264_amf", nullptr};
+const char *const kHevcAmf[] = {"hevc_amf", nullptr};
+const char *const kAv1Amf[] = {"av1_amf", nullptr};
+const char *const kH264Vaapi[] = {"h264_vaapi", nullptr};
+const char *const kHevcVaapi[] = {"hevc_vaapi", nullptr};
+const char *const kAv1Vaapi[] = {"av1_vaapi", nullptr};
+const char *const kH264Vt[] = {"h264_videotoolbox", nullptr};
+const char *const kHevcVt[] = {"hevc_videotoolbox", nullptr};
+const char *const kH264MediaCodec[] = {"h264_mediacodec", nullptr};
+const char *const kHevcMediaCodec[] = {"hevc_mediacodec", nullptr};
+
 const char *const kX264Presets[] = {"ultrafast", "superfast", "veryfast", "faster", "fast",
                                     "medium",    "slow",      "slower",   "veryslow", nullptr};
 const char *const kSvtPresets[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", nullptr};
 const char *const kVp9CpuUsed[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", nullptr};
+const char *const kNvencPresets[] = {"p1", "p2", "p3", "p4", "p5", "p6", "p7", nullptr};
+const char *const kQsvPresets[] = {"veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", nullptr};
+const char *const kAmfQuality[] = {"speed", "balanced", "quality", nullptr};
 
 const VideoCodecDef kVideoCodecs[] = {
     {"av1_svt", "AV1 (SVT)", kLibSvtAv1, AV_PIX_FMT_YUV420P, RateMode::Crf, true, kSvtPresets, "6", 35, "mp4"},
+    {"av1_nvenc", "AV1 (NVIDIA)", kAv1Nvenc, AV_PIX_FMT_NV12, RateMode::Crf, true, kNvencPresets, "p4", 30, "mp4",
+     HwBackend::Nvenc},
+    {"av1_qsv", "AV1 (Intel)", kAv1Qsv, AV_PIX_FMT_NV12, RateMode::Crf, true, kQsvPresets, "medium", 30, "mp4",
+     HwBackend::Qsv},
+    {"av1_amf", "AV1 (AMD)", kAv1Amf, AV_PIX_FMT_NV12, RateMode::Crf, true, kAmfQuality, "balanced", 30, "mp4",
+     HwBackend::Amf},
+    {"av1_vaapi", "AV1 (VAAPI)", kAv1Vaapi, AV_PIX_FMT_NV12, RateMode::Crf, false, nullptr, nullptr, 30, "mp4",
+     HwBackend::Vaapi},
     {"av1_svt_10", "AV1 10-bit (SVT)", kLibSvtAv1, AV_PIX_FMT_YUV420P10LE, RateMode::Crf, true, kSvtPresets, "6", 35,
      "mkv"},
     {"ffv1", "FFV1", kFfv1, AV_PIX_FMT_YUV444P, RateMode::Lossless, false, nullptr, nullptr, 0, "mkv"},
     {"h264", "H.264 (x264)", kLibx264, AV_PIX_FMT_YUV420P, RateMode::Crf, true, kX264Presets, "medium", 18, "mp4"},
+    {"h264_nvenc", "H.264 (NVIDIA)", kH264Nvenc, AV_PIX_FMT_NV12, RateMode::Crf, true, kNvencPresets, "p4", 23, "mp4",
+     HwBackend::Nvenc},
+    {"h264_qsv", "H.264 (Intel)", kH264Qsv, AV_PIX_FMT_NV12, RateMode::Crf, true, kQsvPresets, "medium", 23, "mp4",
+     HwBackend::Qsv},
+    {"h264_amf", "H.264 (AMD)", kH264Amf, AV_PIX_FMT_NV12, RateMode::Crf, true, kAmfQuality, "balanced", 23, "mp4",
+     HwBackend::Amf},
+    {"h264_vaapi", "H.264 (VAAPI)", kH264Vaapi, AV_PIX_FMT_NV12, RateMode::Crf, false, nullptr, nullptr, 23, "mp4",
+     HwBackend::Vaapi},
+    {"h264_videotoolbox", "H.264 (VideoToolbox)", kH264Vt, AV_PIX_FMT_NV12, RateMode::Crf, false, nullptr, nullptr, 23,
+     "mp4", HwBackend::VideoToolbox},
+    // Bitrate and not Crf: MediaCodec targets a bitrate, and its constant-quality mode is API 30+
+    // and refused outright by a large share of shipping devices. "Hardware" and not a vendor name
+    // because the encoder is whatever block the SoC ships and MediaCodec never says which.
+    {"h264_mediacodec", "H.264 (Hardware)", kH264MediaCodec, AV_PIX_FMT_NV12, RateMode::Bitrate, false, nullptr,
+     nullptr, 0, "mp4", HwBackend::MediaCodec},
     {"h264_10", "H.264 10-bit (x264)", kLibx264, AV_PIX_FMT_YUV420P10LE, RateMode::Crf, true, kX264Presets, "medium",
      18, "mkv"},
     {"h265", "H.265 (x265)", kLibx265, AV_PIX_FMT_YUV420P, RateMode::Crf, true, kX264Presets, "medium", 28, "mp4"},
+    {"h265_nvenc", "H.265 (NVIDIA)", kHevcNvenc, AV_PIX_FMT_NV12, RateMode::Crf, true, kNvencPresets, "p4", 28, "mp4",
+     HwBackend::Nvenc},
+    {"h265_qsv", "H.265 (Intel)", kHevcQsv, AV_PIX_FMT_NV12, RateMode::Crf, true, kQsvPresets, "medium", 28, "mp4",
+     HwBackend::Qsv},
+    {"h265_amf", "H.265 (AMD)", kHevcAmf, AV_PIX_FMT_NV12, RateMode::Crf, true, kAmfQuality, "balanced", 28, "mp4",
+     HwBackend::Amf},
+    {"h265_vaapi", "H.265 (VAAPI)", kHevcVaapi, AV_PIX_FMT_NV12, RateMode::Crf, false, nullptr, nullptr, 28, "mp4",
+     HwBackend::Vaapi},
+    {"h265_videotoolbox", "H.265 (VideoToolbox)", kHevcVt, AV_PIX_FMT_NV12, RateMode::Crf, false, nullptr, nullptr, 28,
+     "mp4", HwBackend::VideoToolbox},
+    {"h265_mediacodec", "H.265 (Hardware)", kHevcMediaCodec, AV_PIX_FMT_NV12, RateMode::Bitrate, false, nullptr,
+     nullptr, 0, "mp4", HwBackend::MediaCodec},
     {"h265_10", "H.265 10-bit (x265)", kLibx265, AV_PIX_FMT_YUV420P10LE, RateMode::Crf, true, kX264Presets, "medium",
      28, "mkv"},
     {"h265_12", "H.265 12-bit (x265)", kLibx265, AV_PIX_FMT_YUV420P12LE, RateMode::Crf, true, kX264Presets, "medium",
@@ -165,6 +326,139 @@ const AVCodec *findEncoder(const char *const *names)
     return nullptr;
 }
 
+AVHWDeviceType hwDeviceType(HwBackend hw)
+{
+    switch (hw) {
+    case HwBackend::Nvenc:
+        return AV_HWDEVICE_TYPE_CUDA;
+    case HwBackend::Qsv:
+        return AV_HWDEVICE_TYPE_QSV;
+    case HwBackend::Amf:
+        return AV_HWDEVICE_TYPE_D3D11VA;
+    case HwBackend::Vaapi:
+        return AV_HWDEVICE_TYPE_VAAPI;
+    case HwBackend::VideoToolbox:
+        return AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
+    // FFmpeg's MediaCodec device type wraps a decode Surface; mediacodecenc neither needs nor
+    // accepts one, and asking for it would fail the device probe below for no reason.
+    case HwBackend::MediaCodec:
+    case HwBackend::None:
+        break;
+    }
+    return AV_HWDEVICE_TYPE_NONE;
+}
+
+bool hwBackendOnThisOs(HwBackend hw)
+{
+    if (hw == HwBackend::None)
+        return true;
+#if defined(Q_OS_MACOS)
+    return hw == HwBackend::VideoToolbox;
+#elif defined(Q_OS_WIN)
+    return hw == HwBackend::Nvenc || hw == HwBackend::Qsv || hw == HwBackend::Amf;
+#elif defined(Q_OS_ANDROID)
+    // Android is a Linux build, so without this arm it would advertise the desktop GPU backends —
+    // none of which the Android FFmpeg is even configured with.
+    return hw == HwBackend::MediaCodec;
+#else
+    return hw == HwBackend::Nvenc || hw == HwBackend::Qsv || hw == HwBackend::Vaapi;
+#endif
+}
+
+const char *hwVendorName(HwBackend hw)
+{
+    switch (hw) {
+    case HwBackend::Nvenc:
+        return "NVIDIA";
+    case HwBackend::Qsv:
+        return "Intel";
+    case HwBackend::Amf:
+        return "AMD";
+    case HwBackend::Vaapi:
+        return "VAAPI";
+    case HwBackend::VideoToolbox:
+        return "VideoToolbox";
+    case HwBackend::MediaCodec:
+        return "MediaCodec";
+    case HwBackend::None:
+        break;
+    }
+    return "";
+}
+
+const char *hwCodecFamilyName(const char *id)
+{
+    if (std::strncmp(id, "h265", 4) == 0)
+        return "H.265";
+    if (std::strncmp(id, "av1", 3) == 0)
+        return "AV1";
+    return "H.264";
+}
+
+QString hwEncoderLabel(const VideoCodecDef &def)
+{
+    return QStringLiteral("%1 %2").arg(QLatin1String(hwVendorName(def.hw)),
+                                       QLatin1String(hwCodecFamilyName(def.id)));
+}
+
+bool isHardwarePixelFormat(AVPixelFormat fmt)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+    return desc && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL);
+}
+
+AVPixelFormat pickEncodePixFmt(const AVCodec *codec, HwBackend hw, AVPixelFormat softwarePixFmt)
+{
+    if (hw == HwBackend::None || !codec)
+        return softwarePixFmt;
+
+    const void *configs = nullptr;
+    if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_PIX_FORMAT, 0, &configs, nullptr) >= 0
+        && configs) {
+        const auto *fmts = static_cast<const AVPixelFormat *>(configs);
+        for (const AVPixelFormat *p = fmts; *p != AV_PIX_FMT_NONE; ++p) {
+            if (*p == softwarePixFmt)
+                return softwarePixFmt;
+        }
+    }
+
+    const AVHWDeviceType type = hwDeviceType(hw);
+    for (int i = 0;; ++i) {
+        const AVCodecHWConfig *config = avcodec_get_hw_config(codec, i);
+        if (!config)
+            break;
+        if ((config->methods
+             & (AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX | AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX))
+            && config->device_type == type && config->pix_fmt != AV_PIX_FMT_NONE)
+            return config->pix_fmt;
+    }
+    return softwarePixFmt;
+}
+
+bool setupHwFrames(AVCodecContext *vctx, AVBufferRef *deviceCtx, AVPixelFormat hwPixFmt, int w, int h,
+                   QString *error)
+{
+    AVBufferRef *framesRef = av_hwframe_ctx_alloc(deviceCtx);
+    if (!framesRef) {
+        *error = QStringLiteral("Could not allocate hardware frames");
+        return false;
+    }
+    auto *frames = reinterpret_cast<AVHWFramesContext *>(framesRef->data);
+    frames->format = hwPixFmt;
+    frames->sw_format = AV_PIX_FMT_NV12;
+    frames->width = w;
+    frames->height = h;
+    if (hwPixFmt == AV_PIX_FMT_VAAPI || hwPixFmt == AV_PIX_FMT_QSV)
+        frames->initial_pool_size = 20;
+    if (av_hwframe_ctx_init(framesRef) < 0) {
+        av_buffer_unref(&framesRef);
+        *error = QStringLiteral("Could not initialize hardware frames");
+        return false;
+    }
+    vctx->hw_frames_ctx = framesRef;
+    return true;
+}
+
 const VideoCodecDef *findVideoDef(const QString &id)
 {
     for (const VideoCodecDef &def : kVideoCodecs) {
@@ -194,10 +488,22 @@ QStringList presetsToList(const char *const *presets)
 QVariantMap videoDefToMap(const VideoCodecDef &def)
 {
     const AVCodec *enc = findEncoder(def.encoderNames);
+    bool available = enc != nullptr;
+    if (def.hw != HwBackend::None) {
+        available = available && hwBackendOnThisOs(def.hw);
+        // MediaCodec has no AVHWDevice to probe — the encoder existing in the build is the whole
+        // answer, and deviceAvailable(NONE) is false, which would hide the row outright.
+        const AVHWDeviceType type = hwDeviceType(def.hw);
+        if (type != AV_HWDEVICE_TYPE_NONE)
+            available = available && drift::hwaccel::deviceAvailable(type);
+    }
+
     QVariantMap m;
     m.insert(QStringLiteral("id"), QString::fromUtf8(def.id));
     m.insert(QStringLiteral("label"), QString::fromUtf8(def.label));
-    m.insert(QStringLiteral("available"), enc != nullptr);
+    m.insert(QStringLiteral("available"), available);
+    m.insert(QStringLiteral("hardware"), def.hw != HwBackend::None);
+    m.insert(QStringLiteral("encoderName"), enc ? QString::fromUtf8(enc->name) : QString());
     m.insert(QStringLiteral("supportsCrf"), def.rateMode == RateMode::Crf);
     m.insert(QStringLiteral("supportsBitrate"), def.rateMode != RateMode::Lossless);
     m.insert(QStringLiteral("lossless"), def.rateMode == RateMode::Lossless);
@@ -333,20 +639,92 @@ void fillAudioFrame(AVFrame *frame, AVSampleFormat fmt, const float *interleaved
     }
 }
 
+void applyHwRateControl(AVCodecContext *vctx, const VideoCodecDef &def, const ExportSettings &settings)
+{
+    const bool useCrf = settings.rateControl == QLatin1String("crf") && def.rateMode == RateMode::Crf;
+    const int crf = settings.crf;
+    AVCodecContext *const ctx = vctx;
+    void *const priv = ctx->priv_data;
+
+    if (useCrf) {
+        ctx->bit_rate = 0;
+        switch (def.hw) {
+        case HwBackend::Nvenc:
+            av_opt_set(priv, "rc", "vbr", 0);
+            av_opt_set_int(priv, "cq", crf, 0);
+            break;
+        case HwBackend::Qsv:
+            ctx->global_quality = crf;
+            break;
+        case HwBackend::Amf:
+            av_opt_set(priv, "rc", "cqp", 0);
+            av_opt_set_int(priv, "qp_i", crf, 0);
+            av_opt_set_int(priv, "qp_p", crf, 0);
+            av_opt_set_int(priv, "qp_b", crf, 0);
+            break;
+        case HwBackend::Vaapi:
+            av_opt_set(priv, "rc_mode", "CQP", 0);
+            av_opt_set_int(priv, "qp", crf, 0);
+            ctx->global_quality = crf;
+            break;
+        case HwBackend::VideoToolbox:
+            ctx->flags |= AV_CODEC_FLAG_QSCALE;
+#ifndef FF_QP2LAMBDA
+            ctx->global_quality = crf * 118;
+#else
+            ctx->global_quality = crf * FF_QP2LAMBDA;
+#endif
+            break;
+        // Unreachable: both MediaCodec rows are RateMode::Bitrate, so useCrf is never true.
+        case HwBackend::MediaCodec:
+        case HwBackend::None:
+            break;
+        }
+        return;
+    }
+
+    ctx->bit_rate = static_cast<int64_t>(qMax(100, settings.videoBitrateKbps)) * 1000;
+    switch (def.hw) {
+    case HwBackend::Nvenc:
+        av_opt_set(priv, "rc", "vbr", 0);
+        break;
+    case HwBackend::Amf:
+        av_opt_set(priv, "rc", "vbr_peak", 0);
+        break;
+    case HwBackend::Vaapi:
+        av_opt_set(priv, "rc_mode", "VBR", 0);
+        break;
+    case HwBackend::MediaCodec:
+        // Left unset, mediacodecenc passes no bitrate-mode at all and the answer is whatever the
+        // SoC's encoder defaults to. Naming it makes the same timeline encode the same way on
+        // every device. (pts_as_dts needs no setting: it turns itself on for max_b_frames <= 0,
+        // which is how the encoder is configured.)
+        av_opt_set(priv, "bitrate_mode", "vbr", 0);
+        break;
+    case HwBackend::Qsv:
+    case HwBackend::VideoToolbox:
+    case HwBackend::None:
+        break;
+    }
+}
+
 void applyVideoRateControl(AVCodecContext *vctx, const VideoCodecDef &def, const ExportSettings &settings)
 {
+    if (def.rateMode == RateMode::Lossless)
+        return;
+    if (def.hw != HwBackend::None) {
+        applyHwRateControl(vctx, def, settings);
+        return;
+    }
+
     const QString id = QString::fromUtf8(def.id);
     const bool useCrf = settings.rateControl == QLatin1String("crf") && def.rateMode == RateMode::Crf;
     const bool useBitrate =
         settings.rateControl == QLatin1String("bitrate") && def.rateMode != RateMode::Lossless;
 
-    if (def.rateMode == RateMode::Lossless)
-        return;
-
     if (useCrf) {
         const int crf = settings.crf;
         if (id.startsWith(QLatin1String("av1"))) {
-            // SVT-AV1 uses crf via private option; also set bit_rate 0.
             vctx->bit_rate = 0;
             av_opt_set_int(vctx->priv_data, "crf", crf, 0);
         } else if (id.startsWith(QLatin1String("vp8")) || id.startsWith(QLatin1String("vp9"))) {
@@ -354,7 +732,6 @@ void applyVideoRateControl(AVCodecContext *vctx, const VideoCodecDef &def, const
             av_opt_set_int(vctx->priv_data, "crf", crf, 0);
             av_opt_set_int(vctx->priv_data, "b", 0, 0);
         } else {
-            // x264 / x265
             vctx->bit_rate = 0;
             av_opt_set(vctx->priv_data, "crf", QByteArray::number(crf).constData(), 0);
         }
@@ -368,11 +745,25 @@ void applyVideoRateControl(AVCodecContext *vctx, const VideoCodecDef &def, const
 
 void applyVideoPreset(AVCodecContext *vctx, const VideoCodecDef &def, const ExportSettings &settings)
 {
+    if (def.hw == HwBackend::VideoToolbox && vctx->priv_data)
+        av_opt_set_int(vctx->priv_data, "allow_sw", 0, 0);
+
     if (!def.supportsPreset || !vctx->priv_data)
         return;
     QByteArray preset = settings.videoPreset.toUtf8();
     if (preset.isEmpty() && def.defaultPreset)
         preset = def.defaultPreset;
+
+    if (def.hw == HwBackend::Amf) {
+        av_opt_set(vctx->priv_data, "quality", preset.constData(), 0);
+        return;
+    }
+    if (def.hw == HwBackend::Nvenc || def.hw == HwBackend::Qsv) {
+        av_opt_set(vctx->priv_data, "preset", preset.constData(), 0);
+        return;
+    }
+    if (def.hw != HwBackend::None)
+        return;
 
     const QString id = QString::fromUtf8(def.id);
     if (id.startsWith(QLatin1String("vp8")) || id.startsWith(QLatin1String("vp9"))) {
@@ -381,7 +772,6 @@ void applyVideoPreset(AVCodecContext *vctx, const VideoCodecDef &def, const Expo
         return;
     }
     if (id.startsWith(QLatin1String("av1"))) {
-        // SVT-AV1 preset is an integer 0–12.
         av_opt_set(vctx->priv_data, "preset", preset.constData(), 0);
         return;
     }
@@ -973,7 +1363,119 @@ cleanup:
     return ok;
 }
 
+#ifdef Q_OS_ANDROID
+// avio has no content:// protocol, and a document created by ACTION_CREATE_DOCUMENT has no path to
+// open instead — so the encode runs into app storage and the result is streamed into the document
+// afterwards. The staging name carries the suffix from the document's display name because that is
+// the only place the container the user asked for is still legible: the URI itself has none, and
+// avformat picks the muxer by extension.
+bool runToDocument(const drift::Project &project, const ExportSettings &settings, const QUrl &target,
+                   QString *errorOut, const Exporter::ProgressFn &onProgress)
+{
+    QString suffix = QFileInfo(AndroidUri::displayName(target)).suffix();
+    if (suffix.isEmpty()) {
+        suffix = settings.gifExport
+                     ? QStringLiteral("gif")
+                     : settings.audioOnly
+                           ? Exporter::defaultSuffix(
+                                 Exporter::preferredAudioOnlyContainer(settings.audioCodecId), true)
+                           : Exporter::defaultSuffix(
+                                 Exporter::preferredContainer(settings.videoCodecId,
+                                                              settings.audioCodecId),
+                                 false);
+    }
+
+    QTemporaryFile staging(QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation))
+                               .filePath(QStringLiteral("export-XXXXXX.") + suffix));
+    if (!staging.open()) {
+        if (errorOut)
+            *errorOut = QStringLiteral("Could not stage the export");
+        return false;
+    }
+    const QString stagingPath = staging.fileName();
+    staging.close();
+
+    if (!Exporter::run(project, settings, stagingPath, errorOut, onProgress))
+        return false;
+
+    QFile encoded(stagingPath);
+    std::unique_ptr<QFile> sink = AndroidUri::openForWrite(target);
+    if (!sink || !encoded.open(QIODevice::ReadOnly)) {
+        if (errorOut)
+            *errorOut = QStringLiteral("Could not write to the chosen location");
+        return false;
+    }
+
+    std::vector<char> buffer(1 << 16);
+    while (!encoded.atEnd()) {
+        const qint64 read = encoded.read(buffer.data(), static_cast<qint64>(buffer.size()));
+        if (read <= 0 || sink->write(buffer.data(), read) != read) {
+            if (errorOut)
+                *errorOut = QStringLiteral("Could not write to the chosen location");
+            return false;
+        }
+    }
+    if (!sink->flush()) {
+        if (errorOut)
+            *errorOut = QStringLiteral("Could not write to the chosen location");
+        return false;
+    }
+    return true;
+}
+#endif
+
 } // namespace
+
+Exporter::BackgroundHold::BackgroundHold(const QString &title, bool cancellable)
+{
+#ifdef Q_OS_ANDROID
+    if (g_backgroundHolds.fetch_add(1, std::memory_order_acq_rel) == 0) {
+        g_notifiedPercent.store(-1, std::memory_order_relaxed);
+        g_serviceCancelRequested.store(false, std::memory_order_relaxed);
+        startExportService(title, cancellable);
+    }
+    drift::android::acquireKeepScreenOn();
+#else
+    Q_UNUSED(title);
+    Q_UNUSED(cancellable);
+#endif
+}
+
+bool Exporter::BackgroundHold::cancelRequested()
+{
+#ifdef Q_OS_ANDROID
+    return g_serviceCancelRequested.load(std::memory_order_relaxed);
+#else
+    return false;
+#endif
+}
+
+Exporter::BackgroundHold::~BackgroundHold()
+{
+#ifdef Q_OS_ANDROID
+    drift::android::releaseKeepScreenOn();
+    if (g_backgroundHolds.fetch_sub(1, std::memory_order_acq_rel) == 1)
+        stopExportService();
+#endif
+}
+
+void Exporter::BackgroundHold::setPercent(int percent)
+{
+#ifdef Q_OS_ANDROID
+    percent = qBound(0, percent, 100);
+    if (g_notifiedPercent.exchange(percent, std::memory_order_relaxed) == percent)
+        return;
+
+    QJniObject context = QNativeInterface::QAndroidApplication::context();
+    if (!context.isValid())
+        return;
+    QJniObject::callStaticMethod<void>(kExportServiceClass, "setPercent",
+                                       "(Landroid/content/Context;I)V", context.object(), percent);
+    QJniEnvironment().checkAndClearExceptions();
+#else
+    Q_UNUSED(percent);
+#endif
+}
 
 const QList<ExportScalePreset> &Exporter::scalePresets()
 {
@@ -998,8 +1500,11 @@ const ExportScalePreset *Exporter::scalePresetById(const QString &id)
 QVariantList Exporter::videoCodecs()
 {
     QVariantList out;
-    for (const VideoCodecDef &def : kVideoCodecs)
+    for (const VideoCodecDef &def : kVideoCodecs) {
+        if (!hwBackendOnThisOs(def.hw))
+            continue;
         out.append(videoDefToMap(def));
+    }
     return out;
 }
 
@@ -1300,6 +1805,11 @@ ExportSettings Exporter::settingsFromMap(const QVariantMap &map)
 bool Exporter::run(const drift::Project &project, const ExportSettings &settings, const QString &outputPath,
                    QString *errorOut, const ProgressFn &onProgress)
 {
+#ifdef Q_OS_ANDROID
+    if (const QUrl target(outputPath); AndroidUri::isContentUri(target))
+        return runToDocument(project, settings, target, errorOut, onProgress);
+#endif
+
     if (settings.gifExport)
         return runGifExport(project, settings, outputPath, errorOut, onProgress);
     if (settings.audioOnly)
@@ -1323,9 +1833,20 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
 
     const AVCodec *vcodec = findEncoder(vdef->encoderNames);
     const AVCodec *acodec = findEncoder(adef->encoderNames);
-    if (!vcodec || !acodec) {
+    if (vdef->hw != HwBackend::None && !hwBackendOnThisOs(vdef->hw)) {
         if (errorOut)
-            *errorOut = QStringLiteral("Selected encoder is not available");
+            *errorOut = QStringLiteral("The %1 encoder is not available on this platform.")
+                            .arg(hwEncoderLabel(*vdef));
+        return false;
+    }
+    if (!vcodec || !acodec) {
+        if (errorOut) {
+            if (vdef->hw != HwBackend::None && !vcodec)
+                *errorOut = QStringLiteral("The %1 encoder is not available in this FFmpeg build.")
+                                .arg(hwEncoderLabel(*vdef));
+            else
+                *errorOut = QStringLiteral("Selected encoder is not available");
+        }
         return false;
     }
 
@@ -1362,8 +1883,10 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
     AVStream *vstream = nullptr;
     AVStream *astream = nullptr;
     AVFrame *vframe = nullptr;
+    AVFrame *hwframe = nullptr;
     AVFrame *aframe = nullptr;
     AVPacket *pkt = nullptr;
+    AVBufferRef *hwDeviceCtx = nullptr;
     SwsContext *sws = nullptr;
     bool ok = false;
     bool cancelled = false;
@@ -1407,20 +1930,50 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
 
         vctx->width = outW;
         vctx->height = outH;
-        vctx->pix_fmt = vdef->pixFmt;
+        vctx->pix_fmt = pickEncodePixFmt(vcodec, vdef->hw, vdef->pixFmt);
         vctx->time_base = frameTb;
         vctx->framerate = frameRate;
         vctx->gop_size = qMax(1, static_cast<int>(std::llround(fpsValue * 2.0)));
-        vctx->max_b_frames = 2;
+        const bool vtH264 =
+            vdef->hw == HwBackend::VideoToolbox && std::strncmp(vdef->id, "h264", 4) == 0;
+        // MediaCodec: most Android encoders emit no B-frames whatever this says, and mediacodecenc
+        // reads a zero here as licence to treat pts as dts — which is the only way the muxer gets a
+        // usable timestamp, since MediaCodec reports none of its own.
+        vctx->max_b_frames =
+            (vdef->hw == HwBackend::Vaapi || vdef->hw == HwBackend::MediaCodec || vtH264) ? 0 : 2;
+        if (vdef->hw != HwBackend::None) {
+            if (std::strncmp(vdef->id, "h264", 4) == 0)
+                vctx->profile = AV_PROFILE_H264_HIGH;
+            else if (std::strncmp(vdef->id, "h265", 4) == 0)
+                vctx->profile = AV_PROFILE_HEVC_MAIN;
+        }
         applySdrBt709Tags(vctx);
         if (fmt->oformat->flags & AVFMT_GLOBALHEADER)
             vctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
+        // MediaCodec is a hardware backend with no hardware *device*: mediacodecenc takes plain
+        // NV12 in system memory and manages its own codec instance, so there is nothing to create
+        // and nothing to upload to.
+        if (vdef->hw != HwBackend::None && hwDeviceType(vdef->hw) != AV_HWDEVICE_TYPE_NONE) {
+            const AVHWDeviceType type = hwDeviceType(vdef->hw);
+            // deviceAvailable() first, not just for the answer: it is the only VAAPI probe
+            // that survives a host with no libva, where FFmpeg's stub asserts instead.
+            // A codec id restored from settings can name an encoder this machine cannot run.
+            if (!drift::hwaccel::deviceAvailable(type)
+                || av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0) < 0) {
+                error = QStringLiteral("Could not create the %1 encoder device.")
+                            .arg(QLatin1String(hwVendorName(vdef->hw)));
+                goto cleanup;
+            }
+            vctx->hw_device_ctx = av_buffer_ref(hwDeviceCtx);
+            if (isHardwarePixelFormat(vctx->pix_fmt)
+                && !setupHwFrames(vctx, hwDeviceCtx, vctx->pix_fmt, outW, outH, &error))
+                goto cleanup;
+        }
+
         applyVideoRateControl(vctx, *vdef, settings);
         applyVideoPreset(vctx, *vdef, settings);
 
-        // Some encoders (esp. hardware fallbacks) may not accept the preferred
-        // pix_fmt; fall back to the first supported format if open fails later.
         const AVSampleFormat audioFmt = pickSampleFmt(acodec);
         actx->sample_fmt = audioFmt;
         actx->sample_rate = sampleRate;
@@ -1432,7 +1985,20 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
             actx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
         if (avcodec_open2(vctx, vcodec, nullptr) < 0) {
-            error = QStringLiteral("Could not open the video encoder");
+            if (vdef->hw == HwBackend::MediaCodec) {
+                // No driver to blame on a phone: the device advertises a maximum size and a fixed
+                // pool of codec instances, and a refusal is nearly always one of those two.
+                error = QStringLiteral("Could not open the %1 encoder. This device may not support "
+                                       "this resolution, or another app is using the encoder.")
+                            .arg(hwEncoderLabel(*vdef));
+            } else if (vdef->hw != HwBackend::None) {
+                error = QStringLiteral(
+                            "Could not open the %1 encoder. Check that the GPU driver supports this "
+                            "resolution.")
+                            .arg(hwEncoderLabel(*vdef));
+            } else {
+                error = QStringLiteral("Could not open the video encoder");
+            }
             goto cleanup;
         }
         if (avcodec_open2(actx, acodec, nullptr) < 0) {
@@ -1447,6 +2013,9 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
 
         const int frameSize = actx->frame_size > 0 ? actx->frame_size : 1024;
         const AVPixelFormat outPixFmt = vctx->pix_fmt;
+        const AVPixelFormat swPixFmt =
+            isHardwarePixelFormat(outPixFmt) ? AV_PIX_FMT_NV12 : outPixFmt;
+        const bool hwUpload = isHardwarePixelFormat(outPixFmt);
 
         if (!(fmt->oformat->flags & AVFMT_NOFILE)) {
             if (avio_open(&fmt->pb, outUtf8.constData(), AVIO_FLAG_WRITE) < 0) {
@@ -1463,7 +2032,7 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
 
         // Lanczos when down/upscaling; bicubic is enough for a pure format convert.
         const int swsFlags = (projW != outW || projH != outH) ? SWS_LANCZOS : SWS_BICUBIC;
-        sws = sws_getContext(projW, projH, AV_PIX_FMT_RGBA, outW, outH, outPixFmt, swsFlags, nullptr,
+        sws = sws_getContext(projW, projH, AV_PIX_FMT_RGBA, outW, outH, swPixFmt, swsFlags, nullptr,
                              nullptr, nullptr);
         if (!sws) {
             error = QStringLiteral("Could not create the scaler");
@@ -1477,12 +2046,14 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
         pkt = av_packet_alloc();
         vframe = av_frame_alloc();
         aframe = av_frame_alloc();
-        if (!pkt || !vframe || !aframe) {
+        if (hwUpload)
+            hwframe = av_frame_alloc();
+        if (!pkt || !vframe || !aframe || (hwUpload && !hwframe)) {
             error = QStringLiteral("Out of memory");
             goto cleanup;
         }
 
-        vframe->format = outPixFmt;
+        vframe->format = swPixFmt;
         vframe->width = outW;
         vframe->height = outH;
         if (av_frame_get_buffer(vframe, 32) < 0) {
@@ -1568,7 +2139,22 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
             }
             applySdrBt709Tags(vframe);
             vframe->pts = i;
-            if (!encodeWriteFrame(fmt, vctx, vstream, vframe, pkt, &error))
+            AVFrame *encodeFrame = vframe;
+            if (hwUpload) {
+                av_frame_unref(hwframe);
+                if (av_hwframe_get_buffer(vctx->hw_frames_ctx, hwframe, 0) < 0) {
+                    error = QStringLiteral("Could not allocate a hardware frame");
+                    goto cleanup;
+                }
+                if (av_hwframe_transfer_data(hwframe, vframe, 0) < 0) {
+                    error = QStringLiteral("Could not upload a frame to the encoder");
+                    goto cleanup;
+                }
+                applySdrBt709Tags(hwframe);
+                hwframe->pts = i;
+                encodeFrame = hwframe;
+            }
+            if (!encodeWriteFrame(fmt, vctx, vstream, encodeFrame, pkt, &error))
                 goto cleanup;
 
             // Integer math keeps A/V in exact lockstep even on 1001-denominator rates.
@@ -1607,6 +2193,8 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
 cleanup:
     if (sws)
         sws_freeContext(sws);
+    if (hwframe)
+        av_frame_free(&hwframe);
     if (vframe)
         av_frame_free(&vframe);
     if (aframe)
@@ -1617,6 +2205,8 @@ cleanup:
         avcodec_free_context(&vctx);
     if (actx)
         avcodec_free_context(&actx);
+    if (hwDeviceCtx)
+        av_buffer_unref(&hwDeviceCtx);
     if (fmt) {
         if (headerWritten && !ok && fmt->pb)
             av_write_trailer(fmt);
@@ -1636,4 +2226,130 @@ cleanup:
                               : (error.isEmpty() ? QStringLiteral("Export failed") : error);
     }
     return ok;
+}
+
+QUrl Exporter::publishToGallery(const QUrl &source, const QString &displayName, QString *errorOut)
+{
+#ifdef Q_OS_ANDROID
+    // The scoped insert below (RELATIVE_PATH + IS_PENDING) is API 29. Publishing on 28 would mean
+    // WRITE_EXTERNAL_STORAGE and a raw path into the shared volume — a permission this app
+    // deliberately never asks for, for one release of Android.
+    if (QNativeInterface::QAndroidApplication::sdkVersion() < 29) {
+        if (errorOut)
+            *errorOut = QStringLiteral("Saving to the gallery needs Android 10 or newer");
+        return {};
+    }
+
+    std::unique_ptr<QFile> encoded = AndroidUri::openForRead(source);
+    if (!encoded) {
+        if (errorOut)
+            *errorOut = QStringLiteral("Could not read the exported file");
+        return {};
+    }
+
+    const QString mimeType =
+        QMimeDatabase().mimeTypeForFile(displayName, QMimeDatabase::MatchExtension).name();
+    const bool audio = mimeType.startsWith(QLatin1String("audio/"));
+
+    QJniObject context = QNativeInterface::QAndroidApplication::context();
+    QJniObject resolver =
+        context.callObjectMethod("getContentResolver", "()Landroid/content/ContentResolver;");
+    QJniObject collection = QJniObject::getStaticObjectField(
+        audio ? "android/provider/MediaStore$Audio$Media" : "android/provider/MediaStore$Video$Media",
+        "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;");
+    if (!resolver.isValid() || !collection.isValid()) {
+        if (errorOut)
+            *errorOut = QStringLiteral("Could not reach the media library");
+        return {};
+    }
+
+    const auto putString = [](QJniObject &values, const char *key, const QString &value) {
+        values.callMethod<void>("put", "(Ljava/lang/String;Ljava/lang/String;)V",
+                                QJniObject::fromString(QString::fromLatin1(key)).object<jstring>(),
+                                QJniObject::fromString(value).object<jstring>());
+    };
+    const auto putInt = [](QJniObject &values, const char *key, jint value) {
+        values.callMethod<void>(
+            "put", "(Ljava/lang/String;Ljava/lang/Integer;)V",
+            QJniObject::fromString(QString::fromLatin1(key)).object<jstring>(),
+            QJniObject::callStaticObjectMethod("java/lang/Integer", "valueOf",
+                                               "(I)Ljava/lang/Integer;", value)
+                .object());
+    };
+
+    QJniObject values("android/content/ContentValues");
+    putString(values, "_display_name", displayName);
+    putString(values, "mime_type", mimeType);
+    putString(values, "relative_path", audio ? QStringLiteral("Music/Drift")
+                                             : QStringLiteral("Movies/Drift"));
+    // Pending until the bytes are there, so the gallery never shows a half-written video.
+    putInt(values, "is_pending", 1);
+
+    QJniObject item = resolver.callObjectMethod(
+        "insert", "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;",
+        collection.object(), values.object());
+    QJniEnvironment env;
+    env.checkAndClearExceptions();
+    if (!item.isValid()) {
+        if (errorOut)
+            *errorOut = QStringLiteral("Could not add the export to the media library");
+        return {};
+    }
+
+    // Written through the resolver's own stream rather than QFile: Qt's content file engine gates
+    // on Context.checkUriPermission, which reports nothing for a MediaStore row this app owns
+    // outright and has been granted no explicit URI permission for.
+    bool ok = false;
+    QJniObject stream = resolver.callObjectMethod(
+        "openOutputStream", "(Landroid/net/Uri;)Ljava/io/OutputStream;", item.object());
+    if (!env.checkAndClearExceptions() && stream.isValid()) {
+        constexpr jsize kChunk = 1 << 16;
+        jbyteArray chunk = env->NewByteArray(kChunk);
+        std::vector<char> buffer(kChunk);
+        ok = true;
+        while (!encoded->atEnd()) {
+            const qint64 read = encoded->read(buffer.data(), kChunk);
+            if (read <= 0) {
+                ok = false;
+                break;
+            }
+            env->SetByteArrayRegion(chunk, 0, static_cast<jsize>(read),
+                                    reinterpret_cast<const jbyte *>(buffer.data()));
+            stream.callMethod<void>("write", "([BII)V", chunk, jint(0), static_cast<jint>(read));
+            if (env.checkAndClearExceptions()) {
+                ok = false;
+                break;
+            }
+        }
+        env->DeleteLocalRef(chunk);
+        stream.callMethod<void>("close", "()V");
+        if (env.checkAndClearExceptions())
+            ok = false;
+    }
+
+    if (ok) {
+        QJniObject done("android/content/ContentValues");
+        putInt(done, "is_pending", 0);
+        resolver.callMethod<jint>("update",
+                                  "(Landroid/net/Uri;Landroid/content/ContentValues;"
+                                  "Ljava/lang/String;[Ljava/lang/String;)I",
+                                  item.object(), done.object(), static_cast<jstring>(nullptr),
+                                  static_cast<jobjectArray>(nullptr));
+        env.checkAndClearExceptions();
+        return QUrl(item.toString());
+    }
+
+    resolver.callMethod<jint>("delete", "(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I",
+                              item.object(), static_cast<jstring>(nullptr),
+                              static_cast<jobjectArray>(nullptr));
+    env.checkAndClearExceptions();
+    if (errorOut)
+        *errorOut = QStringLiteral("Could not write the export to the media library");
+    return {};
+#else
+    Q_UNUSED(source);
+    Q_UNUSED(displayName);
+    Q_UNUSED(errorOut);
+    return {};
+#endif
 }

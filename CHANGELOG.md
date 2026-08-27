@@ -2,14 +2,16 @@
 
 Tracks work done on `main` **since the last public release**. Use this to see what is already fixed or added before filing an issue. Cleared when a new release ships.
 
-**Last released version:** `0.3.0`
+**Last released version:** `0.4.0`
 
 ---
 
 ## ✅ Fixed
 
+- Closing a project with unsaved changes now asks Save / Don't Save / Cancel instead of quitting silently and offering “Recovered unsaved work” on the next launch.
+
 ## ✨ Added
 
-- The editor now reopens the way you left it. Window size, position and whether it was maximized are remembered between sessions, as are the panel proportions you drag out — the preview/timeline split and the widths of the assets and properties panels. The portrait and landscape workspaces each keep their own arrangement. Window position is not restored on Wayland, where the compositor, not the app, decides where a window opens.
+- Settings → Interface scale: 100–200% extra UI size (buttons, text, icons) on top of the system display scale. Takes effect after restart.
 
 ## 🎨 Improved

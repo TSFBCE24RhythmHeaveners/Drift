@@ -29,11 +29,13 @@ ApplicationWindow {
         // Before any of the branches below, so a quit that is cancelled at the
         // unsaved prompt still records where the window was.
         window.persistLayout()
-        // Opt-in reopen: skip Save/Don't Save — dirty work is snapshotted to the
-        // recovery file on aboutToQuit without overwriting the user's .drift.
-        if (window.forceClose || EditorState.reopenLastProject || !EditorState.hasUnsavedChanges)
+        if (window.forceClose || !EditorState.hasUnsavedChanges)
             return
         close.accepted = false
+        // Leave preview fullscreen so the save prompt isn't sitting on a blank
+        // full-window preview.
+        if (window.previewFullscreen)
+            window.togglePreviewFullscreen()
         editorHeader.confirmIfDirty(function () {
             // Don't Save leaves dirty true; clear it so aboutToQuit does not
             // write a recovery the user just declined. Harmless after Save.
@@ -234,7 +236,9 @@ ApplicationWindow {
     function togglePreviewFullscreen() {
         if (previewFullscreen) {
             previewFullscreen = false
-            visibility = _preFullscreenVisibility
+            // KDE Plasma doesn't handle Fullscreen -> Maximized for some reason
+            visibility = _preFullscreenVisibility // Fullscreen -> Windowed
+            visibility = _preFullscreenVisibility // Windowed -> Maximized (if it was previously maximized)
         } else {
             _preFullscreenVisibility = visibility
             previewFullscreen = true
@@ -346,6 +350,10 @@ ApplicationWindow {
         id: updateDialog
     }
 
+    DebugInfoDialog {
+        id: debugInfoDialog
+    }
+
     SegmentationWindow {
         id: segmentationWindow
     }
@@ -418,6 +426,10 @@ ApplicationWindow {
         updateDialog.open()
     }
 
+    function openDebugInfo() {
+        debugInfoDialog.open()
+    }
+
     function promptRecoveryIfNeeded() {
         if (!EditorState.recoveryAvailable || recoveryDialog.visible)
             return
@@ -428,7 +440,7 @@ ApplicationWindow {
     }
 
     // Ask every launch while the previous session left an autosave snapshot
-    // (unsaved work — whether the app crashed or was closed normally).
+    // (typically a crash — a confirmed close already cleared it).
     Timer {
         id: recoveryOpenTimer
         interval: 150

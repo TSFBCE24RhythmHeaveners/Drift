@@ -1,5 +1,6 @@
 #include "TextRaster.h"
 
+#include "EmojiCatalog.h"
 #include "FontCatalog.h"
 
 #include <QEasingCurve>
@@ -10,6 +11,8 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPainterPathStroker>
+#include <QRawFont>
+#include <QTextBoundaryFinder>
 #include <QTextLayout>
 #include <QTextOption>
 #include <QtMath>
@@ -21,9 +24,20 @@ namespace {
 
 QMutex g_cacheMutex;
 QHash<quint64, QImage> g_cache;
+// Least-recently-used first. Entries are caption-box-sized ARGB32 at the render canvas, and both
+// the preview-scale and the export-scale copy of a cue live here at once, so a count cap alone let
+// the cache reach hundreds of MB on a phone. Budget the bytes and evict one entry at a time —
+// the old cap cleared the whole cache when it tripped, re-rastering every visible caption.
+QList<quint64> g_cacheLru;
+qint64 g_cacheBytes = 0;
 // Karaoke re-rasterizes as the spoken word advances, so a single cue can occupy one entry per
 // word — the cache has to be roomy enough that scrubbing a caption track does not thrash it.
 constexpr int kMaxCacheEntries = 256;
+#ifdef Q_OS_ANDROID
+constexpr qint64 kMaxCacheBytes = 32LL * 1024 * 1024;
+#else
+constexpr qint64 kMaxCacheBytes = 256LL * 1024 * 1024;
+#endif
 
 quint64 highlightHash(const drift::TextHighlight &h)
 {
@@ -136,11 +150,64 @@ struct StyledWord
     int index = 0;        // reading-order word index; shared by every character of a word
     int line = 0;
     bool accent = false;
+
+    // Set instead of `path` for a colour-emoji cluster, which has no outline to fill and is
+    // drawn from the bitmap face at paint time. Its origin is (cellRect.left(), baselineY).
+    QString emojiText;
+    QFont emojiFont;
 };
 
 enum class WordSplit { Whole, Characters };
 
 struct WordRange { int start; int length; };
+
+// Colour emoji ship as a CBDT/CBLC bitmap face, which carries no glyph outlines for
+// QPainterPath::addText to take — laid out as a path they come out empty and vanish. They have
+// to be drawn with QPainter::drawText instead, so the layout has to pick them out first.
+//
+// The codepoint ranges come first so ordinary text never probes the font, and VS-16 is in them
+// because it forces emoji presentation on characters that are otherwise textual. The face's own
+// cmap then has the final say: a dingbat the emoji font does not carry stays with the styled
+// font rather than falling back to whatever the system offers.
+bool isEmojiCluster(const QString &cluster, const QRawFont &emojiFace)
+{
+    const QList<uint> points = cluster.toUcs4();
+
+    bool candidate = false;
+    for (const uint point : points) {
+        if (point == 0xFE0F || (point >= 0x1F000 && point <= 0x1FAFF)
+            || (point >= 0x2600 && point <= 0x27BF) || (point >= 0x2B00 && point <= 0x2BFF)) {
+            candidate = true;
+            break;
+        }
+    }
+    if (!candidate)
+        return false;
+
+    for (const uint point : points) {
+        // Joiners, selectors and tag characters glue a sequence together and are in no cmap;
+        // only the visible characters say anything about coverage.
+        if (point == 0x200D || point == 0xFE0E || point == 0xFE0F
+            || (point >= 0xE0020 && point <= 0xE007F))
+            continue;
+        if (!emojiFace.supportsCharacter(point))
+            return false;
+    }
+    return true;
+}
+
+// The grapheme cluster boundaries inside [from, to), ends included. Qt's are extended clusters,
+// so a ZWJ sequence, a flag or a skin-tone modifier stays in one piece.
+QList<int> graphemeBoundaries(const QString &source, int from, int to)
+{
+    QList<int> stops{from};
+    QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, source);
+    finder.setPosition(from);
+    while (finder.toNextBoundary() > 0 && finder.position() < to)
+        stops.append(finder.position());
+    stops.append(to);
+    return stops;
+}
 
 QList<WordRange> wordRanges(const QString &source)
 {
@@ -239,6 +306,21 @@ QList<StyledWord> layoutStyledText(const QString &text, const drift::TextStyle &
     const QFontMetricsF metrics(font);
     const double effectiveWrap = style.wordWrap ? qMax(1.0, wrapWidth) : std::numeric_limits<double>::max();
 
+    // The colour face arrives with the emoji-font addon; without it the family is empty and emoji
+    // keep falling through to the outline path and disappearing, exactly as before.
+    const QString emojiFamily = emojiFontFamily();
+    const bool emojiCapable = !emojiFamily.isEmpty();
+    QFont emojiBaseFont;
+    QFont emojiAccentFont;
+    QRawFont emojiFace;
+    if (emojiCapable) {
+        emojiBaseFont = QFont(emojiFamily);
+        emojiBaseFont.setPixelSize(qMax(1, font.pixelSize()));
+        emojiAccentFont = QFont(emojiFamily);
+        emojiAccentFont.setPixelSize(qMax(1, accentFont.pixelSize()));
+        emojiFace = QRawFont::fromFont(emojiBaseFont);
+    }
+
     layout.beginLayout();
     forever {
         QTextLine line = layout.createLine();
@@ -303,27 +385,34 @@ QList<StyledWord> layoutStyledText(const QString &text, const drift::TextStyle &
 
             const QFont &wordFont = accentFlags.at(wi) ? accentFont : font;
             const QFontMetricsF wordMetrics(wordFont);
+            const QFont &emojiFont = accentFlags.at(wi) ? emojiAccentFont : emojiBaseFont;
 
-            auto emitPiece = [&](int from, int to) {
+            auto appendRun = [&](int from, int to, bool emoji) {
                 QString slice = source.mid(from, to - from);
                 slice.remove(QChar::LineSeparator);
                 if (slice.trimmed().isEmpty())
                     return;
                 const double x0 = lineX + line.cursorToX(from);
                 const double x1 = lineX + line.cursorToX(to);
-                QPainterPath path;
-                // Winding, not the odd-even default: at heavy weights adjacent glyph contours
-                // overlap, and odd-even punches those overlaps out as holes.
-                path.setFillRule(Qt::WindingFill);
-                path.addText(x0, baseline, wordFont, slice);
-                const QRectF ink = path.boundingRect();
-                if (ink.isEmpty())
-                    return;
                 StyledWord word;
-                word.path = path;
-                word.inkRect = ink;
                 word.cellRect = QRectF(qMin(x0, x1), baseline - wordMetrics.ascent(),
                                        std::abs(x1 - x0), wordMetrics.height());
+                if (emoji) {
+                    word.emojiText = slice;
+                    word.emojiFont = emojiFont;
+                    word.inkRect = word.cellRect;
+                } else {
+                    QPainterPath path;
+                    // Winding, not the odd-even default: at heavy weights adjacent glyph contours
+                    // overlap, and odd-even punches those overlaps out as holes.
+                    path.setFillRule(Qt::WindingFill);
+                    path.addText(x0, baseline, wordFont, slice);
+                    const QRectF ink = path.boundingRect();
+                    if (ink.isEmpty())
+                        return;
+                    word.path = path;
+                    word.inkRect = ink;
+                }
                 word.baselineY = baseline;
                 word.index = wi;
                 word.line = i;
@@ -331,9 +420,34 @@ QList<StyledWord> layoutStyledText(const QString &text, const drift::TextStyle &
                 words.append(word);
             };
 
+            // Break the piece into runs of ordinary text and single emoji clusters. Run edges are
+            // layout positions, so advances, wrapping and alignment are what they were; with no
+            // emoji in the piece this is the one whole-piece run it has always been.
+            auto emitPiece = [&](int from, int to) {
+                const QList<int> stops = graphemeBoundaries(source, from, to);
+                int runStart = -1;
+                for (int s = 0; s + 1 < stops.size(); ++s) {
+                    const int cs = stops.at(s);
+                    const int ce = stops.at(s + 1);
+                    if (emojiCapable && isEmojiCluster(source.mid(cs, ce - cs), emojiFace)) {
+                        if (runStart >= 0)
+                            appendRun(runStart, cs, false);
+                        runStart = -1;
+                        appendRun(cs, ce, true);
+                    } else if (runStart < 0) {
+                        runStart = cs;
+                    }
+                }
+                if (runStart >= 0)
+                    appendRun(runStart, to, false);
+            };
+
             if (split == WordSplit::Characters) {
-                for (int c = ws; c < we; ++c)
-                    emitPiece(c, c + 1);
+                // Cluster by cluster, not QChar by QChar: a flag or a ZWJ sequence is one
+                // character to the reader and must animate as one.
+                const QList<int> stops = graphemeBoundaries(source, ws, we);
+                for (int s = 0; s + 1 < stops.size(); ++s)
+                    emitPiece(stops.at(s), stops.at(s + 1));
             } else {
                 emitPiece(ws, we);
             }
@@ -580,6 +694,17 @@ void paintStyledWords(QPainter &p, const QList<StyledWord> &words, const drift::
         p.fillPath(words.at(i).path, fillColorFor(style, words.at(i).accent));
     }
 
+    // Emoji come from the bitmap face, so they are drawn rather than filled — and they get no
+    // outline, shadow or glow, since there is no shape to derive one from. The pen colour is
+    // ignored by a colour face but has to be a real pen: the highlight pass above left NoPen.
+    for (const StyledWord &word : words) {
+        if (word.emojiText.isEmpty())
+            continue;
+        p.setFont(word.emojiFont);
+        p.setPen(fillColorFor(style, word.accent));
+        p.drawText(QPointF(word.cellRect.left(), word.baselineY), word.emojiText);
+    }
+
     if (style.underlineEnabled && style.underlineWidth > 0.0) {
         // One rule per line, spanning that line's words.
         QHash<int, QRectF> perLine;
@@ -628,8 +753,12 @@ QRectF paintedBounds(const QList<StyledWord> &words, const drift::TextStyle &sty
 {
     QRectF bounds;
     for (const StyledWord &word : words) {
+        // An emoji has no path, so its cell is what the box background and the per-span ink test
+        // have to size to — otherwise an emoji-only span is treated as empty and dropped.
         QRectF piece =
-            outlineShape(word.path, outlineWidthFor(style, word.accent), renderScale).boundingRect();
+            word.emojiText.isEmpty()
+                ? outlineShape(word.path, outlineWidthFor(style, word.accent), renderScale).boundingRect()
+                : word.cellRect;
         if (const drift::TextHighlight *highlight = highlightFor(style, word.accent)) {
             const double pad = highlight->padding * renderScale;
             piece = piece.united(word.cellRect.adjusted(-pad, -pad, pad, pad));
@@ -679,6 +808,8 @@ TextRasterResult rasterizeText(const drift::Clip &clip, const QString &text, con
         QMutexLocker lock(&g_cacheMutex);
         const auto it = g_cache.constFind(key);
         if (it != g_cache.constEnd()) {
+            g_cacheLru.removeOne(key);
+            g_cacheLru.append(key);
             result.image = it.value();
             return result;
         }
@@ -713,10 +844,18 @@ TextRasterResult rasterizeText(const drift::Clip &clip, const QString &text, con
     p.end();
 
     {
+        const qint64 imageBytes = qint64(image.sizeInBytes());
         QMutexLocker lock(&g_cacheMutex);
-        if (g_cache.size() >= kMaxCacheEntries)
-            g_cache.clear();
+        // Two threads (preview and export) can raster the same key at once. Drop the older copy
+        // rather than letting its bytes stay on the total forever.
+        if (g_cacheLru.removeOne(key))
+            g_cacheBytes -= qint64(g_cache.take(key).sizeInBytes());
+        while (!g_cacheLru.isEmpty()
+               && (g_cache.size() >= kMaxCacheEntries || g_cacheBytes + imageBytes > kMaxCacheBytes))
+            g_cacheBytes -= qint64(g_cache.take(g_cacheLru.takeFirst()).sizeInBytes());
         g_cache.insert(key, image);
+        g_cacheLru.append(key);
+        g_cacheBytes += imageBytes;
     }
 
     result.image = image;
@@ -973,4 +1112,16 @@ TextAnimSample sampleTextSpanAnimation(const drift::Clip &clip, drift::TimeUs ti
 
     sample.opacity = qBound(0.0, sample.opacity, 1.0);
     return sample;
+}
+
+void clearTextRasterCaches()
+{
+    {
+        QMutexLocker lock(&g_cacheMutex);
+        g_cache.clear();
+        g_cacheLru.clear();
+        g_cacheBytes = 0;
+    }
+    QMutexLocker lock(&g_spanCacheMutex);
+    g_spanCache.clear();
 }

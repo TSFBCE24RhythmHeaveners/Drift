@@ -1,5 +1,6 @@
 #pragma once
 
+#include "HwAccel.h"
 #include "core/Time.h"
 
 #include <QByteArray>
@@ -9,6 +10,8 @@
 #include <QSize>
 #include <QString>
 #include <QVector>
+
+#include <optional>
 
 extern "C" {
 #include <libavutil/pixfmt.h>
@@ -84,17 +87,49 @@ public:
     // cursor is not near has to decode its way there from the preceding keyframe, so this is what
     // a badly shared decoder costs. Tests read the delta.
     static quint64 videoFramesDecoded();
+    // Codec actually opened for video, empty until the first decode. Distinguishes libdav1d
+    // (software AV1) from the native `av1` decoder that can drive hardware.
+    QString videoDecoderName() const;
+    bool hardwareAccelActive() const { return m_hwAccelActive; }
+
+    // Preview toolbar: Auto (default) runs the per-clip heuristic, Software never
+    // touches the GPU, Hardware always tries it. Drop the current video codec after
+    // changing this so the next read opens on the new path.
+    //
+    // `backend` pins which one Hardware uses. None means "first that opens", which is
+    // what Auto always does — a machine with both NVDEC and VAAPI is the only place
+    // the distinction is visible, and it is the one place the auto-probe can pick the
+    // worse of the two.
+    enum class HardwareDecodeMode { Auto, Software, Hardware };
+    static void setHardwareDecodeMode(HardwareDecodeMode mode,
+                                      drift::hwaccel::Backend backend = drift::hwaccel::Backend::None);
+    static HardwareDecodeMode hardwareDecodeMode();
+    static drift::hwaccel::Backend pinnedDecodeBackend();
+    void resetVideoDecoder();
+
+    // What the last video decoder opened in this process actually landed on, summed
+    // over every reader: Backend::None for software, empty until the first one opens.
+    // Approximate by construction — clips of different codecs resolve differently —
+    // but it is what the debug report needs to stop guessing.
+    static std::optional<drift::hwaccel::Backend> activeDecodeBackend();
+    // Times a reader gave up on hardware mid-decode and went sticky-software. Silent
+    // otherwise: the preview just gets slower and nothing says why.
+    static quint64 hardwareFallbackCount();
 
 private:
     bool ensureVideoDecoder();
     bool ensureAudioDecoder();
     bool openSoftwareVideoDecoder();
+    bool openHardwareDecoderWith(drift::hwaccel::Backend backend);
     bool tryOpenHardwareDecoder();
+#ifdef Q_OS_ANDROID
+    bool tryOpenMediaCodecDecoder();
+#endif
     bool hardwareDecodeIsWorthIt() const;
     void teardownVideoDecoder();
     bool fallbackFromHardwareDecoder();
 
-    // VAAPI VPP downscale so the GPU->CPU readback moves preview-sized pixels
+    // GPU-side downscale so the GPU->CPU readback moves preview-sized pixels
     // instead of full-resolution ones. Returns a software frame owned by the
     // reader (valid until the next call), or nullptr to fall back to a plain
     // full-size transfer.
@@ -140,12 +175,20 @@ private:
     int m_sourceRotation = 0;
     int m_outputSampleRate = 48000;
     bool m_hwAccelActive = false;
-    bool m_hwAccelDisabled = false; // sticky after a failed VAAPI decode
+    bool m_hwAccelDisabled = false; // sticky after a failed hardware decode
+    // Android MediaCodec decoding into ordinary system-memory frames. Never a hwaccel in the
+    // AV_PIX_FMT_FLAG_HWACCEL sense — m_hwAccelActive and the surface scaler below stay
+    // hwaccel-only — but it changes two things the decode loop cannot infer: send_packet may
+    // legitimately return EAGAIN, and a decode error is recoverable by reopening in software.
+    // Always false off Android.
+    bool m_mediaCodecActive = false;
+    drift::hwaccel::Backend m_hwBackend = drift::hwaccel::Backend::None;
     AVPixelFormat m_hwPixFmt = AV_PIX_FMT_NONE;
 
-    // scale_vaapi graph, rebuilt when the decode size or the decoder's frame
-    // pool changes. m_hwScalerFailed is sticky: a driver without working VPP
-    // falls back to full-size transfers rather than retrying per frame.
+    // Surface-scaler graph, rebuilt when the decode size or the decoder's frame
+    // pool changes. m_hwScalerFailed is sticky: a backend with no scaler, or a
+    // driver whose scaler misbehaves, falls back to full-size transfers rather
+    // than retrying per frame.
     struct AVFilterGraph *m_vppGraph = nullptr;
     struct AVFilterContext *m_vppSrc = nullptr;
     struct AVFilterContext *m_vppSink = nullptr;
@@ -155,6 +198,33 @@ private:
     int m_vppW = 0;
     int m_vppH = 0;
     bool m_hwScalerFailed = false;
+
+    QString m_stabilizePath;
+    int m_stabilizeSmoothing = 15;
+    bool m_stabilizeTripod = false;
+    int m_expectedNextFrameIndex = -1;
+    QString m_tempTrfPath;
+    struct AVFilterGraph *m_swFilterGraph = nullptr;
+    struct AVFilterContext *m_swFilterSrc = nullptr;
+    struct AVFilterContext *m_swFilterSink = nullptr;
+    int m_swFilterW = 0;
+    int m_swFilterH = 0;
+    AVPixelFormat m_swFilterFormat = AV_PIX_FMT_NONE;
+    int m_swFilterSmoothing = 15;
+    bool m_swFilterTripod = false;
+
+    bool initSwFilterGraph(int width, int height, AVPixelFormat pixFmt);
+    void teardownSwFilterGraph();
+    struct AVFrame* filterFrameInPlace(struct AVFrame *frame, int targetWidth, int targetHeight);
+
+public:
+    void setStabilizeParams(const QString &path, int smoothing, bool tripod) {
+        m_stabilizePath = path;
+        m_stabilizeSmoothing = smoothing;
+        m_stabilizeTripod = tripod;
+    }
+
+private:
 
     // Sequential-decode state: lets playback decode forward without re-seeking
     // to a keyframe on every frame. Only seek on a backward jump or a large gap.

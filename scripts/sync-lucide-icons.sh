@@ -29,7 +29,7 @@ icons=(
   chevrons-left-right-ellipsis
   # Close a timeline gap (arrows collapsing toward each other)
   chevrons-right-left
-  save arrow-right-to-line arrow-left-to-line tags blend option square-dashed puzzle info
+  save arrow-right-to-line arrow-left-to-line tags blend option square-dashed puzzle bug info
   # Project bundle: package/properties entries in the project menu
   package file-text
   # Status / feedback (toasts, inline errors, empty states)
@@ -51,6 +51,8 @@ icons=(
   keyboard crop minimize
   # Keyframe row: add/remove a key at the playhead
   diamond-plus diamond-minus
+  # Import / export a saved text style as a file
+  folder-input folder-output
   # Audio-effect Sounds browser (per-preset Lucide glyphs)
   phone bot radio-receiver megaphone droplets volume-x binary cpu gem disc-3
   cassette-tape orbit rabbit arrow-down-wide-narrow shield activity audio-waveform

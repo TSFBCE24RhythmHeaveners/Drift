@@ -1,12 +1,70 @@
 #include "PlaybackEngine.h"
 
+#include "engine/AndroidUri.h"
+#include "engine/ClipReaderPool.h"
+#include "engine/HwAccel.h"
+
 #include <QSettings>
+#include <QVariantMap>
+
+#ifdef Q_OS_ANDROID
+#include <QJniEnvironment>
+#include <QJniObject>
+#include <QtCore/qcoreapplication_platform.h>
+#endif
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 
 namespace {
+
+#ifdef Q_OS_ANDROID
+
+constexpr const char *kAudioFocusClass = "org/cutwire/drift/AudioFocus";
+
+// The engine that owns preview audio. Focus loss and the headphone-unplug broadcast are dispatched
+// on the Android UI thread, so the pause cannot be run there: it is posted to the engine's own
+// thread instead. Playback is single-instance, so the last engine constructed is the right one.
+std::atomic<PlaybackEngine *> g_audioFocusEngine{nullptr};
+
+void nativePausePlayback(JNIEnv *, jclass)
+{
+    if (PlaybackEngine *engine = g_audioFocusEngine.load(std::memory_order_acquire))
+        QMetaObject::invokeMethod(engine, &PlaybackEngine::pause, Qt::QueuedConnection);
+}
+
+// Both calls hop to the Android UI thread: AudioFocus keeps its request and its receiver in static
+// fields that only that thread touches, which is also the thread the callbacks arrive on.
+void callAudioFocus(const char *method)
+{
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([method] {
+        QJniObject context = QNativeInterface::QAndroidApplication::context();
+        if (!context.isValid())
+            return;
+        QJniObject::callStaticMethod<void>(kAudioFocusClass, method,
+                                           "(Landroid/content/Context;)V", context.object());
+        // Focus is advisory: the preview still plays if the request could not be made, it just
+        // plays over whatever else is running.
+        QJniEnvironment().checkAndClearExceptions();
+    });
+}
+
+void requestAudioFocus()
+{
+    callAudioFocus("request");
+}
+
+void abandonAudioFocus()
+{
+    callAudioFocus("abandon");
+}
+
+#else
+inline void requestAudioFocus() {}
+inline void abandonAudioFocus() {}
+#endif
 
 constexpr int kPlayheadUpdateMs = 16; // ~60 Hz UI updates, independent of video decode
 
@@ -31,6 +89,66 @@ bool isKnownPreviewQuality(const QString &quality)
         || quality == QStringLiteral("quarter") || quality == QStringLiteral("auto");
 }
 
+constexpr QLatin1String kHwPrefix("hw:");
+
+// Which backend a "hw:<id>" mode names, or None for every other mode.
+drift::hwaccel::Backend decodeBackendFromString(const QString &mode)
+{
+    if (!mode.startsWith(kHwPrefix))
+        return drift::hwaccel::Backend::None;
+    return drift::hwaccel::backendFromId(mode.mid(kHwPrefix.size()));
+}
+
+// Canonical form of a decode mode, or empty when it names nothing this build knows.
+// A backend that is not on this machine resolves to Auto rather than to a mode that
+// would silently never engage — settings outlive the GPU they were written on.
+QString normalizeDecodeMode(const QString &mode)
+{
+    const QString lowered = mode.toLower();
+    if (lowered == QStringLiteral("auto") || lowered == QStringLiteral("software"))
+        return lowered;
+
+    const QList<drift::hwaccel::Backend> available = drift::hwaccel::availableDecodeBackends();
+    // Legacy "hardware" (and anything that means "any GPU") pins the backend the probe
+    // would have chosen, so the picker can show what is actually in use.
+    if (lowered == QStringLiteral("hardware")) {
+        return available.isEmpty()
+            ? QStringLiteral("auto")
+            : kHwPrefix + drift::hwaccel::id(available.first());
+    }
+    if (lowered.startsWith(kHwPrefix)) {
+        const drift::hwaccel::Backend backend = decodeBackendFromString(lowered);
+        if (backend != drift::hwaccel::Backend::None && available.contains(backend))
+            return lowered;
+        return QStringLiteral("auto");
+    }
+    return {};
+}
+
+ClipReader::HardwareDecodeMode decodeModeFromString(const QString &mode)
+{
+    if (mode == QStringLiteral("software"))
+        return ClipReader::HardwareDecodeMode::Software;
+    if (mode == QStringLiteral("hardware") || mode.startsWith(kHwPrefix))
+        return ClipReader::HardwareDecodeMode::Hardware;
+    return ClipReader::HardwareDecodeMode::Auto;
+}
+
+QString loadSavedDecodeMode()
+{
+    const QString saved = QSettings().value(QStringLiteral("preview/decodeMode")).toString();
+    if (const QString normalized = normalizeDecodeMode(saved); !normalized.isEmpty())
+        return normalized;
+    // Previous two-state toggle wrote a bool. Keep an explicit Hardware or
+    // Software choice; missing key (never touched) becomes Auto.
+    if (QSettings().contains(QStringLiteral("preview/hardwareDecode"))) {
+        return QSettings().value(QStringLiteral("preview/hardwareDecode")).toBool()
+            ? normalizeDecodeMode(QStringLiteral("hardware"))
+            : QStringLiteral("software");
+    }
+    return QStringLiteral("auto");
+}
+
 } // namespace
 
 PlaybackEngine::PlaybackEngine(QObject *parent)
@@ -41,10 +159,11 @@ PlaybackEngine::PlaybackEngine(QObject *parent)
     if (isKnownPreviewQuality(saved))
         m_previewQuality = saved;
 
-    const QString savedMode =
-        QSettings().value(QStringLiteral("preview/playbackMode")).toString().toLower();
-    if (savedMode == QStringLiteral("fast") || savedMode == QStringLiteral("quality"))
-        m_playbackMode = savedMode;
+    m_decodeMode = loadSavedDecodeMode();
+    ClipReaderPool::instance().setHardwareDecodeMode(decodeModeFromString(m_decodeMode),
+                                                     decodeBackendFromString(m_decodeMode));
+    m_hwFallbackCount = ClipReader::hardwareFallbackCount();
+
     m_compositor.setDropLateFrames(!isQualityMode());
     m_compositor.setAdaptiveQuality(isAutoQuality());
 
@@ -61,10 +180,22 @@ PlaybackEngine::PlaybackEngine(QObject *parent)
     connect(&m_compositor, &CompositorService::frameReady, this, &PlaybackEngine::onFrameReady);
     connect(&m_compositor, &CompositorService::compositeFinished, this,
             &PlaybackEngine::onCompositeFinished);
+
+#ifdef Q_OS_ANDROID
+    g_audioFocusEngine.store(this, std::memory_order_release);
+    QJniEnvironment().registerNativeMethods(
+        kAudioFocusClass,
+        {{"nativePausePlayback", "()V", reinterpret_cast<void *>(nativePausePlayback)}});
+#endif
 }
 
 PlaybackEngine::~PlaybackEngine()
 {
+#ifdef Q_OS_ANDROID
+    // A focus change already in flight on the Android UI thread must not find this engine.
+    g_audioFocusEngine.store(nullptr, std::memory_order_release);
+    abandonAudioFocus();
+#endif
     m_playing = false;
     m_playheadTimer.stop();
     m_compositeTimer.stop();
@@ -134,6 +265,12 @@ QSize PlaybackEngine::previewTextureSize() const
 {
     QMutexLocker lock(&m_frameMutex);
     return m_currentFrame.size;
+}
+
+QImage PlaybackEngine::previewImage() const
+{
+    QMutexLocker lock(&m_frameMutex);
+    return m_currentFrame.image;
 }
 
 QString PlaybackEngine::previewQuality() const
@@ -216,6 +353,66 @@ void PlaybackEngine::setPlaybackRate(double rate)
         play();
 }
 
+QString PlaybackEngine::decodeMode() const
+{
+    return m_decodeMode;
+}
+
+QVariantList PlaybackEngine::decodeModes() const
+{
+    QVariantList modes;
+    auto append = [&modes](const QString &id, const QString &label) {
+        modes.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("label"), label}});
+    };
+    append(QStringLiteral("auto"), tr("Auto"));
+    append(QStringLiteral("software"), tr("Software"));
+    // Only backends whose device opens here, so every listed choice is one that runs.
+    for (const drift::hwaccel::Backend backend : drift::hwaccel::availableDecodeBackends()) {
+        append(kHwPrefix + drift::hwaccel::id(backend),
+               tr("Hardware (%1)").arg(QString::fromLatin1(drift::hwaccel::name(backend))));
+    }
+    return modes;
+}
+
+void PlaybackEngine::setDecodeMode(const QString &mode)
+{
+    const QString normalized = normalizeDecodeMode(mode);
+    if (normalized.isEmpty()) {
+        qWarning("PlaybackEngine: ignoring unknown decode mode '%s'", qPrintable(mode));
+        return;
+    }
+    if (m_decodeMode == normalized)
+        return;
+
+    m_decodeMode = normalized;
+    QSettings().setValue(QStringLiteral("preview/decodeMode"), m_decodeMode);
+    ClipReaderPool::instance().setHardwareDecodeMode(decodeModeFromString(m_decodeMode),
+                                                     decodeBackendFromString(m_decodeMode));
+    // A new path gets a fresh benefit of the doubt: a fallback under the old one says
+    // nothing about this one, and leaving the count behind would suppress the notice.
+    m_hwFallbackCount = ClipReader::hardwareFallbackCount();
+    emit decodeModeChanged();
+    refreshFrame();
+}
+
+// Readers drop to software on their own when a driver fails mid-decode, which is
+// otherwise invisible — the preview just gets slower. Called per composited frame;
+// the check is one relaxed atomic load.
+void PlaybackEngine::checkHardwareFallback()
+{
+    const quint64 count = ClipReader::hardwareFallbackCount();
+    if (count == m_hwFallbackCount)
+        return;
+    m_hwFallbackCount = count;
+    if (m_decodeMode == QStringLiteral("software"))
+        return;
+
+    const drift::hwaccel::Backend backend = decodeBackendFromString(m_decodeMode);
+    emit hardwareDecodeFellBack(backend == drift::hwaccel::Backend::None
+                                    ? QString()
+                                    : QString::fromLatin1(drift::hwaccel::name(backend)));
+}
+
 drift::TimeUs PlaybackEngine::frameStepUs() const
 {
     return drift::frameDurationUs(m_project ? qMax(1, m_project->fps()) : 30);
@@ -257,6 +454,9 @@ void PlaybackEngine::play()
     m_clock.reset(m_playheadUs, m_sampleRate);
     m_playing = true;
     m_compositor.setPlaybackActive(true);
+    // Android dims and locks on its own idle timer, which would be wrong mid-playback even
+    // without touch input; no-op on desktop.
+    drift::android::acquireKeepScreenOn();
 
     if (isQualityMode()) {
         // Quality mode is not realtime: the playhead steps one frame per
@@ -268,6 +468,9 @@ void PlaybackEngine::play()
         return;
     }
 
+    // Only the realtime path makes sound — quality mode leaves the sink stopped — and taking
+    // focus for a silent render would interrupt whatever the user is listening to for nothing.
+    requestAudioFocus();
     ensureAudioSink();
     m_clock.start();
 
@@ -303,6 +506,8 @@ void PlaybackEngine::pause()
 
     m_playing = false;
     m_compositor.setPlaybackActive(false);
+    drift::android::releaseKeepScreenOn();
+    abandonAudioFocus();
     m_playheadTimer.stop();
     m_compositeTimer.stop();
     m_clock.pause();
@@ -410,6 +615,8 @@ void PlaybackEngine::onCompositeFinished()
 
 void PlaybackEngine::onFrameReady(const GpuFrameTexture &frame)
 {
+    checkHardwareFallback();
+
     if (!frame.isValid())
         return;
 
