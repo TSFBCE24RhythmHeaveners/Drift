@@ -30,6 +30,9 @@ PanelFrame {
         cutHoverClip = -1
     }
 
+    property real panLastSceneX: 0
+    property real panLastSceneY: 0
+
     // CapCut: V = Select, B = Blade. These are registered actions ("selectTool" /
     // "bladeTool") so they appear in the shortcut list and can be rebound; the tool
     // state lives here rather than in the backend, so Main.qml dispatches them
@@ -119,6 +122,9 @@ PanelFrame {
     }
     readonly property var tracks: EditorState.tracks
     readonly property real playheadSeconds: EditorState.playheadSeconds
+    // True between beginPlayheadSeek and endPlayheadSeek when playback was
+    // interrupted so a click or drag could land, and should resume on release.
+    property bool resumePlaybackAfterSeek: false
     readonly property int selectedTrack: EditorState.selectedTrack
     readonly property int selectedClip: EditorState.selectedClip
 
@@ -562,8 +568,6 @@ PanelFrame {
     }
 
     function handleTimelineWheel(wheel) {
-        const maxX = Math.max(0, flick.contentWidth - flick.width)
-        const maxY = Math.max(0, flick.contentHeight - flick.height)
         if (wheel.modifiers & Qt.ControlModifier) {
             // Wheel MouseAreas live in content space, so wheel.x is already a
             // content X — keep that time fixed under the cursor.
@@ -576,26 +580,43 @@ PanelFrame {
 
         const dy = wheel.angleDelta.y
         const dx = wheel.angleDelta.x
+        const invert = EditorState.invertTimelineScroll
+
+        // Invert (Kdenlive-style): wheel pans along time, Shift+wheel moves
+        // between tracks. Trackpad horizontal motion always pans time.
+        if (invert) {
+            if (wheel.modifiers & Qt.ShiftModifier) {
+                const delta = dy !== 0 ? dy : dx
+                panTimelineBy(0, delta)
+                return
+            }
+            if (dx !== 0)
+                panTimelineBy(dx, 0)
+            if (dy !== 0)
+                panTimelineBy(dy, 0)
+            return
+        }
 
         // Shift forces horizontal scrolling regardless of overflow.
         if (wheel.modifiers & Qt.ShiftModifier) {
             const delta = dy !== 0 ? dy : dx
-            flick.contentX = Math.max(0, Math.min(maxX, flick.contentX - delta))
+            panTimelineBy(delta, 0)
             return
         }
 
         // Trackpad horizontal component always scrolls horizontally.
         if (dx !== 0)
-            flick.contentX = Math.max(0, Math.min(maxX, flick.contentX - dx))
+            panTimelineBy(dx, 0)
 
         // Vertical wheel scrolls the tracks when they overflow the viewport;
         // otherwise it falls back to horizontal so short timelines keep the
         // previous wheel-to-pan behaviour.
         if (dy !== 0) {
+            const maxY = Math.max(0, flick.contentHeight - flick.height)
             if (maxY > 0)
-                flick.contentY = Math.max(0, Math.min(maxY, flick.contentY - dy))
+                panTimelineBy(0, dy)
             else
-                flick.contentX = Math.max(0, Math.min(maxX, flick.contentX - dy))
+                panTimelineBy(dy, 0)
         }
     }
 
@@ -634,6 +655,23 @@ PanelFrame {
         root.renameClipIndex = clipIndex
         clipRenameField.text = clips[clipIndex].name || ""
         clipRenameDialog.open()
+    }
+
+    // Seeking while the engine clock is running lands ahead of the click: the
+    // sink's processedUSecs is cumulative from play(), so the visible playhead
+    // becomes clickTime + elapsed. Pause for the gesture and resume on release.
+    function beginPlayheadSeek() {
+        if (!EditorState.playing)
+            return
+        resumePlaybackAfterSeek = true
+        EditorState.playing = false
+    }
+
+    function endPlayheadSeek() {
+        if (!resumePlaybackAfterSeek)
+            return
+        resumePlaybackAfterSeek = false
+        EditorState.playing = true
     }
 
     function ensurePlayheadVisible() {
@@ -675,6 +713,30 @@ PanelFrame {
         property: "contentX"
         duration: Theme.durationBase
         easing.type: Theme.easingInOut
+    }
+
+    function panTimelineBy(dx, dy) {
+        contentXAnimation.stop()
+        const maxX = Math.max(0, flick.contentWidth - flick.width)
+        const maxY = Math.max(0, flick.contentHeight - flick.height)
+        if (dx)
+            flick.contentX = Math.max(0, Math.min(maxX, flick.contentX - dx))
+        if (dy)
+            flick.contentY = Math.max(0, Math.min(maxY, flick.contentY - dy))
+    }
+
+    function beginTimelinePan(item, mouse) {
+        const p = item.mapToItem(null, mouse.x, mouse.y)
+        panLastSceneX = p.x
+        panLastSceneY = p.y
+        contentXAnimation.stop()
+    }
+
+    function updateTimelinePan(item, mouse) {
+        const p = item.mapToItem(null, mouse.x, mouse.y)
+        panTimelineBy(p.x - panLastSceneX, p.y - panLastSceneY)
+        panLastSceneX = p.x
+        panLastSceneY = p.y
     }
 
     Column {
@@ -798,26 +860,42 @@ PanelFrame {
                     width: flick.contentWidth
                     height: flick.contentHeight
 
-                    // Wheel handling: scoped to the ruler so it does not block timeline drops.
+                    // Wheel + middle-click pan: scoped to the ruler so it does not
+                    // block timeline drops. Left/right clicks fall through.
                     MouseArea {
                         id: rulerWheelArea
                         width: parent.width
                         y: flick.contentY
                         height: Theme.timelineRulerHeight + Theme.timelineBookmarkRowHeight
                         z: 1
-                        acceptedButtons: Qt.NoButton
+                        acceptedButtons: Qt.MiddleButton
+                        preventStealing: true
+                        cursorShape: pressed ? Qt.ClosedHandCursor : Qt.ArrowCursor
                         onWheel: (wheel) => root.handleTimelineWheel(wheel)
+                        onPressed: (mouse) => root.beginTimelinePan(rulerWheelArea, mouse)
+                        onPositionChanged: (mouse) => {
+                            if (pressed)
+                                root.updateTimelinePan(rulerWheelArea, mouse)
+                        }
                     }
 
                     // Horizontal scroll / zoom wheel over track rows (below the drop overlay).
                     MouseArea {
+                        id: tracksWheelArea
                         x: 0
                         y: Theme.timelineRulerHeight + Theme.timelineBookmarkRowHeight
                         width: parent.width
                         height: Math.max(root.totalTracksHeight(), Theme.trackHeightVideo)
                         z: 150
-                        acceptedButtons: Qt.NoButton
+                        acceptedButtons: Qt.MiddleButton
+                        preventStealing: true
+                        cursorShape: pressed ? Qt.ClosedHandCursor : Qt.ArrowCursor
                         onWheel: (wheel) => root.handleTimelineWheel(wheel)
+                        onPressed: (mouse) => root.beginTimelinePan(tracksWheelArea, mouse)
+                        onPositionChanged: (mouse) => {
+                            if (pressed)
+                                root.updateTimelinePan(tracksWheelArea, mouse)
+                        }
                     }
 
                     // seek strip (ruler + bookmark lane) ------------------------------------
@@ -860,11 +938,17 @@ PanelFrame {
 
                             // Seeking is not a selection change: scrubbing to look at a
                             // different point used to drop the clip you were editing.
-                            onPressed: (mouse) => scrubTo(mouse.x)
+                            onPressed: (mouse) => {
+                                root.forceActiveFocus()
+                                root.beginPlayheadSeek()
+                                scrubTo(mouse.x)
+                            }
                             onPositionChanged: (mouse) => {
                                 if (pressed)
                                     scrubTo(mouse.x)
                             }
+                            onReleased: root.endPlayheadSeek()
+                            onCanceled: root.endPlayheadSeek()
                             // MouseArea would otherwise swallow wheel and block Ctrl-zoom.
                             onWheel: (wheel) => root.handleTimelineWheel(wheel)
 
@@ -1166,6 +1250,7 @@ PanelFrame {
                         cursorShape: pressed ? Qt.CrossCursor : Qt.ArrowCursor
 
                         onPressed: (mouse) => {
+                            root.forceActiveFocus()
                             root.marqueeAdditive = (mouse.modifiers & Qt.ShiftModifier) !== 0
                             root.marqueeOriginX = mouse.x
                             root.marqueeOriginY = mouse.y
@@ -1823,7 +1908,15 @@ PanelFrame {
                             drag.threshold: 0
                             drag.minimumX: 0
                             drag.maximumX: flick.contentWidth - Theme.playheadLineWidth
-                            onReleased: playhead.finishSeek()
+                            onPressed: root.beginPlayheadSeek()
+                            onReleased: {
+                                playhead.finishSeek()
+                                root.endPlayheadSeek()
+                            }
+                            onCanceled: {
+                                playhead.finishSeek()
+                                root.endPlayheadSeek()
+                            }
                         }
 
                         // Narrow grab down the timeline line — stays thin so clip
@@ -1841,7 +1934,15 @@ PanelFrame {
                             drag.threshold: 0
                             drag.minimumX: 0
                             drag.maximumX: flick.contentWidth - Theme.playheadLineWidth
-                            onReleased: playhead.finishSeek()
+                            onPressed: root.beginPlayheadSeek()
+                            onReleased: {
+                                playhead.finishSeek()
+                                root.endPlayheadSeek()
+                            }
+                            onCanceled: {
+                                playhead.finishSeek()
+                                root.endPlayheadSeek()
+                            }
                         }
                     }
 

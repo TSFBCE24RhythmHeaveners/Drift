@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Window
 import Drift
 
 // Themed modal dialog chrome. Put page content in `contentItem`; use footer buttons
@@ -60,10 +61,20 @@ Dialog {
     // Give the dialog focus on open so the key handlers above are live and the
     // default action is visibly selected.
     onOpened: {
+        const host = Overlay.overlay ? Overlay.overlay.Window.window : null
+        if (host && host.pushOverlayModal)
+            host.pushOverlayModal()
         if (showAccept)
             acceptButton.forceActiveFocus()
         else
             root.forceActiveFocus()
+        Haptics.detent()
+    }
+
+    onClosed: {
+        const host = Overlay.overlay ? Overlay.overlay.Window.window : null
+        if (host && host.popOverlayModal)
+            host.popOverlayModal()
     }
 
     enter: Transition {
@@ -115,6 +126,28 @@ Dialog {
         // Return shortcut above works around.
         Accessible.role: Accessible.Dialog
         Accessible.name: root.title
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
+            preventStealing: true
+            onPressed: (mouse) => { mouse.accepted = true }
+            onWheel: (wheel) => { wheel.accepted = true }
+        }
+    }
+
+    Overlay.modal: Rectangle {
+        color: Qt.rgba(0, 0, 0, 0.5)
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
+            preventStealing: true
+            onPressed: (mouse) => { mouse.accepted = true }
+            onWheel: (wheel) => { wheel.accepted = true }
+        }
     }
 
     header: Item {

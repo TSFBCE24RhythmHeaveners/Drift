@@ -23,10 +23,25 @@ ApplicationWindow {
     // opaque popup items, so there is nothing to enumerate — each themed menu registers
     // itself here instead, and Back closes the top one.
     property var _openMenus: []
+    // How many Overlay-hosted dialogs/sheets are open. PointerHandlers on the
+    // editor hit-test their parent bounds, not z-order, so a tap on empty dialog
+    // chrome still reached the timeline; this count drives a guard over the page.
+    property int overlayModalCount: 0
+
+    function pushOverlayModal() {
+        overlayModalCount++
+    }
+
+    function popOverlayModal() {
+        overlayModalCount = Math.max(0, overlayModalCount - 1)
+    }
+
     // The live AndroidEditor instance, so Back can ask it to close a sheet first.
     property var editorPage: null
     // The live AndroidHome instance, so Back can refuse to leave mid-import.
     property var homePage: null
+    // The preview-and-edit screen while it is on the stack; Back pops it before anything else.
+    property var mediaPreviewPage: null
 
     function confirmIfDirty(action) {
         if (!EditorState.hasUnsavedChanges) {
@@ -217,6 +232,10 @@ ApplicationWindow {
     }
 
     ProjectSetupDialog { id: projectSetupDialog }
+    LanguageChooserDialog {
+        id: languageChooserDialog
+        onClosed: window.continueStartupAfterLanguage()
+    }
     LayoutChooserDialog { id: layoutChooserDialog }
 
     // Desktop reaches this from EditorHeader, which Android replaces with AndroidTopBar;
@@ -296,7 +315,6 @@ ApplicationWindow {
     SpeedCurveWindow { id: speedCurveWindow }
     FadeCurveWindow { id: fadeCurveWindow }
     MulticamWindow { id: multicamWindow }
-    MediaPreviewWindow { id: mediaPreviewWindow }
 
     // Every inspector reaches these through Window.window.<name>() — the same contract
     // Main.qml offers on desktop. A missing one is a runtime TypeError, not a dead button.
@@ -316,8 +334,24 @@ ApplicationWindow {
         fadeCurveWindow.openFor(track, clip)
     }
 
+    // Preview-and-edit is its own screen, not one of the Windows above: a secondary Window gets
+    // no safe-area insets here (its header lands under the status bar) and a VideoOutput inside
+    // one paints black. Pushed onto the stack rather than layered over it, because an item over
+    // the stack still lost its top band to the editor's top bar and its bottom to the rail.
     function openMediaPreview(assetIndex) {
-        mediaPreviewWindow.openFor(assetIndex)
+        if (window.mediaPreviewPage)
+            return
+        if (window.editorPage)
+            window.editorPage.closeSheets()
+        const page = stack.push(mediaPreviewComponent)
+        window.mediaPreviewPage = page
+        page.openFor(assetIndex)
+    }
+
+    function closeMediaPreview() {
+        if (!window.mediaPreviewPage)
+            return
+        window.mediaPreviewPage.close()
     }
 
     function openMulticam() {
@@ -355,7 +389,8 @@ ApplicationWindow {
     // Back handling defers to them instead of popping the stack behind them.
     readonly property bool toolWindowOpen: segmentationWindow.visible || denoiseWindow.visible
                                            || speedCurveWindow.visible || fadeCurveWindow.visible
-                                           || multicamWindow.visible || mediaPreviewWindow.visible
+                                           || multicamWindow.visible
+                                           || window.mediaPreviewPage !== null
 
     function closeTopToolWindow() {
         if (segmentationWindow.visible)
@@ -368,8 +403,8 @@ ApplicationWindow {
             fadeCurveWindow.close()
         else if (multicamWindow.visible)
             multicamWindow.close()
-        else if (mediaPreviewWindow.visible)
-            mediaPreviewWindow.close()
+        else if (window.mediaPreviewPage)
+            window.mediaPreviewPage.close()
     }
 
     Timer {
@@ -380,6 +415,8 @@ ApplicationWindow {
         onTriggered: {
             // Opting in to reopening the last project already restores the autosave, so
             // asking about it as well is a question the user has answered once already.
+            if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+                return
             if (!EditorState.recoveryAvailable || EditorState.reopenLastProject) {
                 stop()
                 attempts = 0
@@ -393,6 +430,14 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        if (EditorState.needsUiLanguagePrompt) {
+            languageChooserDialog.openChooser()
+            return
+        }
+        window.continueStartupAfterLanguage()
+    }
+
+    function continueStartupAfterLanguage() {
         // Tapping a .drift in a file manager launches us with ACTION_VIEW. That project is
         // what the user asked for, so it outranks the reopen-last-project restore below.
         // Empty on desktop, where the intent does not exist.
@@ -430,6 +475,8 @@ ApplicationWindow {
     Connections {
         target: EditorState
         function onRecoveryChanged() {
+            if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+                return
             if (EditorState.reopenLastProject)
                 return
             if (EditorState.recoveryAvailable)
@@ -597,6 +644,37 @@ ApplicationWindow {
         replaceExit: pushExit
     }
 
+    // Under the Overlay, over the page. Overlay popups stay interactive; the
+    // editor cannot. Hidden during TouchDrag so a lift-from-sheet can still land.
+    MouseArea {
+        id: overlayInputGuard
+        anchors.fill: parent
+        visible: window.overlayModalCount > 0 && !TouchDrag.active
+        acceptedButtons: Qt.AllButtons
+        hoverEnabled: true
+        preventStealing: true
+        onPressed: (mouse) => { mouse.accepted = true }
+        onWheel: (wheel) => { wheel.accepted = true }
+
+        readonly property int _stealHandlers: PointerHandler.CanTakeOverFromHandlersOfSameType
+                                            | PointerHandler.CanTakeOverFromHandlersOfDifferentType
+
+        TapHandler {
+            acceptedButtons: Qt.AllButtons
+            grabPermissions: overlayInputGuard._stealHandlers
+        }
+
+        PinchHandler {
+            target: null
+            grabPermissions: overlayInputGuard._stealHandlers
+        }
+
+        DragHandler {
+            target: null
+            grabPermissions: overlayInputGuard._stealHandlers
+        }
+    }
+
     Component {
         id: homeComponent
         AndroidHome {
@@ -605,6 +683,18 @@ ApplicationWindow {
             onEnterEditor: window.showEditor()
             onOpenProjectRequested: window.openProjectFile()
             onOpenRecentRequested: (path) => window.openRecent(path)
+        }
+    }
+
+    Component {
+        id: mediaPreviewComponent
+        AndroidMediaPreview {
+            id: mediaPreviewItem
+            onClosed: {
+                window.mediaPreviewPage = null
+                if (stack.currentItem === mediaPreviewItem)
+                    stack.pop()
+            }
         }
     }
 

@@ -22,7 +22,7 @@ mkdir -p "$DEST"
 icons=(
   scissors chevrons-left undo redo clipboard-paste copy-plus copy trash-2 snowflake
   bookmark layers magnet link-2 unlink-2 fold-horizontal zoom-out zoom-in gauge play pause
-  maximize folder headphones type smile wand-sparkles sparkles sliders-horizontal settings upload plus
+  maximize locate-fixed folder headphones type smile wand-sparkles sparkles sliders-horizontal settings upload plus
   volume-2 volume-off eye eye-off film music image shapes chevron-down chevron-up chevrons-right x
   message-square moon sun grid-3x3 list arrow-down-a-z grip-vertical
   # Fit timeline in view (manual zoom calibration)
@@ -30,6 +30,8 @@ icons=(
   # Close a timeline gap (arrows collapsing toward each other)
   chevrons-right-left
   save arrow-right-to-line arrow-left-to-line tags blend option square-dashed puzzle bug info
+  # Header: agent access, language picker, multicam
+  bot languages shuffle
   # Project bundle: package/properties entries in the project menu
   package file-text
   # Status / feedback (toasts, inline errors, empty states)
@@ -45,7 +47,8 @@ icons=(
   # Preview transport: frame step and time jump, either side of play/pause.
   step-back step-forward rewind fast-forward
   # Timeline / media
-  captions list-video move-horizontal mouse-pointer audio-lines video
+  captions list-video list-chevrons-down-up list-chevrons-up-down
+  move-horizontal mouse-pointer audio-lines video
   smartphone monitor square ratio
   # Shortcuts tab and canvas crop tool
   keyboard crop minimize

@@ -4,6 +4,7 @@
 #include "SubtitleCue.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QUuid>
@@ -222,8 +223,18 @@ QJsonObject clipToJson(const Clip &clip)
         {QStringLiteral("faceTrackPath"), clip.faceTrackPath},
         {QStringLiteral("faceTrackSrcOffsetUs"), qint64(clip.faceTrackSrcOffsetUs)},
         {QStringLiteral("stabilizePath"), clip.stabilizePath},
+        {QStringLiteral("stabilizeMode"), stabilizeModeToString(clip.stabilizeMode)},
         {QStringLiteral("stabilizeSmoothing"), clip.stabilizeSmoothing},
         {QStringLiteral("stabilizeTripod"), clip.stabilizeTripod},
+        {QStringLiteral("stabilizeAppliedSmoothing"), clip.stabilizeAppliedSmoothing},
+        {QStringLiteral("stabilizeAppliedTripod"), clip.stabilizeAppliedTripod},
+        {QStringLiteral("stabilizeAppliedMode"), stabilizeModeToString(clip.stabilizeAppliedMode)},
+        {QStringLiteral("stabilizeHasRestPose"), clip.stabilizeHasRestPose},
+        {QStringLiteral("stabilizeRestX"), clip.stabilizeRestX},
+        {QStringLiteral("stabilizeRestY"), clip.stabilizeRestY},
+        {QStringLiteral("stabilizeRestW"), clip.stabilizeRestW},
+        {QStringLiteral("stabilizeRestH"), clip.stabilizeRestH},
+        {QStringLiteral("stabilizeRestRot"), clip.stabilizeRestRot},
         {QStringLiteral("fadeInUs"), static_cast<double>(clip.fadeInUs)},
         {QStringLiteral("fadeOutUs"), static_cast<double>(clip.fadeOutUs)},
         {QStringLiteral("fadeCurve"), fadeCurveToString(clip.fadeCurve)},
@@ -308,8 +319,27 @@ Clip clipFromJsonV2(const QJsonObject &object, int canvasW = 1920, int canvasH =
     clip.faceTrackSrcOffsetUs =
         TimeUs(object.value(QStringLiteral("faceTrackSrcOffsetUs")).toInteger(0));
     clip.stabilizePath = object.value(QStringLiteral("stabilizePath")).toString();
+    clip.stabilizeMode =
+        stabilizeModeFromString(object.value(QStringLiteral("stabilizeMode")).toString());
     clip.stabilizeSmoothing = object.value(QStringLiteral("stabilizeSmoothing")).toInt(15);
     clip.stabilizeTripod = object.value(QStringLiteral("stabilizeTripod")).toBool(false);
+    clip.stabilizeAppliedSmoothing = object.value(QStringLiteral("stabilizeAppliedSmoothing")).toInt(-1);
+    clip.stabilizeAppliedTripod = object.value(QStringLiteral("stabilizeAppliedTripod")).toBool(false);
+    clip.stabilizeAppliedMode =
+        stabilizeModeFromString(object.value(QStringLiteral("stabilizeAppliedMode")).toString());
+    clip.stabilizeHasRestPose = object.value(QStringLiteral("stabilizeHasRestPose")).toBool(false);
+    clip.stabilizeRestX = object.value(QStringLiteral("stabilizeRestX")).toDouble(0.0);
+    clip.stabilizeRestY = object.value(QStringLiteral("stabilizeRestY")).toDouble(0.0);
+    clip.stabilizeRestW = object.value(QStringLiteral("stabilizeRestW")).toDouble(0.0);
+    clip.stabilizeRestH = object.value(QStringLiteral("stabilizeRestH")).toDouble(0.0);
+    clip.stabilizeRestRot = object.value(QStringLiteral("stabilizeRestRot")).toDouble(0.0);
+    // Older projects stored a bake without recording which settings produced it.
+    // Treat the current sliders as applied so the inspector does not warn spuriously.
+    if (!clip.stabilizePath.isEmpty() && clip.stabilizeAppliedSmoothing < 0) {
+        clip.stabilizeAppliedSmoothing = clip.stabilizeSmoothing;
+        clip.stabilizeAppliedTripod = clip.stabilizeTripod;
+        clip.stabilizeAppliedMode = StabilizeMode::Bake;
+    }
     clip.fadeInUs = static_cast<TimeUs>(object.value(QStringLiteral("fadeInUs")).toDouble());
     clip.fadeOutUs = static_cast<TimeUs>(object.value(QStringLiteral("fadeOutUs")).toDouble());
     clip.fadeCurve = fadeCurveFromString(object.value(QStringLiteral("fadeCurve")).toString());
@@ -394,6 +424,8 @@ QJsonObject assetToJson(const MediaAsset &asset)
     // existed. Older builds ignore the key; a project without it simply reads back empty.
     if (!asset.sourceUri.isEmpty())
         object.insert(QStringLiteral("sourceUri"), asset.sourceUri);
+    if (!asset.folderId.isEmpty())
+        object.insert(QStringLiteral("folderId"), asset.folderId);
     return object;
 }
 
@@ -416,6 +448,7 @@ MediaAsset assetFromJsonV2(const QJsonObject &object)
     asset.codecName = object.value(QStringLiteral("codecName")).toString();
     asset.thumbnailPath = object.value(QStringLiteral("thumbnailPath")).toString();
     asset.filmstripPath = object.value(QStringLiteral("filmstripPath")).toString();
+    asset.folderId = object.value(QStringLiteral("folderId")).toString();
     if (object.contains(QStringLiteral("hasAudio"))) {
         asset.hasAudioKnown = true;
         asset.hasAudio = object.value(QStringLiteral("hasAudio")).toBool();
@@ -518,6 +551,8 @@ Project Project::detachedCopy() const
     out.m_bookmarks.detach();
     out.m_assetOrder.detach();
     out.m_assetsById.detach();
+    out.m_binFolderOrder.detach();
+    out.m_binFoldersById.detach();
     return out;
 }
 
@@ -554,6 +589,41 @@ QString Project::assetIdAt(int index) const
     if (index < 0 || index >= m_assetOrder.size())
         return {};
     return m_assetOrder.at(index);
+}
+
+QString Project::addBinFolder(BinFolder folder)
+{
+    if (folder.id.isEmpty())
+        folder.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
+    m_binFoldersById.insert(folder.id, folder);
+    if (!m_binFolderOrder.contains(folder.id))
+        m_binFolderOrder.append(folder.id);
+    return folder.id;
+}
+
+BinFolder *Project::binFolder(const QString &id)
+{
+    auto it = m_binFoldersById.find(id);
+    return it == m_binFoldersById.end() ? nullptr : &it.value();
+}
+
+const BinFolder *Project::binFolder(const QString &id) const
+{
+    auto it = m_binFoldersById.constFind(id);
+    return it == m_binFoldersById.constEnd() ? nullptr : &it.value();
+}
+
+int Project::binFolderIndex(const QString &id) const
+{
+    return m_binFolderOrder.indexOf(id);
+}
+
+QString Project::binFolderIdAt(int index) const
+{
+    if (index < 0 || index >= m_binFolderOrder.size())
+        return {};
+    return m_binFolderOrder.at(index);
 }
 
 Project Project::fromJson(const QJsonObject &object, QString *errorOut)
@@ -601,6 +671,17 @@ Project Project::fromJson(const QJsonObject &object, QString *errorOut)
             project.addAsset(assetFromJsonV2(assetObject));
         else
             project.addAsset(assetFromJsonV1(assetObject));
+    }
+
+    const QJsonArray binFoldersArray = object.value(QStringLiteral("binFolders")).toArray();
+    for (const QJsonValue &value : binFoldersArray) {
+        const QJsonObject folderObject = value.toObject();
+        BinFolder folder;
+        folder.id = folderObject.value(QStringLiteral("id")).toString();
+        folder.name = folderObject.value(QStringLiteral("name")).toString();
+        folder.parentId = folderObject.value(QStringLiteral("parentId")).toString();
+        if (!folder.id.isEmpty())
+            project.addBinFolder(folder);
     }
 
     // Rebuild tracks from JSON. The Project ctor seeds a 1-track default, so
@@ -691,6 +772,18 @@ QJsonObject Project::toJson() const
             assetsArray.append(assetToJson(*assetPtr));
     }
 
+    QJsonArray binFoldersArray;
+    for (const QString &id : m_binFolderOrder) {
+        const BinFolder *folderPtr = binFolder(id);
+        if (folderPtr) {
+            binFoldersArray.append(QJsonObject{
+                {QStringLiteral("id"), folderPtr->id},
+                {QStringLiteral("name"), folderPtr->name},
+                {QStringLiteral("parentId"), folderPtr->parentId},
+            });
+        }
+    }
+
     QJsonArray tracksArray;
     for (const Track &track : m_tracks) {
         QJsonArray clipsArray;
@@ -734,6 +827,7 @@ QJsonObject Project::toJson() const
         {QStringLiteral("height"), m_height},
         {QStringLiteral("sampleRate"), m_sampleRate},
         {QStringLiteral("assets"), assetsArray},
+        {QStringLiteral("binFolders"), binFoldersArray},
         {QStringLiteral("tracks"), tracksArray},
         {QStringLiteral("bookmarks"), bookmarksArray},
         {QStringLiteral("background"), backgroundToJson(m_background)},
@@ -743,6 +837,17 @@ QJsonObject Project::toJson() const
         root.insert(QStringLiteral("workAreaOutUs"), static_cast<double>(m_workAreaOutUs));
     }
     return root;
+}
+
+QByteArray Project::toCompactJson() const
+{
+    return QJsonDocument(toJson()).toJson(QJsonDocument::Compact);
+}
+
+QString Project::contentHash() const
+{
+    return QString::fromLatin1(
+        QCryptographicHash::hash(toCompactJson(), QCryptographicHash::Sha256).toHex());
 }
 
 } // namespace drift

@@ -26,7 +26,9 @@ PanelFrame {
     // Imports and reports the outcome. `importUrls` skips anything it cannot
     // probe, so a bad file used to just never appear with no explanation at all.
     // Comparing the row count before and after tells us how many were rejected.
-    function importUrlsReporting(urls) {
+    // `fromDrop` is the Flatpak case: a drag hands us a host path the sandbox
+    // cannot open, which used to be reported as an unsupported format.
+    function importUrlsReporting(urls, fromDrop) {
         if (!urls || urls.length === 0)
             return
         // Async, because on Android reading a picked file means copying it out of the
@@ -40,10 +42,23 @@ PanelFrame {
         }
         root._importRequested = urls.length
         root._countBefore = before
+        root._importFromDrop = !!fromDrop
+    }
+
+    function importOpenFailedMessage(requested) {
+        if (root._importFromDrop && AssetLibrary.sandboxed) {
+            return requested === 1
+                ? qsTr("Could not open that file. This package cannot read files dropped from other apps — use Import to pick them instead.")
+                : qsTr("Could not open those files. This package cannot read files dropped from other apps — use Import to pick them instead.")
+        }
+        return requested === 1
+            ? qsTr("Could not open that file. It may have been moved, or you may not have permission to read it.")
+            : qsTr("Could not open any of the selected files.")
     }
 
     property int _importRequested: 0
     property int _countBefore: 0
+    property bool _importFromDrop: false
 
     Connections {
         target: AssetLibrary
@@ -54,43 +69,102 @@ PanelFrame {
             root._importRequested = 0
             const added = AssetLibrary.count - root._countBefore
             const skipped = requested - added
-            if (added > 0 && skipped > 0)
-                Toasts.warning(qsTr("Imported %1 of %2 files. %3 could not be read.")
-                               .arg(added).arg(requested).arg(skipped))
-            else if (added > 0)
+            if (added > 0 && skipped > 0) {
+                if (root._importFromDrop && AssetLibrary.sandboxed)
+                    Toasts.warning(qsTr("Imported %1 of %2 files. The rest could not be opened — this package cannot read files dropped from other apps. Use Import instead.")
+                                   .arg(added).arg(requested))
+                else
+                    Toasts.warning(qsTr("Imported %1 of %2 files. %3 could not be read.")
+                                   .arg(added).arg(requested).arg(skipped))
+            } else if (added > 0) {
                 Toasts.success(qsTr("Imported %n files.", "", added))
-            else if (requested === 1)
+            } else if (failed > 0) {
+                Toasts.error(root.importOpenFailedMessage(requested))
+            } else if (materialized > 0) {
+                Toasts.success(qsTr("Imported %n files.", "", requested))
+            } else if (requested === 1) {
                 Toasts.error(qsTr("Could not import that file — the format may be unsupported."))
-            else
+            } else {
                 Toasts.error(qsTr("Could not import any of the %n selected files.", "", requested))
+            }
         }
     }
 
     // True while an import is running, so the panel can show progress.
     readonly property bool importing: AssetLibrary.importing
 
-    // Asset awaiting confirmation in confirmAssetRemoval. The name is held
-    // separately because the row is gone by the time the toast reports it.
-    property int pendingRemovalIndex: -1
-    property string pendingRemovalName: ""
+    // A single id goes through the existing single-asset add so that case is byte-for-byte the
+    // behavior it always was; only an actual multi-selection goes through the batch add, which
+    // places each clip back to back in selection order instead of stacking them all at the
+    // playhead.
+    function requestAddToTimeline(assetIds) {
+        if (assetIds.length === 0)
+            return
 
-    // Removing an asset a clip still points at would leave that clip playing
-    // but unable to trim past its cut or merge, so refuse rather than confirm.
-    function requestRemoveAsset(assetIndex) {
-        const inUse = EditorState.clipCountForAsset(assetIndex)
-        const name = AssetLibrary.assetAt(assetIndex).name
-        if (inUse > 0) {
-            Toasts.warning(qsTr("“%1” is still used by %n clips on the timeline.", "", inUse).arg(name))
+        function runAdd() {
+            if (assetIds.length === 1)
+                EditorState.addClipFromAsset(AssetLibrary.indexOfId(assetIds[0]))
+            else
+                EditorState.addClipsFromAssets(assetIds)
+        }
+
+        // On a pristine project, the first video/image clip offers to set up the canvas
+        // (resolution/orientation) — same flow as dragging onto the timeline (see
+        // TimelinePanel.qml/AndroidTimeline.qml). For a multi-selection, offer it from the
+        // first asset that actually needs it, not always assetIds[0].
+        if (typeof Window === "undefined" || !Window.window || !Window.window.configureAndAddAsset) {
+            runAdd()
             return
         }
-        root.pendingRemovalIndex = assetIndex
-        root.pendingRemovalName = name
+        for (const id of assetIds) {
+            const index = AssetLibrary.indexOfId(id)
+            if (index >= 0 && EditorState.shouldConfigureProjectForAsset(index)) {
+                Window.window.configureAndAddAsset(index, runAdd)
+                return
+            }
+        }
+        runAdd()
+    }
+
+    // Asset ids awaiting confirmation in confirmAssetRemoval — a single-element array for a
+    // plain right-click, or the whole multi-selection. The label is held separately because
+    // the rows are gone by the time the toast reports on them.
+    property var pendingRemovalIds: []
+    property string pendingRemovalLabel: ""
+
+    // Removing an asset a clip still points at would leave that clip playing but unable to
+    // trim past its cut or merge, so refuse rather than confirm — for a bulk removal, refusing
+    // the whole batch over one in-use item beats silently dropping it and surprising the user
+    // with a smaller removal than they asked for.
+    function requestRemoveAsset(assetIds) {
+        const names = []
+        const inUseNames = []
+        for (const id of assetIds) {
+            const index = AssetLibrary.indexOfId(id)
+            if (index < 0)
+                continue
+            const name = AssetLibrary.assetAt(index).name
+            names.push(name)
+            if (EditorState.clipCountForAsset(index) > 0)
+                inUseNames.push(name)
+        }
+        if (inUseNames.length > 0) {
+            Toasts.warning(inUseNames.length === 1
+                ? qsTr("“%1” is still used by clips on the timeline.").arg(inUseNames[0])
+                : qsTr("%n of the selected items are still used by clips on the timeline.",
+                       "", inUseNames.length))
+            return
+        }
+        if (names.length === 0)
+            return
+        root.pendingRemovalIds = assetIds
+        root.pendingRemovalLabel = names.length === 1 ? names[0] : qsTr("%n items", "", names.length)
         confirmAssetRemoval.open()
     }
 
     ThemedDialog {
         id: confirmAssetRemoval
-        title: qsTr("Remove this media?")
+        title: root.pendingRemovalIds.length === 1 ? qsTr("Remove this media?") : qsTr("Remove these items?")
         acceptText: qsTr("Remove")
         acceptVariant: "destructive"
         preferredWidth: Theme.dialogWidthSm
@@ -102,15 +176,19 @@ PanelFrame {
             wrapMode: Text.WordWrap
             size: "sm"
             text: qsTr("“%1” will be removed from this project. The file on disk is not deleted.")
-                  .arg(root.pendingRemovalName)
+                  .arg(root.pendingRemovalLabel)
         }
 
         onAccepted: {
-            if (EditorState.removeAsset(root.pendingRemovalIndex))
-                Toasts.success(qsTr("Removed “%1”.").arg(root.pendingRemovalName))
-            root.pendingRemovalIndex = -1
+            const removed = EditorState.removeAssets(root.pendingRemovalIds)
+            if (removed > 0) {
+                Toasts.success(removed === 1
+                    ? qsTr("Removed “%1”.").arg(root.pendingRemovalLabel)
+                    : qsTr("Removed %n items.", "", removed))
+            }
+            root.pendingRemovalIds = []
         }
-        onRejected: root.pendingRemovalIndex = -1
+        onRejected: root.pendingRemovalIds = []
     }
 
     property int pendingRenameIndex: -1
@@ -159,6 +237,193 @@ PanelFrame {
             root.pendingRenameIndex = -1
         }
         onRejected: root.pendingRenameIndex = -1
+    }
+
+    ThemedDialog {
+        id: newFolderDialog
+        title: qsTr("New folder")
+        acceptText: qsTr("Create")
+        preferredWidth: Theme.dialogWidthSm
+
+        contentItem: Column {
+            width: parent ? parent.width : Theme.dialogWidthSm
+            spacing: Theme.spacingMd
+
+            ThemedLabel {
+                width: parent.width
+                text: qsTr("Name")
+                size: "sm"
+            }
+            ThemedTextField {
+                id: newFolderNameField
+                width: parent.width
+                placeholderText: qsTr("Folder name")
+            }
+        }
+
+        onOpened: {
+            newFolderNameField.text = ""
+            newFolderNameField.forceActiveFocus()
+        }
+        onAccepted: {
+            const label = newFolderNameField.text.trim()
+            if (label.length > 0)
+                EditorState.createBinFolder(label, EditorState.currentBinFolderId)
+        }
+    }
+
+    property string pendingFolderRenameId: ""
+
+    function requestRenameFolder(folderId, folderName) {
+        root.pendingFolderRenameId = folderId
+        folderRenameField.text = folderName || ""
+        folderRenameDialog.open()
+    }
+
+    ThemedDialog {
+        id: folderRenameDialog
+        title: qsTr("Rename folder")
+        acceptText: qsTr("Rename")
+        preferredWidth: Theme.dialogWidthSm
+
+        contentItem: Column {
+            width: parent ? parent.width : Theme.dialogWidthSm
+            spacing: Theme.spacingMd
+
+            ThemedLabel {
+                width: parent.width
+                text: qsTr("Name")
+                size: "sm"
+            }
+            ThemedTextField {
+                id: folderRenameField
+                width: parent.width
+                placeholderText: qsTr("Folder name")
+            }
+        }
+
+        onOpened: {
+            folderRenameField.forceActiveFocus()
+            folderRenameField.selectAll()
+        }
+        onAccepted: {
+            if (root.pendingFolderRenameId.length === 0)
+                return
+            const label = folderRenameField.text.trim()
+            if (label.length > 0)
+                EditorState.renameBinFolder(root.pendingFolderRenameId, label)
+            root.pendingFolderRenameId = ""
+        }
+        onRejected: root.pendingFolderRenameId = ""
+    }
+
+    // The "move to folder" path — right-click on a card (or a multi-selection), choose a
+    // destination from a flat list.
+    property var pendingMoveAssetIds: []
+    // The folder every selected asset is in right now, so the picker can omit it — moving them
+    // "into" the folder they're already in isn't a real destination. A single common value is
+    // safe here (not a per-asset lookup): MediaAssetsTab's grid only ever shows one folder's
+    // contents at a time, so anything selectable there already shares this folder.
+    property string pendingMoveAssetCurrentFolderId: ""
+
+    function requestMoveAssetToFolder(assetIds) {
+        root.pendingMoveAssetIds = assetIds
+        root.pendingMoveAssetCurrentFolderId = EditorState.currentBinFolderId
+        folderPickerDialog.open()
+    }
+
+    ThemedDialog {
+        id: folderPickerDialog
+        title: qsTr("Move to folder")
+        showFooter: false
+        preferredWidth: Theme.dialogWidthSm
+
+        // Flat list, root first, minus the folder the asset is already in — nesting depth is
+        // not shown, matching the breadcrumb's "where you are" rather than "the whole tree"
+        // framing.
+        //
+        // folderAt() is a plain invokable call, not a property read, so it isn't by itself
+        // enough to make this binding re-evaluate after a rename (BinFolderModel.count doesn't
+        // change either). Reading undoAvailable is a cheap way to add that dependency: its
+        // NOTIFY is undoStackChanged, which fires after every project edit including a rename.
+        readonly property var folderOptions: {
+            void EditorState.undoAvailable
+            const currentFolderId = root.pendingMoveAssetCurrentFolderId
+            const out = []
+            if (currentFolderId !== "")
+                out.push({ id: "", name: qsTr("Media") })
+            for (let i = 0; i < BinFolderModel.count; ++i) {
+                const folder = BinFolderModel.folderAt(i)
+                if (folder.id !== currentFolderId)
+                    out.push(folder)
+            }
+            return out
+        }
+
+        // A Rectangle used directly as contentItem never reports its explicit `height` as
+        // `implicitHeight`, so the Dialog (which sizes off contentItem.implicitHeight) sees zero
+        // and clips the list away entirely. Wrapping in a Column — which does propagate its
+        // children's real heights into implicitHeight — is the same fix LanguageChooserDialog
+        // already uses for the identical list-in-a-dialog shape.
+        contentItem: Column {
+            width: parent ? parent.width : Theme.dialogWidthSm
+
+            Rectangle {
+                width: parent.width
+                height: Math.min(pickerList.contentHeight + 2, 280)
+                radius: Theme.radiusSm
+                color: Theme.appBackground
+                border.width: Theme.borderWidth
+                border.color: Theme.panelBorder
+                clip: true
+
+                ListView {
+                    id: pickerList
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    clip: true
+                    model: folderPickerDialog.folderOptions
+                    interactive: contentHeight > height
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: AppScrollBar { }
+
+                    delegate: ItemDelegate {
+                        id: optionRow
+                        required property var modelData
+                        width: pickerList.width
+                        height: 40
+                        hoverEnabled: true
+
+                        HoverHandler {
+                            cursorShape: Qt.PointingHandCursor
+                        }
+
+                        background: Rectangle {
+                            color: optionRow.hovered ? Theme.popoverHover : "transparent"
+                        }
+
+                        contentItem: Text {
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            verticalAlignment: Text.AlignVCenter
+                            text: optionRow.modelData.name
+                            elide: Text.ElideRight
+                            color: Theme.panelForeground
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeSm
+                        }
+
+                        onClicked: {
+                            if (root.pendingMoveAssetIds.length > 0)
+                                EditorState.moveAssetsToFolder(root.pendingMoveAssetIds, optionRow.modelData.id)
+                            root.pendingMoveAssetIds = []
+                            folderPickerDialog.close()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Points a bin row at a different file while every clip using it stays put, so a project set
@@ -332,7 +597,7 @@ PanelFrame {
         keys: ["text/uri-list"]
         onDropped: (drop) => {
             if (drop.hasUrls)
-                root.importUrlsReporting(drop.urls)
+                root.importUrlsReporting(drop.urls, true)
         }
     }
 
@@ -552,6 +817,15 @@ PanelFrame {
                                 AssetLibrary.sortByKind()
                             root.sortByKind = !root.sortByKind
                         }
+                    }
+
+                    ThemedButton {
+                        text: qsTr("New Folder")
+                        variant: "ghost"
+                        glyph: Theme.icons.folder
+                        tooltip: qsTr("Create a new folder here")
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: newFolderDialog.open()
                     }
 
                     ThemedButton {
@@ -955,6 +1229,7 @@ PanelFrame {
 
             // Shared media browser used by the Media tab.
             MediaAssetsTab {
+                id: mediaAssetsTab
                 visible: kindsForTab(tabsModel.get(activeTab).tabId).length > 0
                 width: parent.width
                 opacity: root.tabOpacity
@@ -966,11 +1241,14 @@ PanelFrame {
                     if (typeof Window !== "undefined" && Window.window && Window.window.openMediaPreview)
                         Window.window.openMediaPreview(assetIndex)
                 }
-                onRemoveRequested: (assetIndex) => root.requestRemoveAsset(assetIndex)
+                onAddToTimelineRequested: (assetIds) => root.requestAddToTimeline(assetIds)
+                onRemoveRequested: (assetIds) => root.requestRemoveAsset(assetIds)
                 onReplaceRequested: (assetIndex) => root.requestReplaceAsset(assetIndex)
                 onRenameRequested: (assetIndex) => root.requestRenameAsset(assetIndex)
                 onExportRequested: (assetIndex) => root.requestExportAsset(assetIndex)
                 onImportRequested: root.importMedia()
+                onMoveToFolderRequested: (assetIds) => root.requestMoveAssetToFolder(assetIds)
+                onFolderRenameRequested: (folderId, folderName) => root.requestRenameFolder(folderId, folderName)
             }
         }
     }

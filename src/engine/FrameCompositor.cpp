@@ -1,5 +1,4 @@
 #include "FrameCompositor.h"
-#include <QFile>
 
 #include "ClipReaderPool.h"
 #include "CompositorFrameHistory.h"
@@ -276,9 +275,8 @@ QImage decodeClipMediaFrame(const drift::Clip &clip, drift::TimeUs timelineUs, i
 
     if (clip.type == drift::ClipType::Video) {
         const drift::VideoRead read = drift::resolveVideoRead(clip, timelineUs);
-        const QString videoPath = (!clip.stabilizePath.isEmpty() && QFile::exists(clip.stabilizePath)) ? clip.stabilizePath : read.path;
         return ClipReaderPool::instance().readVideoFrame(
-            videoPath, ClipReaderPool::streamIdForClip(clip.id), read.sourceUs, maxWidth, maxHeight);
+            read.path, ClipReaderPool::streamIdForClip(clip.id), read.sourceUs, maxWidth, maxHeight);
     }
 
     return {};
@@ -550,8 +548,8 @@ QImage gpuSourceForClip(const drift::Clip &clip, drift::TimeUs timelineUs, int m
     return CompositorFrameHistory::applyTimeEcho(samples, decay, blendMode);
 }
 
-// Prefer NV12 for plain video (preview upload path); fall back to RGBA QImage
-// when time_echo needs CPU blending or NV12 decode fails.
+// Prefer the preview AVFrame path for plain video; fall back to RGBA QImage
+// when time_echo needs CPU blending or preview decode fails.
 void fillGpuLayerPixels(GpuLayer &layer, const drift::Clip &clip, drift::TimeUs timelineUs, int maxWidth,
                         int maxHeight, int projectFps, int maxTimeEchoHistoryFrames)
 {
@@ -561,13 +559,10 @@ void fillGpuLayerPixels(GpuLayer &layer, const drift::Clip &clip, drift::TimeUs 
     const drift::Effect *timeEcho = findTimeEchoEffect(clip.effects);
     if (!timeEcho && clip.type == drift::ClipType::Video) {
         const drift::VideoRead read = drift::resolveVideoRead(clip, timelineUs);
-        const QString videoPath = (!clip.stabilizePath.isEmpty() && QFile::exists(clip.stabilizePath)) ? clip.stabilizePath : read.path;
-        const Nv12Frame nv12 = ClipReaderPool::instance().readVideoFrameNv12(
-            videoPath, ClipReaderPool::streamIdForClip(clip.id), read.sourceUs, maxWidth, maxHeight);
-        if (nv12.isValid()) {
-            layer.nv12 = nv12.data;
-            layer.nv12Width = nv12.width;
-            layer.nv12Height = nv12.height;
+        const PreviewVideoFrame video = ClipReaderPool::instance().readPreviewVideoFrame(
+            read.path, ClipReaderPool::streamIdForClip(clip.id), read.sourceUs, maxWidth, maxHeight);
+        if (video.isValid()) {
+            layer.video = video;
             return;
         }
     }
@@ -948,7 +943,7 @@ bool FrameCompositor::prepare(drift::TimeUs timelineUs, const RenderOptions &opt
 
     const int projectWidth = m_project->width();
     const int projectHeight = m_project->height();
-    const double renderScale = qBound(0.1, options.previewScale, 1.0);
+    const double renderScale = qBound(kMinPreviewScale, options.previewScale, 1.0);
     const int width = qMax(1, static_cast<int>(std::lround(projectWidth * renderScale)));
     const int height = qMax(1, static_cast<int>(std::lround(projectHeight * renderScale)));
     if (width <= 0 || height <= 0)
@@ -999,5 +994,14 @@ GpuFrameTexture FrameCompositor::compositeToTextureAt(drift::TimeUs timelineUs,
         return {};
 
     return GpuCompositor::renderToTexture(scene);
+}
+
+bool FrameCompositor::buildSceneAt(drift::TimeUs timelineUs, const RenderOptions &options,
+                                   GpuScene *sceneOut) const
+{
+    int width = 0;
+    int height = 0;
+    double renderScale = 1.0;
+    return prepare(timelineUs, options, sceneOut, &width, &height, &renderScale);
 }
 

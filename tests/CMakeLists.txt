@@ -17,7 +17,9 @@ qt_add_executable(tst_editorstate
     # requestImage is called directly.
     ../src/MulticamImageProvider.cpp
     ../src/models/AppController.cpp
+    ../src/models/AddonManager.cpp
     ../src/models/AssetLibrary.cpp
+    ../src/models/BinFolderListModel.cpp
     ../src/models/TimelineModel.cpp
     ../src/models/ClipListModel.cpp
     ../src/playback/PlaybackEngine.cpp
@@ -108,7 +110,9 @@ qt_add_executable(tst_mcp
     ../src/ClipPreviewImageStore.cpp
     ../src/MulticamImageStore.cpp
     ../src/models/AppController.cpp
+    ../src/models/AddonManager.cpp
     ../src/models/AssetLibrary.cpp
+    ../src/models/BinFolderListModel.cpp
     ../src/models/TimelineModel.cpp
     ../src/models/ClipListModel.cpp
     ../src/playback/PlaybackEngine.cpp

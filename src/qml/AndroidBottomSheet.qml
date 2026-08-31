@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Window
 import Drift
 import "components"
 
@@ -89,13 +90,28 @@ Popup {
         function onClosed() { root.steppedAside = false }
     }
 
+    onOpened: {
+        const host = Overlay.overlay ? Overlay.overlay.Window.window : null
+        if (host && host.pushOverlayModal)
+            host.pushOverlayModal()
+        Haptics.press()
+    }
+
+    onClosed: {
+        const host = Overlay.overlay ? Overlay.overlay.Window.window : null
+        if (host && host.popOverlayModal)
+            host.popOverlayModal()
+    }
+
     function expand() {
         expanded = true
+        Haptics.detent()
         animateTo(expandedHeight)
     }
 
     function collapse() {
         expanded = false
+        Haptics.detent()
         animateTo(collapsedHeight)
     }
 
@@ -117,6 +133,7 @@ Popup {
             close()
             return
         }
+        Haptics.drop()
         closeAnimation.stop()
         closeAnimation.from = root.panelHeight
         closeAnimation.start()
@@ -125,6 +142,7 @@ Popup {
     function beginDrag(globalY) {
         heightAnimation.stop()
         root._dragging = true
+        Haptics.pickUp()
         return { startGlobalY: globalY, startHeight: root.panelHeight }
     }
 
@@ -279,7 +297,23 @@ Popup {
         }
         MouseArea {
             anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
+            preventStealing: true
             onClicked: root.dismiss()
+        }
+
+        readonly property int _stealHandlers: PointerHandler.CanTakeOverFromHandlersOfSameType
+                                            | PointerHandler.CanTakeOverFromHandlersOfDifferentType
+
+        TapHandler {
+            acceptedButtons: Qt.AllButtons
+            grabPermissions: parent._stealHandlers
+        }
+
+        PinchHandler {
+            target: null
+            grabPermissions: parent._stealHandlers
         }
     }
 
@@ -292,6 +326,8 @@ Popup {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.bottom: panel.top
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
             onClicked: root.dismiss()
         }
 
@@ -311,12 +347,27 @@ Popup {
                 y: (1 - root._asideFade) * (root.panelHeight + root.safeBottom)
             }
 
-            // Catch presses on empty (non-scrolling) sheet chrome and drag the sheet.
-            // Flickables / buttons sit above this and keep their own gestures.
+            // PointerHandlers (preview pinch, clip taps) hit-test their parent's
+            // bounds, not z-order. A sibling MouseArea behind the body never saw
+            // empty-chrome presses — they punched through. The grabber has to be
+            // an ancestor of header and content; Flickables still steal because
+            // stealTouches is false.
             SheetDragArea {
+                id: panelGrab
                 anchors.fill: parent
                 stealTouches: false
-            }
+
+                TapHandler {
+                    acceptedButtons: Qt.AllButtons
+                    grabPermissions: PointerHandler.CanTakeOverFromHandlersOfSameType
+                                     | PointerHandler.CanTakeOverFromHandlersOfDifferentType
+                }
+
+                PinchHandler {
+                    target: null
+                    grabPermissions: PointerHandler.CanTakeOverFromHandlersOfSameType
+                                     | PointerHandler.CanTakeOverFromHandlersOfDifferentType
+                }
 
             Rectangle {
                 anchors.left: parent.left
@@ -375,6 +426,7 @@ Popup {
                     glyph: Theme.icons.x
                     variant: "text"
                     tooltip: qsTr("Close")
+                    haptic: "none"
                     onClicked: root.dismiss()
                 }
 
@@ -406,6 +458,7 @@ Popup {
                 anchors.leftMargin: root.safeLeft
                 anchors.rightMargin: root.safeRight
                 clip: true
+            }
             }
         }
 

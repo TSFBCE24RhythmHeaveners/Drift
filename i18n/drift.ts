@@ -135,10 +135,6 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Starting…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Cancel</source>
         <translation type="unfinished"></translation>
     </message>
@@ -223,6 +219,101 @@
     </message>
     <message>
         <source>Install all</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>AgentAccessDialog</name>
+    <message>
+        <source>Agent access</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Let Cursor or Claude edit this project for you — add clips, change the timeline, and check how it looks. Only programs on this computer. Starts off each time you open Drift; turn it off when you finish.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Allow for this session</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Allows an assistant on this computer to edit this project until you turn it off or quit.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Turn this on, then copy the setup for Cursor or Claude and paste it into that app.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Access is on</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copy the setup for the assistant you use. You only need one.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copy for Cursor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copy a setup snippet to paste into Cursor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copied for Cursor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copy for Claude</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copy a command to paste into Claude Code</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copied for Claude</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Paste that into the assistant. To help it use this editor, copy the how-to next and paste it into the chat.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copy a how-to for the agent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A short list of what the agent can do here — paste it into the chat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copied how-to</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>More options</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>For a different assistant, copy a one-time setup. The address and key are already in the Cursor and Claude copies above.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copy one-time setup</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add this once to the assistant’s config. Access still has to be turned on here.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copied one-time setup</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -479,29 +570,6 @@
 <context>
     <name>AndroidHome</name>
     <message>
-        <source>Media files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.png *.jpg *.jpeg *.gif *.webp *.bmp)</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Import Media</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>An import is already running.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message numerus="yes">
-        <source>Imported %n file(s).</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
-        </translation>
-    </message>
-    <message>
-        <source>Could not import the selected file(s).</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Create polished videos fast</source>
         <translation type="unfinished"></translation>
     </message>
@@ -550,19 +618,11 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Import media &amp; edit</source>
+        <source>Start with this layout</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Start blank</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Importing %1 of %2…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Importing…</source>
+        <source>Decide layout later</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -753,6 +813,69 @@
     </message>
     <message>
         <source>Couldn’t install “%1”: %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>AndroidMediaPreview</name>
+    <message>
+        <source>Back</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio only — trim it below</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Trim</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Crop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Keeping %1 to %2  ·  %3s</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Start here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>End here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Undo trim</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drag inside the box to move it, corners to resize</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Undo crop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Saving…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save keeps your changes as a new file in this project.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Nothing changed yet. Trim or crop above, or go back and drag this onto the timeline.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancel</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -1302,6 +1425,10 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Faster preview takes effect after you restart Drift.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>System default</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1542,10 +1669,6 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Analyzing video for stabilization (Pass 1)…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Face detection already in progress</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1752,10 +1875,6 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Rendering stabilized video (Pass 2)…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Video stabilized successfully!</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1843,6 +1962,46 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Building keyframes…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rendering stabilized video…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Analyzing camera motion…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilization cancelled.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilization analysis file is missing.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not read camera motion from the analysis file.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilize with Keyframes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilization keyframes applied.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not store the stabilized video.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Change Stabilization Mode</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source> (denoised)</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1872,6 +2031,10 @@
     </message>
     <message>
         <source>Install the emoji sticker pack to add emoji</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Frame rate</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -2661,6 +2824,40 @@
         <source>Close gap</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Folder created</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Folder renamed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Folder deleted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Media moved</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>%n items removed</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n items moved</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Clips added</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>AssetCategoryChips</name>
@@ -2769,13 +2966,6 @@
         </translation>
     </message>
     <message numerus="yes">
-        <source>“%1” is still used by %n clips on the timeline.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
         <source>Replaced with “%1”. %n clips were shortened to fit the new file.</source>
         <translation type="unfinished">
             <numerusform></numerusform>
@@ -2796,6 +2986,26 @@
     </message>
     <message>
         <source>Media</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not open that file. This package cannot read files dropped from other apps — use Import to pick them instead.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not open those files. This package cannot read files dropped from other apps — use Import to pick them instead.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not open that file. It may have been moved, or you may not have permission to read it.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not open any of the selected files.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Imported %1 of %2 files. The rest could not be opened — this package cannot read files dropped from other apps. Use Import instead.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -2937,6 +3147,63 @@
     <message>
         <source>%1 — drag onto an overlap between two clips</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>New folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Create</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Folder name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Move to folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>New Folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Create a new folder here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>“%1” is still used by clips on the timeline.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>%n of the selected items are still used by clips on the timeline.</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n items</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Remove these items?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Removed %n items.</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -3159,6 +3426,13 @@
     </message>
     <message>
         <source>The audio device does not support playback of this project.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>BinBreadcrumb</name>
+    <message>
+        <source>Media</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -3456,6 +3730,10 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Save</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Save project (%1)</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3464,7 +3742,11 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Agent access is on</source>
+        <source>Video</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Video size and layout</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -3472,7 +3754,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Agent access is on — localhost MCP is listening. Turn it off in Settings when you are done.</source>
+        <source>Agent access is on</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -3484,11 +3766,27 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Language</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Language for menus and labels</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Debug info</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Update</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Drift %1 is available</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Agent access</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -3512,6 +3810,10 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Workspace</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Workspace: portrait</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3529,6 +3831,10 @@
     </message>
     <message>
         <source>Portrait</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Theme</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -4389,6 +4695,33 @@
     </message>
 </context>
 <context>
+    <name>LanguageChooserDialog</name>
+    <message>
+        <source>Choose your language</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Continue</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Language for menus and labels. Takes effect immediately.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pick the language for menus and labels. You can change this later.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>LayoutChooserDialog</name>
     <message>
         <source>Choose your video layout</source>
@@ -4714,6 +5047,51 @@
     <message>
         <source>Import video, audio or images, then drag them onto the timeline. Right-click a clip to preview and trim it first.</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Move to folder…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This folder is empty</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drag media here, or import more.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Add %n items to timeline</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Add to timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Move %n items to folder…</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Remove %n items from project</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
     </message>
 </context>
 <context>
@@ -5332,6 +5710,10 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Stabilization</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Animation</source>
         <translation type="unfinished"></translation>
     </message>
@@ -5892,58 +6274,6 @@ If playback stutters, try another.</source>
 <context>
     <name>SettingsTab</name>
     <message>
-        <source>Custom</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Video size</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Choose layout…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Pick a platform template (YouTube, Instagram, TikTok, …) and quality</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Change the video size. Clips keep their current size and position.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Width</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Height</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Cancel crop</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Crop video size</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Drag the preview edges to change what’s included</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Changing size doesn’t shrink your clips — anything outside the new edges is cut off.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Preview guides</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Enabled</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Show alignment guides over the preview</source>
         <translation type="unfinished"></translation>
     </message>
@@ -5984,11 +6314,23 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Enter a color like #FF0000</source>
+        <source>Video</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show guides</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Blur strength</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Playback</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -5997,6 +6339,26 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Where playback is heard. “System default” follows whatever your computer is set to, including when that changes.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Interface</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Haptic feedback</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Vibrate on taps, snaps, and edits. Uses this device’s own haptic effects when it has them.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>App</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -6044,11 +6406,15 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Interface scale</source>
+        <source>100% (system)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>100% (system)</source>
+        <source>Faster preview (experimental)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Can make playback smoother by keeping video on the graphics card. Turn it off if the picture looks wrong. Takes effect after restart.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -6060,6 +6426,14 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Horizontal mouse-wheel pan</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Scroll pans left and right along the timeline. Shift+scroll moves between tracks. Middle-click drag also pans.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Language</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6068,95 +6442,11 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Startup</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Reopen last project on startup</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Automatically restore the last open project on startup. Closing still asks you to save; a crash snapshot never overwrites your save file.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Agent access</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Lets local agents (Cursor, Claude Code) control this editor: import media, edit the timeline, and capture frames. Any process on this computer with the token can do the same. Off at every launch. Turn it off when you are done.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Enable for this session</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Start a localhost MCP server. Not saved. Stops when Drift quits or you turn this off.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Listening on %1</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Token (shown once this session)</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Copy Cursor config</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Copy an mcp.json snippet with this session’s URL and token</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Copy Claude command</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Copy a claude mcp add command for this session</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Copy stdio attach (one-time setup)</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Add this once to mcp.json. drift --mcp-stdio talks to whichever session is running. Agent access still has to be turned on in Drift.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Copy agent guide</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Copy workflow, conventions, and toolbox list for agents</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Pinned endpoints: /mcp/media, /mcp/timeline, /mcp/canvas, /mcp/playback, /mcp/text, /mcp/effects, /mcp/project</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Agent workflow</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>1. Enable agent access for this session.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>2. Connect Cursor or Claude with the copied config.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>3. Call catalog, then toolbox, then apply with batched ops.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>4. Use inspect({clips:true}) for clip ids; capture() to verify frames.</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -6637,6 +6927,89 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Could not write subtitle file</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>StabilizeInspector</name>
+    <message>
+        <source>Bake a new video</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Animate with keyframes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Update stabilization</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Re-apply keyframes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilize with keyframes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Re-stabilize video</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilize video</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Smooths camera shake by writing position keyframes. Linear pans stay as two keys far apart; only direction changes get extra keys. Changing smoothness or tripod does not update the preview until you apply.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Smooths camera shake. Drift scans the clip once, then renders a new video. Changing smoothness or tripod does not update the preview until you apply.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Mode</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bake a new file, or animate the clip with sparse transform keys</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Smoothing</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>How many frames the smoother looks ahead and behind. Higher values hide more shake but crop the picture more.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tripod mode</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Locks the framing as if the camera were on a tripod. Crops more aggressively than smoothing alone.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Position keys still use the last run. Update to apply these settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preview still uses the last run. Update to apply these settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilizing…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancel</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -8018,34 +8391,6 @@ If playback stutters, try another.</source>
         <source>Reset position &amp; size</source>
         <translation type="unfinished"></translation>
     </message>
-    <message>
-        <source>Video Stabilization</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Analyzing...</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Stabilize Video</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Re-stabilize Video</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Remove</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Smoothing</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Tripod Mode (Freeze)</source>
-        <translation type="unfinished"></translation>
-    </message>
 </context>
 <context>
     <name>TransitionCatalog</name>
@@ -8203,6 +8548,68 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Opens the release page in your browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>VideoSizeControls</name>
+    <message>
+        <source>Custom</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose layout…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pick a platform template (YouTube, Instagram, TikTok, …) and quality</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Change the video size. Clips keep their current size and position.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Width</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Height</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Frames per second</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancel crop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Crop video size</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drag the preview edges to change what’s included</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Changing size doesn’t shrink your clips — anything outside the new edges is cut off.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips keep their length. A higher rate samples more pictures per second from the same footage.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>VideoSizeDialog</name>
+    <message>
+        <source>Video</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Close</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

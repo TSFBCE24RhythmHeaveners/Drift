@@ -14,6 +14,7 @@
 #include "ClipListModel.h"
 #include "TimelineModel.h"
 #include "models/AssetLibrary.h"
+#include "models/BinFolderListModel.h"
 
 #include <QAtomicInt>
 #include <QFuture>
@@ -37,6 +38,7 @@
 struct EffectTemplateEntry;
 
 class QTimer;
+class AddonManager;
 
 #ifndef Q_OS_ANDROID
 namespace drift::mcp {
@@ -53,6 +55,11 @@ class AppController : public QObject
     Q_OBJECT
 
     Q_PROPERTY(AssetLibrary *assetLibrary READ assetLibrary CONSTANT)
+    Q_PROPERTY(BinFolderListModel *binFolderModel READ binFolderModel CONSTANT)
+    // Which bin folder is currently being viewed; empty = bin root. Transient navigation state —
+    // not persisted, not undoable, same treatment as mediaGridMode's touch-only sibling.
+    Q_PROPERTY(QString currentBinFolderId READ currentBinFolderId WRITE setCurrentBinFolderId
+                   NOTIFY currentBinFolderIdChanged)
     Q_PROPERTY(TimelineModel *timelineModel READ timelineModel CONSTANT)
     Q_PROPERTY(ClipListModel *clipListModel READ clipListModel CONSTANT)
     Q_PROPERTY(PlaybackEngine *playback READ playback CONSTANT)
@@ -96,6 +103,12 @@ class AppController : public QObject
     Q_PROPERTY(bool autoKeyEnabled READ autoKeyEnabled WRITE setAutoKeyEnabled NOTIFY autoKeyEnabledChanged)
     // Opt-in: on launch, restore the last open project (saved .drift or unsaved recovery snapshot).
     Q_PROPERTY(bool reopenLastProject READ reopenLastProject WRITE setReopenLastProject NOTIFY reopenLastProjectChanged)
+    // Opt-in VAAPI dma-buf preview import. Takes effect after restart; hidden when this
+    // machine has no VAAPI decode backend.
+    Q_PROPERTY(bool vaapiZeroCopy READ vaapiZeroCopy WRITE setVaapiZeroCopy NOTIFY vaapiZeroCopyChanged)
+    Q_PROPERTY(bool vaapiZeroCopySupported READ vaapiZeroCopySupported CONSTANT)
+    Q_PROPERTY(bool invertTimelineScroll READ invertTimelineScroll WRITE setInvertTimelineScroll
+                   NOTIFY invertTimelineScrollChanged)
     // Session-only localhost MCP for agents. Never persisted. Off at every launch.
     Q_PROPERTY(bool mcpEnabled READ mcpEnabled WRITE setMcpEnabled NOTIFY mcpRunningChanged)
     Q_PROPERTY(bool mcpRunning READ mcpRunning NOTIFY mcpRunningChanged)
@@ -108,8 +121,11 @@ class AppController : public QObject
     Q_PROPERTY(QString mcpStdioSnippet READ mcpStdioSnippet NOTIFY mcpRunningChanged)
     // App-wide interface language, QSettings("ui/language"). Empty means follow the OS locale.
     // "en" is the source catalog (no .qm). Other codes match i18n/drift_<code>.qm.
+    // needsUiLanguagePrompt is true only on a brand-new install, before the first-launch chooser
+    // (or a later language pick from the header / Android Settings) has written ui/languageChosen.
     Q_PROPERTY(QString uiLanguage READ uiLanguage WRITE setUiLanguage NOTIFY uiLanguageChanged)
     Q_PROPERTY(QVariantList uiLanguages READ uiLanguages NOTIFY uiLanguageChanged)
+    Q_PROPERTY(bool needsUiLanguagePrompt READ needsUiLanguagePrompt NOTIFY uiLanguageChanged)
     // Extra UI scale on top of the OS display scale. QSettings("ui/scale"), 1.0..2.0 in
     // 0.25 steps. Applied as QT_SCALE_FACTOR before QApplication; a change needs a restart.
     Q_PROPERTY(double uiScale READ uiScale WRITE setUiScale NOTIFY uiScaleChanged)
@@ -197,6 +213,17 @@ class AppController : public QObject
     Q_PROPERTY(QString speedCurveClipName READ speedCurveClipName NOTIFY speedCurveSessionChanged)
     Q_PROPERTY(QString speedCurveClipPath READ speedCurveClipPath NOTIFY speedCurveSessionChanged)
     Q_PROPERTY(QString speedCurveFilmstripPath READ speedCurveFilmstripPath NOTIFY speedCurveSessionChanged)
+    // Media-bin preview session driving the phone's preview-and-edit page. The asset is
+    // auditioned through its own single-clip player rather than QtMultimedia: a VideoOutput in a
+    // secondary window paints black on Android, and this decodes through the same FFmpeg the
+    // timeline uses, so whatever the editor plays the preview plays.
+    Q_PROPERTY(bool assetPreviewActive READ assetPreviewActive NOTIFY assetPreviewSessionChanged)
+    Q_PROPERTY(int assetPreviewRevision READ assetPreviewRevision NOTIFY assetPreviewFrameChanged)
+    Q_PROPERTY(QSize assetPreviewFrameSize READ assetPreviewFrameSize NOTIFY assetPreviewFrameChanged)
+    Q_PROPERTY(double assetPreviewDuration READ assetPreviewDuration NOTIFY assetPreviewSessionChanged)
+    Q_PROPERTY(double assetPreviewPosition READ assetPreviewPosition NOTIFY assetPreviewPositionChanged)
+    Q_PROPERTY(bool assetPreviewPlaying READ assetPreviewPlaying NOTIFY assetPreviewPlayingChanged)
+
     // Custom fade-shape session for FadeCurveWindow. Candidate is auditioned on the live clip
     // until applyFadeCurve commits it (or endFadeCurveSession restores the prior shape).
     Q_PROPERTY(bool fadeCurveSessionActive READ fadeCurveSessionActive NOTIFY fadeCurveSessionChanged)
@@ -263,6 +290,9 @@ public:
     ~AppController() override;
 
     AssetLibrary *assetLibrary() const { return m_assetLibrary; }
+    BinFolderListModel *binFolderModel() { return &m_binFolderModel; }
+    QString currentBinFolderId() const { return m_currentBinFolderId; }
+    void setCurrentBinFolderId(const QString &folderId);
     TimelineModel *timelineModel() { return &m_timelineModel; }
     ClipListModel *clipListModel() { return &m_clipListModel; }
     PlaybackEngine *playback() { return &m_playback; }
@@ -291,8 +321,12 @@ public:
     bool mediaGridMode() const { return m_mediaGridMode; }
     bool autoKeyEnabled() const { return m_autoKeyEnabled; }
     bool reopenLastProject() const { return m_reopenLastProject; }
+    bool vaapiZeroCopy() const { return m_vaapiZeroCopy; }
+    bool vaapiZeroCopySupported() const;
+    bool invertTimelineScroll() const { return m_invertTimelineScroll; }
     QString uiLanguage() const { return m_uiLanguage; }
     QVariantList uiLanguages() const;
+    bool needsUiLanguagePrompt() const { return m_needsUiLanguagePrompt; }
     double uiScale() const { return m_uiScale; }
     double appliedUiScale() const;
     bool uiScaleNeedsRestart() const;
@@ -383,6 +417,8 @@ public:
     void setMediaGridMode(bool enabled);
     void setAutoKeyEnabled(bool enabled);
     void setReopenLastProject(bool enabled);
+    void setVaapiZeroCopy(bool enabled);
+    void setInvertTimelineScroll(bool enabled);
     Q_INVOKABLE void setMcpEnabled(bool enabled);
     bool mcpEnabled() const { return mcpRunning(); }
     bool mcpRunning() const;
@@ -406,7 +442,8 @@ public:
     QPair<int, int> mcpLocateClip(const QString &id) const;
     QString mcpClipId(int trackIndex, int clipIndex) const;
     QVariantMap mcpCompactClip(int trackIndex, int clipIndex, bool includeCanvas = true) const;
-    QJsonObject mcpInspect(bool includeClips, int sinceRevision = -1, bool detail = false) const;
+    QJsonObject mcpInspect(bool includeClips, int sinceRevision = -1, bool detail = false,
+                           bool includeCues = false) const;
     int mcpRevision() const { return m_mcpEditRevision; }
     bool mcpSetClipCanvas(int trackIndex, int clipIndex, const QVariantMap &patch);
     QJsonObject mcpCaptureFrame(double atSeconds, bool full);
@@ -450,7 +487,33 @@ public:
     void mcpRememberExportSettings(const QVariantMap &settings);
     void mcpBeginBatch();
     void mcpEndBatch(const QString &text, bool pushUndo);
+    QJsonObject mcpListHistory() const;
+    QJsonObject mcpUndoTo(int index, const QString &hash);
+    QJsonObject mcpTakeSnapshot(const QString &label);
+    QJsonObject mcpListSnapshots() const;
+    QJsonObject mcpRestoreSnapshot(const QString &hash);
+    QJsonObject mcpDetectSilence(int trackIndex, int clipIndex, double startSeconds,
+                                 double durSeconds, double threshold, double minDuration,
+                                 double padding) const;
+    QJsonObject mcpRemoveSilence(int trackIndex, int clipIndex, double threshold,
+                                 double minDuration, double padding);
+    QJsonObject mcpAnalyzeLoudness(int trackIndex, int clipIndex, double startSeconds,
+                                   double durSeconds) const;
+    QJsonObject mcpNormalizeVolume(int trackIndex, int clipIndex, double targetLufs);
+    QJsonObject mcpDuckUnder(int musicTrack, int musicClip, int overTrack,
+                             const QStringList &overClips, double amount, double attack,
+                             double release);
+    QJsonObject mcpListFaceTrack(int trackIndex, int clipIndex) const;
+    QJsonObject mcpAutoReframe(int trackIndex, int clipIndex, double aspect, const QString &mode);
+    QJsonObject mcpListAddons() const;
+    QJsonObject mcpInstallAddon(const QString &id);
+    QJsonObject mcpCancelAddonInstall(const QString &id);
+    QJsonObject mcpSetAcceleration(const QString &variant);
+    void setAddonManager(AddonManager *manager) { m_addonManager = manager; }
+    AddonManager *addonManager() const { return m_addonManager; }
     void setUiLanguage(const QString &code);
+    // First-launch chooser: persist the pick and never ask again. Settings uses setUiLanguage.
+    Q_INVOKABLE void chooseUiLanguage(const QString &code);
     void setUiScale(double scale);
     // Strip chip click — folds `prop`'s curve away, or brings it back. Purely a view filter: the
     // chip stays put either way, and the animation keeps playing while it is hidden.
@@ -465,6 +528,11 @@ public:
     void setGuideType(const QString &type);
 
     Q_INVOKABLE void addClipFromAsset(int assetIndex);
+    // Multi-select "Add to timeline": each asset lands on its own kind-appropriate default
+    // track (creating one if needed, exactly like addClipFromAsset), placed back to back in
+    // the given order starting at the playhead — not all stacked on top of each other at the
+    // same start time. One undo step for the whole batch.
+    Q_INVOKABLE void addClipsFromAssets(const QStringList &assetIds);
     Q_INVOKABLE void addClipFromAssetAt(int assetIndex, int trackIndex, double atSeconds);
     Q_INVOKABLE void addClipFromAssetOnNewTrack(int assetIndex, double atSeconds);
     // Same, but the new track goes at insertIndex rather than always on top, so
@@ -472,8 +540,23 @@ public:
     Q_INVOKABLE void addClipFromAssetOnNewTrackAt(int assetIndex, int insertIndex, double atSeconds);
     Q_INVOKABLE int clipCountForAsset(int assetIndex) const;
     Q_INVOKABLE bool removeAsset(int assetIndex);
+    // Multi-select bulk removal, one undo step for the whole batch. Like removeAsset, refuses
+    // the whole batch if any id is still referenced by a clip (see clipCountForAsset) — the
+    // guard is enforced here, not just by the QML confirmation flow, so a caller that skips
+    // that flow can't orphan a timeline clip. Ids that no longer resolve are skipped.
+    // Returns how many were actually removed.
+    Q_INVOKABLE int removeAssets(const QStringList &assetIds);
     // Bin label only — does not rename the file on disk or rewrite clip names.
     Q_INVOKABLE bool renameAsset(int assetIndex, const QString &name);
+    // Bin folder CRUD. parentId empty = bin root; nesting is arbitrary depth.
+    Q_INVOKABLE QString createBinFolder(const QString &name, const QString &parentId);
+    Q_INVOKABLE bool renameBinFolder(const QString &folderId, const QString &name);
+    // Moves the folder's direct children (assets and subfolders) up to its own parent, then
+    // removes it. Never blocks and never recurses into deleting contents.
+    Q_INVOKABLE bool deleteBinFolder(const QString &folderId);
+    Q_INVOKABLE bool moveAssetToFolder(int assetIndex, const QString &folderId);
+    // Multi-select bulk move, one undo step for the whole batch. Returns how many were moved.
+    Q_INVOKABLE int moveAssetsToFolder(const QStringList &assetIds, const QString &folderId);
     // Points an existing bin row at a different file, keeping every clip that uses it where it
     // is — its position, trim, effects and transitions all survive. Asynchronous: true only means
     // the probe started, and the outcome arrives as assetReplaceFinished.
@@ -568,6 +651,20 @@ public:
     Q_INVOKABLE void applySpeedCurve();
     Q_INVOKABLE void clearClipSpeedCurve(int trackIndex, int clipIndex);
 
+    // Media-bin preview session. beginAssetPreview auditions the bin row; the page owns the
+    // trim and crop values and hands them to saveAssetEdit itself.
+    Q_INVOKABLE void beginAssetPreview(int assetIndex);
+    Q_INVOKABLE void endAssetPreview();
+    bool assetPreviewActive() const { return m_assetPreviewActive; }
+    int assetPreviewRevision() const { return m_assetPreviewRevision; }
+    QSize assetPreviewFrameSize() const { return m_assetPreviewPlayer.frameSize(); }
+    double assetPreviewDuration() const;
+    double assetPreviewPosition() const;
+    bool assetPreviewPlaying() const { return m_assetPreviewPlayer.isPlaying(); }
+    Q_INVOKABLE void playAssetPreview();
+    Q_INVOKABLE void pauseAssetPreview();
+    Q_INVOKABLE void seekAssetPreview(double seconds);
+
     Q_INVOKABLE void beginFadeCurveSession(int trackIndex, int clipIndex);
     Q_INVOKABLE void endFadeCurveSession();
     bool fadeCurveSessionActive() const { return m_fadeCurveActive; }
@@ -605,10 +702,11 @@ public:
                                          double minSceneSeconds = 0.0);
     Q_INVOKABLE void cancelSceneDetection();
     Q_INVOKABLE void stabilizeClip(int trackIndex, int clipIndex);
-    Q_INVOKABLE void cancelStabilization();
+    Q_INVOKABLE void cancelClipStabilization(int trackIndex, int clipIndex);
     Q_INVOKABLE void removeClipStabilization(int trackIndex, int clipIndex);
     Q_INVOKABLE void setClipStabilizeSmoothing(int trackIndex, int clipIndex, int value);
     Q_INVOKABLE void setClipStabilizeTripod(int trackIndex, int clipIndex, bool enabled);
+    Q_INVOKABLE void setClipStabilizeMode(int trackIndex, int clipIndex, const QString &mode);
     // Whether the optional object-labelling pass can run. False until the object-model
     // addon is installed, which is what the panel's toggle is gated on.
     Q_INVOKABLE bool objectDetectionAvailable() const;
@@ -659,6 +757,7 @@ public:
     Q_INVOKABLE int projectHeight() const;
     Q_INVOKABLE int projectFps() const;
     Q_INVOKABLE void setProjectResolution(int width, int height);
+    Q_INVOKABLE void setProjectFps(int fps);
     Q_INVOKABLE void setProjectSetup(int width, int height, int fps);
     Q_INVOKABLE void applyCanvasCrop(double x, double y, double width, double height);
     bool canvasCropMode() const { return m_canvasCropMode; }
@@ -1057,6 +1156,8 @@ signals:
     void mediaGridModeChanged();
     void autoKeyEnabledChanged();
     void reopenLastProjectChanged();
+    void vaapiZeroCopyChanged();
+    void invertTimelineScrollChanged();
     void mcpRunningChanged();
     void mcpErrorChanged();
     void uiLanguageChanged();
@@ -1094,6 +1195,10 @@ signals:
     // Raised by the "multicam" shortcut/action. QML owns the window, as with the file actions.
     void openMulticamWindowRequested();
     void speedCurveSessionChanged();
+    void assetPreviewSessionChanged();
+    void assetPreviewFrameChanged();
+    void assetPreviewPositionChanged();
+    void assetPreviewPlayingChanged();
     void speedCurveChanged();
     void speedCurveFrameChanged();
     void speedCurvePositionChanged();
@@ -1111,6 +1216,7 @@ signals:
     void sceneDetectProgressChanged();
     void sceneDetectStatusChanged();
     void sceneDetectionFinished(bool ok, const QString &message);
+    void currentBinFolderIdChanged();
     void selectionChanged();
     void editCapabilitiesChanged();
     void selectedClipDataChanged();
@@ -1228,6 +1334,13 @@ protected:
     void runSegmentationSeed(int generation);
     void finalizeFaceDetection(const QString &clipId, const QString &trackPath,
                                drift::TimeUs srcOffsetUs);
+    // Landmark a Face Swap source photo in the background and cache the result. Cheap enough
+    // (one still, sub-second once the session is warm) that it gets no progress UI of its own —
+    // the effect renders pass-through until the landmarks land, then the preview refreshes.
+    void ingestFaceSwapSource(const QString &photoPath);
+    // Every Face Swap photo in the project that has no cached landmarks. Runs on open, because
+    // the sidecar is derived and does not travel with the bundle.
+    void ingestFaceSwapSourcesInProject();
     // The one place a scan request is built, so the GUI and MCP paths cannot disagree about
     // the settings — and therefore about the cache key derived from them.
     drift::SceneDetectRequest sceneRequestFor(const drift::Clip &clip, bool withObjects,
@@ -1240,6 +1353,11 @@ protected:
     void finalizeGeneratedSubtitles(drift::TimeUs timelineStart, drift::TimeUs timelineDuration,
                                     const QList<drift::SubtitleCue> &cues);
     void finalizeDenoise(const QString &clipId, const QString &audioPath);
+    void watchStabilizeProgress(QProcess *process, const QString &clipId, qint64 durationUs,
+                                double rangeFrom, double rangeTo);
+    void setStabilizeProgress(const QString &clipId, double progress, const QString &status,
+                              bool force);
+    void clearStabilizeProgress(const QString &clipId);
     // Shared body of the two denoise jobs: decodes [srcIn, srcIn + span) of `path` at the model's
     // rate, runs each channel through it, and writes the result. Runs on a worker thread.
     // `originalPathOut` is written only when non-empty, for the preview's A/B source.
@@ -1307,8 +1425,16 @@ protected:
     void deleteRecoveryFile();
     void detectRecoveryFile();
     static QString recoveryFilePath();
+    QString historyHashAt(int stackIndex) const;
+    int historyIndexForHash(const QString &prefix) const;
+    QByteArray historyJsonAt(int stackIndex) const;
+    static QString historySnapshotDir();
+    static void pruneHistorySnapshots();
 
     AssetLibrary *m_assetLibrary = nullptr;
+    AddonManager *m_addonManager = nullptr;
+    BinFolderListModel m_binFolderModel;
+    QString m_currentBinFolderId;
     TimelineModel m_timelineModel;
     ClipListModel m_clipListModel;
     // These trees must outlive m_playback: the compositor thread holds a bare
@@ -1338,7 +1464,10 @@ protected:
     bool m_mediaGridMode = true;
     bool m_autoKeyEnabled = false;
     bool m_reopenLastProject = false;
+    bool m_vaapiZeroCopy = false;
+    bool m_invertTimelineScroll = false;
     QString m_uiLanguage;
+    bool m_needsUiLanguagePrompt = false;
     double m_uiScale = 1.0;
     QStringList m_keyframeGraphHiddenProperties;
     bool m_subtitleEditing = false;
@@ -1370,6 +1499,12 @@ protected:
     double m_segmentProgress = 0.0;
     QString m_segmentStatus;
     QAtomicInt m_segmentCancel = 0;
+    // Media-bin preview session: the synthetic whole-source clip the bin row is auditioned as.
+    ClipPreviewPlayer m_assetPreviewPlayer;
+    int m_assetPreviewIndex = -1;
+    int m_assetPreviewRevision = 0;
+    bool m_assetPreviewActive = false;
+
     // Speed-curve session: the clip being retimed, the candidate ramp, and the player auditioning it.
     ClipPreviewPlayer m_speedCurvePlayer;
     drift::Clip m_speedCurveClip;
@@ -1441,6 +1576,9 @@ protected:
     double m_faceDetectProgress = 0.0;
     QString m_faceDetectStatus;
     QAtomicInt m_faceDetectCancel = 0;
+    // Photos with an ingest in flight, so a slider nudge or a second clip using the same photo
+    // does not queue the landmarker twice.
+    QSet<QString> m_faceSwapIngesting;
     // Scene detection. Only one clip's analysis is live at a time — the panel shows the
     // selected clip — so this needs no cache of its own beyond the on-disk one.
     QVariantList m_scenes;
@@ -1451,6 +1589,10 @@ protected:
     QString m_sceneDetectStatus;
     QAtomicInt m_sceneDetectCancel = 0;
     QMap<QString, QProcess*> m_stabilizeProcesses;
+    QMap<QString, double> m_stabilizeProgress;
+    QMap<QString, QString> m_stabilizeStatus;
+    QMap<QString, qint64> m_stabilizeLastProgressEmit;
+    QSet<QString> m_stabilizeCancelRequested;
     quint64 m_sceneGeneration = 0;
     bool m_segSessionActive = false;
     bool m_segForTemplate = false;

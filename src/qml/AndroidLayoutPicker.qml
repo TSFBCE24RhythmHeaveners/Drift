@@ -11,9 +11,8 @@ Item {
     property string activeCategory: "tiktok"
     property string templateId: "tiktok"
     property string qualityId: "1080p"
-    // The project timebase. This picker is the only place it can be set on Android: the
-    // desktop route (ProjectSetupDialog on the first clip) never opens here, because
-    // applying a layout marks the project's canvas as decided.
+    // The project timebase, for the layout-first route. "Decide layout later" on the home
+    // screen skips this picker, leaving ProjectSetupDialog to set it from the first clip.
     property int fps: 30
     // Only meaningful while the "Custom" template is selected.
     property int customWidth: 1080
@@ -294,7 +293,10 @@ Item {
                             }
                         }
 
-                        onClicked: root.selectCategory(modelData.id)
+                        onClicked: {
+                            Haptics.select()
+                            root.selectCategory(modelData.id)
+                        }
                     }
                 }
             }
@@ -419,7 +421,10 @@ Item {
                         }
                     }
 
-                    onClicked: root.templateId = modelData.id
+                    onClicked: {
+                        Haptics.select()
+                        root.templateId = modelData.id
+                    }
                 }
             }
         }

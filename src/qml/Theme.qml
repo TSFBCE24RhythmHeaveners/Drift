@@ -417,6 +417,7 @@ QtObject {
         rewind: "rewind",
         fastForward: "fast-forward",
         maximize: "maximize",
+        locateFixed: "locate-fixed",
         minimize: "minimize",
         folder: "folder",
         folderInput: "folder-input",
@@ -468,6 +469,9 @@ QtObject {
         mask: "square-dashed",
         puzzle: "puzzle",
         bug: "bug",
+        bot: "bot",
+        languages: "languages",
+        shuffle: "shuffle",
         info: "info",
         package: "package",
         fileText: "file-text",
@@ -506,6 +510,10 @@ QtObject {
         // Media
         captions: "captions",
         listVideo: "list-video",
+        // Lane height on the phone edit strip: list + chevrons collapsing /
+        // expanding, not foldVertical (those keys were never registered).
+        listChevronsDownUp: "list-chevrons-down-up",
+        listChevronsUpDown: "list-chevrons-up-down",
         smartphone: "smartphone",
         monitor: "monitor",
         square: "square",

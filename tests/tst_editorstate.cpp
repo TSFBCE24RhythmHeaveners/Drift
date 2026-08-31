@@ -48,6 +48,7 @@ private slots:
     void addTextClipWithTextDoesNotRequestEdit();
     void addTextClipWithPresetAppliesStyle();
     void undoRedoClipAdd();
+    void undoLibraryClipDropOntoExistingTrack();
     void undoTrackMute();
     void packagedProjectCarriesDerivedArtifacts();
     void undoBookmarkAdd();
@@ -55,6 +56,16 @@ private slots:
     void workAreaMarkClearAndUndo();
     void bookmarkSnapTarget();
     void renameClipAndAsset();
+    void createRenameAndDeleteBinFolder();
+    void undoingBinFolderRenameEmitsDataChanged();
+    void importIntoDeletedFolderFallsBackToRoot();
+    void importUnreadableUrlReportsFailed();
+    void moveAssetToFolderAndUndo();
+    void deleteBinFolderMovesChildrenAndUndo();
+    void removeAssetsIsOneUndoStep();
+    void removeAssetsRefusesBatchWithInUseAsset();
+    void moveAssetsToFolderIsOneUndoStep();
+    void addClipsFromAssetsPlacesThemSequentially();
     void moveTrackReordersAndRemapsSelection();
     void addTrackInsertsEmptyTrackByType();
     void projectPersistenceRoundTrip();
@@ -62,8 +73,11 @@ private slots:
     void projectJsonImportRejectsGarbageAndLeavesTimeline();
     void newProjectClearsEverything();
     void projectSetupOnPristineProjectStaysClean();
+    void projectFpsCanChangeAfterSetup();
     void darkModePreferencePersistsAcrossSessions();
     void uiScalePersistsAcrossSessions();
+    void uiLanguagePersistsAcrossSessions();
+    void invertTimelineScrollPersistsAcrossSessions();
     void decodeModePickerListsOnlyWorkingBackends();
     void exportFrameRatePersistsAcrossSessions();
     void lastExportSettingsNormalisesStringTypedValues();
@@ -192,6 +206,38 @@ void EditorStateTest::undoRedoClipAdd()
     QVERIFY(state.redoAvailable());
     state.redo();
     QVERIFY(state.durationSeconds() > 0.0);
+}
+
+// Library drop onto an existing track uses addClipFromAssetAt. Taking a Track&
+// before the undo snapshot used to share the track list with `before`, so the
+// append mutated both sides and Ctrl+Z left the clip in place.
+void EditorStateTest::undoLibraryClipDropOntoExistingTrack()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    drift::MediaAsset asset;
+    asset.name = QStringLiteral("clip.mp4");
+    asset.kind = drift::MediaKind::Video;
+    asset.path = QStringLiteral("/nonexistent/clip.mp4");
+    asset.durationUs = drift::secondsToUs(5.0);
+    state.project()->addAsset(asset);
+    library.syncToProject();
+    QCOMPARE(library.count(), 1);
+
+    QCOMPARE(state.tracks().size(), 1);
+    QVERIFY(state.project()->tracks().at(0).clips.isEmpty());
+
+    state.addClipFromAssetAt(0, 0, 1.0);
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    QVERIFY(state.undoAvailable());
+
+    state.undo();
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 0);
+    QVERIFY(state.redoAvailable());
+
+    state.redo();
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
 }
 
 void EditorStateTest::undoTrackMute()
@@ -333,6 +379,307 @@ void EditorStateTest::renameClipAndAsset()
     QCOMPARE(library.assetAt(0).value(QStringLiteral("name")).toString(), QStringLiteral("A-roll"));
     // Existing timeline text clip is untouched.
     QCOMPARE(state.clipAt(0, 0).value(QStringLiteral("name")).toString(), QStringLiteral("Hello"));
+}
+
+void EditorStateTest::createRenameAndDeleteBinFolder()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    const QString id = state.createBinFolder(QStringLiteral("B-Roll"), QString());
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(state.binFolderModel()->count(), 1);
+    QCOMPARE(state.binFolderModel()->folderById(id).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B-Roll"));
+
+    QVERIFY(state.renameBinFolder(id, QStringLiteral("A-Roll")));
+    QCOMPARE(state.binFolderModel()->folderById(id).value(QStringLiteral("name")).toString(),
+             QStringLiteral("A-Roll"));
+
+    QVERIFY(state.deleteBinFolder(id));
+    QCOMPARE(state.binFolderModel()->count(), 0);
+
+    QVERIFY(state.undoAvailable());
+    state.undo();
+    QCOMPARE(state.binFolderModel()->count(), 1);
+    state.undo();
+    QCOMPARE(state.binFolderModel()->folderById(id).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B-Roll"));
+    state.undo();
+    QCOMPARE(state.binFolderModel()->count(), 0);
+}
+
+void EditorStateTest::undoingBinFolderRenameEmitsDataChanged()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    const QString id = state.createBinFolder(QStringLiteral("B-Roll"), QString());
+    QVERIFY(state.renameBinFolder(id, QStringLiteral("A-Roll")));
+
+    // Consumers bound to BinFolderModel (the breadcrumb, folder tiles) rely on dataChanged to
+    // notice a rename that undo/redo reverted behind their backs — the row's own value changing
+    // isn't enough if nothing signals that it did.
+    QSignalSpy dataChangedSpy(state.binFolderModel(), &QAbstractItemModel::dataChanged);
+    state.undo();
+    QVERIFY(dataChangedSpy.count() >= 1);
+    const QModelIndex changedIndex = state.binFolderModel()->index(state.binFolderModel()->indexOfId(id));
+    bool sawNameRole = false;
+    for (const QList<QVariant> &args : dataChangedSpy) {
+        const QModelIndex topLeft = args.at(0).toModelIndex();
+        const QList<int> roles = args.at(2).value<QList<int>>();
+        if (topLeft == changedIndex && roles.contains(int(BinFolderListModel::NameRole)))
+            sawNameRole = true;
+    }
+    QVERIFY(sawNameRole);
+    QCOMPARE(state.binFolderModel()->folderById(id).value(QStringLiteral("name")).toString(),
+             QStringLiteral("B-Roll"));
+}
+
+void EditorStateTest::importIntoDeletedFolderFallsBackToRoot()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    const QString folderId = state.createBinFolder(QStringLiteral("Temp"), QString());
+    library.setImportFolderId(folderId);
+    // Mirrors a slow async import completing after its destination folder was deleted out from
+    // under it — the captured id is stale by the time the placeholder row is created.
+    QVERIFY(state.deleteBinFolder(folderId));
+
+    QTemporaryFile file(QDir::tempPath() + QStringLiteral("/drift-import-XXXXXX.mp4"));
+    QVERIFY(file.open());
+    file.write("not a real media file");
+    file.close();
+
+    const QStringList ids = library.importLocalPaths({file.fileName()});
+    QCOMPARE(ids.size(), 1);
+    const int index = library.indexOfId(ids.first());
+    QVERIFY(index >= 0);
+    QCOMPARE(library.assetAt(index).value(QStringLiteral("folderId")).toString(), QString());
+
+    // The probe this kicked off runs on a QtConcurrent worker thread that captures `library` by
+    // raw pointer. Qt's queued-connection context-object safety only protects the case where the
+    // object is destroyed after the worker has already posted its result; it does nothing if the
+    // worker is still running and dereferences that pointer after `library` goes out of scope at
+    // the end of this function. Wait for the probe to actually finish first.
+    QTRY_VERIFY_WITH_TIMEOUT(!library.isImportPending(ids.first()), 5000);
+}
+
+void EditorStateTest::importUnreadableUrlReportsFailed()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    // A dropped host path the sandbox cannot see used to land as a local URL, skip isFile(),
+    // and toast "the format may be unsupported". Counting it as failed is what lets the UI
+    // tell those two cases apart.
+    QSignalSpy finished(&library, &AssetLibrary::importFinished);
+    QVERIFY(library.importUrlsAsync(
+        {QUrl::fromLocalFile(QStringLiteral("/no/such/drift-unreadable-import.mp4"))}));
+    QVERIFY(finished.wait(5000));
+    QCOMPARE(finished.size(), 1);
+    QCOMPARE(finished.first().at(0).toInt(), 0);
+    QCOMPARE(finished.first().at(1).toInt(), 1);
+    QCOMPARE(library.count(), 0);
+}
+
+void EditorStateTest::moveAssetToFolderAndUndo()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    drift::MediaAsset asset;
+    asset.id = QStringLiteral("asset-1");
+    asset.name = QStringLiteral("clip.mp4");
+    asset.path = QStringLiteral("/tmp/clip.mp4");
+    asset.kind = drift::MediaKind::Video;
+    state.project()->assets().insert(asset.id, asset);
+    state.project()->assetOrder().append(asset.id);
+    library.syncToProject();
+    QCOMPARE(library.count(), 1);
+
+    const QString folderId = state.createBinFolder(QStringLiteral("B-Roll"), QString());
+    QVERIFY(state.moveAssetToFolder(0, folderId));
+    QCOMPARE(library.assetAt(0).value(QStringLiteral("folderId")).toString(), folderId);
+
+    state.undo();
+    QCOMPARE(library.assetAt(0).value(QStringLiteral("folderId")).toString(), QString());
+}
+
+void EditorStateTest::deleteBinFolderMovesChildrenAndUndo()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    const QString parentId = state.createBinFolder(QStringLiteral("Interviews"), QString());
+    const QString childId = state.createBinFolder(QStringLiteral("Day 1"), parentId);
+
+    drift::MediaAsset asset;
+    asset.id = QStringLiteral("asset-1");
+    asset.name = QStringLiteral("clip.mp4");
+    asset.path = QStringLiteral("/tmp/clip.mp4");
+    asset.kind = drift::MediaKind::Video;
+    asset.folderId = childId;
+    state.project()->assets().insert(asset.id, asset);
+    state.project()->assetOrder().append(asset.id);
+    library.syncToProject();
+
+    QVERIFY(state.deleteBinFolder(childId));
+    QCOMPARE(state.binFolderModel()->count(), 1);
+    QCOMPARE(library.assetAt(0).value(QStringLiteral("folderId")).toString(), parentId);
+
+    state.undo();
+    QCOMPARE(state.binFolderModel()->count(), 2);
+    QCOMPARE(library.assetAt(0).value(QStringLiteral("folderId")).toString(), childId);
+}
+
+void EditorStateTest::removeAssetsIsOneUndoStep()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    for (int i = 0; i < 3; ++i) {
+        drift::MediaAsset asset;
+        asset.id = QStringLiteral("asset-%1").arg(i);
+        asset.name = QStringLiteral("clip-%1.mp4").arg(i);
+        asset.path = QStringLiteral("/tmp/clip-%1.mp4").arg(i);
+        asset.kind = drift::MediaKind::Video;
+        state.project()->assets().insert(asset.id, asset);
+        state.project()->assetOrder().append(asset.id);
+    }
+    library.syncToProject();
+    QCOMPARE(library.count(), 3);
+
+    // Removed out of position order deliberately — removeAssets must resolve each id fresh
+    // rather than trusting indices captured before earlier removals shifted the rest down.
+    const int removed = state.removeAssets({QStringLiteral("asset-2"), QStringLiteral("asset-0")});
+    QCOMPARE(removed, 2);
+    QCOMPARE(library.count(), 1);
+    QCOMPARE(library.assetAt(0).value(QStringLiteral("id")).toString(), QStringLiteral("asset-1"));
+
+    // One undo step restores both, not one step per asset.
+    state.undo();
+    QCOMPARE(library.count(), 3);
+}
+
+void EditorStateTest::removeAssetsRefusesBatchWithInUseAsset()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::Project &project = *state.project();
+
+    for (int i = 0; i < 3; ++i) {
+        drift::MediaAsset asset;
+        asset.id = QStringLiteral("asset-%1").arg(i);
+        asset.name = QStringLiteral("clip-%1.mp4").arg(i);
+        asset.path = QStringLiteral("/tmp/clip-%1.mp4").arg(i);
+        asset.kind = drift::MediaKind::Video;
+        project.assets().insert(asset.id, asset);
+        project.assetOrder().append(asset.id);
+    }
+
+    // asset-1 is still referenced by a clip on the timeline.
+    drift::Clip clip;
+    clip.id = QStringLiteral("clip-0");
+    clip.assetId = QStringLiteral("asset-1");
+    clip.type = drift::ClipType::Video;
+    clip.timelineStart = 0;
+    clip.timelineDuration = drift::secondsToUs(2.0);
+    drift::Track track{.type = drift::TrackType::Video};
+    track.clips.append(clip);
+    project.tracks().append(track);
+    library.syncToProject();
+    QCOMPARE(library.count(), 3);
+
+    // One in-use id anywhere in the batch must refuse the whole removal, not just skip
+    // that one id — otherwise a caller that bypasses the QML confirmation flow's own
+    // in-use check (AssetsPanel.qml's requestRemoveAsset) could orphan the clip above.
+    const int removed = state.removeAssets(
+        {QStringLiteral("asset-0"), QStringLiteral("asset-1"), QStringLiteral("asset-2")});
+    QCOMPARE(removed, 0);
+    QCOMPARE(library.count(), 3);
+}
+
+void EditorStateTest::moveAssetsToFolderIsOneUndoStep()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    const QString folderId = state.createBinFolder(QStringLiteral("B-Roll"), QString());
+    for (int i = 0; i < 2; ++i) {
+        drift::MediaAsset asset;
+        asset.id = QStringLiteral("asset-%1").arg(i);
+        asset.name = QStringLiteral("clip-%1.mp4").arg(i);
+        asset.path = QStringLiteral("/tmp/clip-%1.mp4").arg(i);
+        asset.kind = drift::MediaKind::Video;
+        state.project()->assets().insert(asset.id, asset);
+        state.project()->assetOrder().append(asset.id);
+    }
+    library.syncToProject();
+
+    const int moved = state.moveAssetsToFolder(
+        {QStringLiteral("asset-0"), QStringLiteral("asset-1")}, folderId);
+    QCOMPARE(moved, 2);
+    QCOMPARE(library.assetAt(0).value(QStringLiteral("folderId")).toString(), folderId);
+    QCOMPARE(library.assetAt(1).value(QStringLiteral("folderId")).toString(), folderId);
+
+    state.undo();
+    QCOMPARE(library.assetAt(0).value(QStringLiteral("folderId")).toString(), QString());
+    QCOMPARE(library.assetAt(1).value(QStringLiteral("folderId")).toString(), QString());
+}
+
+void EditorStateTest::addClipsFromAssetsPlacesThemSequentially()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.setPlayheadSeconds(0.0);
+
+    drift::MediaAsset first;
+    first.id = QStringLiteral("asset-0");
+    first.name = QStringLiteral("first.mp4");
+    first.path = QStringLiteral("/tmp/first.mp4");
+    first.kind = drift::MediaKind::Video;
+    first.durationUs = drift::secondsToUs(4.0);
+    state.project()->assets().insert(first.id, first);
+    state.project()->assetOrder().append(first.id);
+
+    drift::MediaAsset second;
+    second.id = QStringLiteral("asset-1");
+    second.name = QStringLiteral("second.mp4");
+    second.path = QStringLiteral("/tmp/second.mp4");
+    second.kind = drift::MediaKind::Video;
+    second.durationUs = drift::secondsToUs(2.0);
+    state.project()->assets().insert(second.id, second);
+    state.project()->assetOrder().append(second.id);
+    library.syncToProject();
+
+    state.addClipsFromAssets({QStringLiteral("asset-0"), QStringLiteral("asset-1")});
+
+    // Both land on the same default video track, back to back in the order given — not both
+    // sitting at the playhead on top of each other.
+    int videoTrack = -1;
+    for (int i = 0; i < state.project()->tracks().size(); ++i) {
+        if (state.project()->tracks().at(i).clips.size() == 2) {
+            videoTrack = i;
+            break;
+        }
+    }
+    QVERIFY(videoTrack >= 0);
+    const drift::Track &track = state.project()->tracks().at(videoTrack);
+    QCOMPARE(track.clips[0].assetId, QStringLiteral("asset-0"));
+    QCOMPARE(track.clips[1].assetId, QStringLiteral("asset-1"));
+    QCOMPARE(track.clips[0].timelineStart, drift::TimeUs(0));
+    QCOMPARE(track.clips[1].timelineStart, track.clips[0].timelineEnd());
+
+    // One undo step removes both clips added by the batch.
+    state.undo();
+    bool anyClipsLeft = false;
+    for (const drift::Track &t : state.project()->tracks()) {
+        if (!t.clips.isEmpty())
+            anyClipsLeft = true;
+    }
+    QVERIFY(!anyClipsLeft);
 }
 
 void EditorStateTest::moveTrackReordersAndRemapsSelection()
@@ -625,6 +972,28 @@ void EditorStateTest::projectSetupOnPristineProjectStaysClean()
     QCOMPARE(state.projectHeight(), 1920);
 }
 
+void EditorStateTest::projectFpsCanChangeAfterSetup()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    QCOMPARE(state.projectFps(), 30);
+    QCOMPARE(state.projectWidth(), 1920);
+    QCOMPARE(state.projectHeight(), 1080);
+
+    state.setProjectFps(60);
+    QCOMPARE(state.projectFps(), 60);
+    QCOMPARE(state.projectWidth(), 1920);
+    QCOMPARE(state.projectHeight(), 1080);
+
+    state.setProjectFps(0);
+    QCOMPARE(state.projectFps(), 1);
+    state.setProjectFps(999);
+    QCOMPARE(state.projectFps(), 240);
+    state.setProjectFps(24);
+    QCOMPARE(state.projectFps(), 24);
+}
+
 // The picker offers a backend only when its device opens here, and a mode naming one
 // this machine lacks has to fall back to Auto rather than to a choice that would never
 // engage — settings outlive the GPU they were written on.
@@ -764,6 +1133,102 @@ void EditorStateTest::uiScalePersistsAcrossSessions()
     qputenv("QT_SCALE_FACTOR", "3");
     AppController::applyStoredUiScale();
     QCOMPARE(qgetenv("QT_SCALE_FACTOR"), QByteArray("3"));
+}
+
+void EditorStateTest::uiLanguagePersistsAcrossSessions()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftTest"));
+    const auto restore = qScopeGuard([&] {
+        QSettings settings;
+        settings.remove(QStringLiteral("ui/language"));
+        settings.remove(QStringLiteral("ui/languageChosen"));
+        settings.remove(QStringLiteral("lastSessionPath"));
+        settings.remove(QStringLiteral("recentProjects"));
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        QStandardPaths::setTestModeEnabled(false);
+    });
+    {
+        QSettings settings;
+        settings.remove(QStringLiteral("ui/language"));
+        settings.remove(QStringLiteral("ui/languageChosen"));
+        settings.remove(QStringLiteral("lastSessionPath"));
+        settings.remove(QStringLiteral("recentProjects"));
+    }
+
+    AssetLibrary library;
+    {
+        AppController state(&library);
+        // Brand-new install: no session history, so the first-launch chooser should ask.
+        QVERIFY(state.needsUiLanguagePrompt());
+        QCOMPARE(state.uiLanguage(), QString());
+
+        QSignalSpy spy(&state, &AppController::uiLanguageChanged);
+        state.chooseUiLanguage(QStringLiteral("en"));
+        QVERIFY(spy.count() >= 1);
+        QCOMPARE(state.uiLanguage(), QStringLiteral("en"));
+        QVERIFY(!state.needsUiLanguagePrompt());
+        QCOMPARE(QSettings().value(QStringLiteral("ui/language")).toString(), QStringLiteral("en"));
+        QVERIFY(QSettings().value(QStringLiteral("ui/languageChosen")).toBool());
+    }
+
+    {
+        AppController relaunched(&library);
+        QCOMPARE(relaunched.uiLanguage(), QStringLiteral("en"));
+        QVERIFY(!relaunched.needsUiLanguagePrompt());
+
+        relaunched.setUiLanguage(QStringLiteral("es"));
+        QCOMPARE(relaunched.uiLanguage(), QStringLiteral("es"));
+    }
+
+    AppController afterSettingsChange(&library);
+    QCOMPARE(afterSettingsChange.uiLanguage(), QStringLiteral("es"));
+    QVERIFY(!afterSettingsChange.needsUiLanguagePrompt());
+
+    {
+        QSettings settings;
+        settings.remove(QStringLiteral("ui/language"));
+        settings.remove(QStringLiteral("ui/languageChosen"));
+        settings.setValue(QStringLiteral("lastSessionPath"), QStringLiteral("/tmp/used.drift"));
+    }
+    AppController returningUser(&library);
+    QVERIFY(!returningUser.needsUiLanguagePrompt());
+}
+
+void EditorStateTest::invertTimelineScrollPersistsAcrossSessions()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftTest"));
+    const auto restore = qScopeGuard([&] {
+        QSettings().remove(QStringLiteral("timeline/invertScroll"));
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        QStandardPaths::setTestModeEnabled(false);
+    });
+    QSettings().remove(QStringLiteral("timeline/invertScroll"));
+
+    AssetLibrary library;
+    {
+        AppController state(&library);
+        QVERIFY(!state.invertTimelineScroll());
+
+        QSignalSpy spy(&state, &AppController::invertTimelineScrollChanged);
+        state.setInvertTimelineScroll(true);
+        QCOMPARE(spy.count(), 1);
+        QVERIFY(state.invertTimelineScroll());
+        state.setInvertTimelineScroll(true);
+        QCOMPARE(spy.count(), 1);
+    }
+
+    AppController relaunched(&library);
+    QVERIFY(relaunched.invertTimelineScroll());
 }
 
 void EditorStateTest::exportFrameRatePersistsAcrossSessions()

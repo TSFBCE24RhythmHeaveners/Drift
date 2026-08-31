@@ -6,7 +6,7 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Oldest macOS release Drift 
 
 # C is enabled for JUCE only: its modules compile a handful of C sources (zlib, flac, oggvorbis)
 # and its CMake refuses to configure without it.
-project(Drift VERSION 0.4.0 LANGUAGES CXX C)
+project(Drift VERSION 0.5.1 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -87,10 +87,10 @@ if(NOT _drift_qt_mm STREQUAL _drift_svg_mm)
 endif()
 
 # --- Android prebuilt dependencies -------------------------------------------
-# Cross-compiling to Android has no pkg-config and no system prefix, so FFmpeg, zstd, OpenSSL and
-# SoundTouch come from static PIC archives under third_party/prebuilt/android/<abi>, built by
-# third_party/build-android.sh. They are declared here as the same targets the host branches below
-# produce, so nothing downstream needs to know which way it was satisfied.
+# Cross-compiling to Android has no pkg-config and no system prefix, so FFmpeg, dav1d, zstd,
+# OpenSSL and SoundTouch come from static PIC archives under third_party/prebuilt/android/<abi>,
+# built by third_party/build-android.sh. They are declared here as the same targets the host
+# branches below produce, so nothing downstream needs to know which way it was satisfied.
 #
 # Static, not shared: the app is a single .so that QtLoader dlopens, and every extra shared library
 # would have to be listed in ANDROID_EXTRA_LIBS and bundled by hand. PIC is mandatory for the same
@@ -115,6 +115,8 @@ if(ANDROID)
         "${DRIFT_PREBUILT}/lib/libswresample.a"
         "${DRIFT_PREBUILT}/lib/libavutil.a"
         "${DRIFT_PREBUILT}/lib/libx264.a"
+        # libavcodec's only software AV1 decoder — the native "av1" decoder needs a hwaccel.
+        "${DRIFT_PREBUILT}/lib/libdav1d.a"
         # mediandk resolves the AMediaCodec_*/AMediaFormat_* the --enable-mediacodec decoders call.
         m z mediandk)
 
@@ -321,10 +323,13 @@ add_library(driftcore STATIC
     src/core/Effect.h
     src/core/Effect.cpp
     src/core/EffectPreset.h
+    src/core/BinFolder.h
     src/core/MediaAsset.h
     src/core/MediaAsset.cpp
     src/core/Clip.h
     src/core/Clip.cpp
+    src/core/Stabilize.h
+    src/core/Stabilize.cpp
     src/core/Bezier.h
     src/core/SpeedCurve.h
     src/core/SpeedCurve.cpp
@@ -421,6 +426,8 @@ add_library(driftengine STATIC
     src/engine/FilmstripTileCache.cpp
     src/engine/MediaWaveform.h
     src/engine/MediaWaveform.cpp
+    src/engine/LoudnessMeter.h
+    src/engine/LoudnessMeter.cpp
     src/engine/WaveformBlockCache.h
     src/engine/WaveformBlockCache.cpp
     src/engine/AudioOnsets.h
@@ -431,6 +438,7 @@ add_library(driftengine STATIC
     src/engine/ObjectDetector.cpp
     src/engine/Exporter.h
     src/engine/Exporter.cpp
+    src/engine/PreviewVideoFrame.h
     src/engine/ClipReader.h
     src/engine/ClipReader.cpp
     src/engine/DebugReport.h
@@ -466,6 +474,7 @@ add_library(driftengine STATIC
     src/engine/GpuCompositor.cpp
     src/engine/GlRuntime.h
     src/engine/GlRuntime.cpp
+    src/engine/VaapiZeroCopy.h
     src/engine/GpuEffectExecutor.h
     src/engine/GpuEffectExecutor.cpp
     src/engine/CompositorFrameHistory.h
@@ -499,8 +508,12 @@ add_library(driftengine STATIC
     src/engine/FaceMesh.cpp
     src/engine/ModelAsset.h
     src/engine/ModelAsset.cpp
+    src/engine/GlFaceSwapRenderer.h
+    src/engine/GlFaceSwapRenderer.cpp
     src/engine/GlModelRenderer.h
     src/engine/GlModelRenderer.cpp
+    src/engine/FaceSwapSource.h
+    src/engine/FaceSwapSource.cpp
     src/engine/FacePropCatalog.h
     src/engine/FacePropCatalog.cpp
     src/engine/DeepFilterDenoiser.h
@@ -570,6 +583,8 @@ qt_add_executable(drift
     src/models/Haptics.cpp
     src/models/AssetLibrary.h
     src/models/AssetLibrary.cpp
+    src/models/BinFolderListModel.h
+    src/models/BinFolderListModel.cpp
     src/models/TimelineModel.h
     src/models/TimelineModel.cpp
     src/models/ClipListModel.h
@@ -683,6 +698,7 @@ qt_add_qml_module(drift
         src/qml/AndroidBottomSheet.qml
         src/qml/AndroidAddMenu.qml
         src/qml/AndroidEditActions.qml
+        src/qml/AndroidMediaPreview.qml
         src/qml/Theme.qml
         src/qml/Toasts.qml
         src/qml/TouchDrag.qml
@@ -704,6 +720,7 @@ qt_add_qml_module(drift
         src/qml/components/properties/GeneralInspector.qml
         src/qml/components/properties/TextInspector.qml
         src/qml/components/properties/TransformInspector.qml
+        src/qml/components/properties/StabilizeInspector.qml
         src/qml/components/properties/AudioInspector.qml
         src/qml/components/properties/AudioEffectsInspector.qml
         src/qml/components/properties/SpeedFadeInspector.qml
@@ -722,6 +739,7 @@ qt_add_qml_module(drift
         src/qml/components/assets/SettingsTab.qml
         src/qml/components/assets/ShortcutsTab.qml
         src/qml/components/assets/MediaAssetsTab.qml
+        src/qml/components/assets/BinBreadcrumb.qml
         src/qml/components/assets/AssetCategoryChips.qml
         src/qml/components/assets/EffectStacksSection.qml
         src/qml/components/assets/AssetFavoriteButton.qml
@@ -769,6 +787,10 @@ qt_add_qml_module(drift
         src/qml/components/DebugInfoDialog.qml
         src/qml/components/ProjectSetupDialog.qml
         src/qml/components/LayoutChooserDialog.qml
+        src/qml/components/LanguageChooserDialog.qml
+        src/qml/components/AgentAccessDialog.qml
+        src/qml/components/VideoSizeDialog.qml
+        src/qml/components/VideoSizeControls.qml
         src/qml/components/ProjectPropertiesDialog.qml
         src/qml/components/PackageProgressDialog.qml
         src/qml/components/ExportDialog.qml
@@ -860,7 +882,7 @@ if(ANDROID)
         "Launcher label")
     # versionName is PROJECT_VERSION — same string the desktop binary embeds as DRIFT_VERSION.
     # versionCode is the Play-Store integer; default tracks that semver so a desktop bump is an
-    # Android bump too (0.4.0 → 400). CI may override with -DDRIFT_ANDROID_VERSION_CODE=.
+    # Android bump too (0.5.1 → 501). CI may override with -DDRIFT_ANDROID_VERSION_CODE=.
     string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _drift_android_ver "${PROJECT_VERSION}")
     if(_drift_android_ver)
         math(EXPR _drift_android_version_code_default

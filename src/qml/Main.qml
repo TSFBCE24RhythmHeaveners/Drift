@@ -15,7 +15,9 @@ ApplicationWindow {
     // Shown from Component.onCompleted, once the stored geometry is in place:
     // assigning it to a window that is already up makes it jump across the screen,
     // and a session left maximized would flash at its windowed size first.
-    visible: false
+    // Use visibility only — setting both this and `visible` makes Qt warn
+    // "Conflicting properties 'visible' and 'visibility'" (Maximized + hidden).
+    visibility: Window.Hidden
     title: "CutWire Drift"
     color: Theme.appBackground
 
@@ -64,8 +66,8 @@ ApplicationWindow {
         interval: 250
         onTriggered: {
             // Tested by exclusion rather than against Window.Windowed: a window shown
-            // via `visible = true` can report AutomaticVisibility, and that is an
-            // ordinary window — it is only the three modes below that are not.
+            // via AutomaticVisibility can report that instead of Windowed, and that is
+            // an ordinary window — it is only the three modes below that are not.
             const mode = window.visibility
             if (mode !== Window.Maximized && mode !== Window.FullScreen
                     && mode !== Window.Minimized && !window.previewFullscreen)
@@ -95,10 +97,8 @@ ApplicationWindow {
     function showRestored() {
         // Assigning visibility shows the window too, so a session that was left
         // maximized never appears at its windowed size on the way there.
-        if (LayoutMemory.savedWindowMaximized())
-            window.visibility = Window.Maximized
-        else
-            window.visible = true
+        window.visibility = LayoutMemory.savedWindowMaximized()
+                            ? Window.Maximized : Window.Windowed
         // A launch nobody resizes never emits a geometry change, so the sampler that
         // hangs off those signals would never run and the session would save nothing.
         geometrySettleTimer.restart()
@@ -290,7 +290,18 @@ ApplicationWindow {
     // Header Extras icon pulses while true; never auto-opens a dialog.
     readonly property alias addonAttentionNeeded: addonStartupDialog.needsAttention
 
+    function promptLanguageChooserIfNeeded() {
+        if (!EditorState.needsUiLanguagePrompt)
+            return false
+        if (languageChooserDialog.visible)
+            return true
+        languageChooserDialog.openChooser()
+        return true
+    }
+
     function promptLayoutChooserIfNeeded() {
+        if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+            return
         if (EditorState.recoveryAvailable || EditorState.projectLayoutChosen)
             return
         if (window.layoutPromptDismissed)
@@ -312,6 +323,13 @@ ApplicationWindow {
 
     ProjectSetupDialog {
         id: projectSetupDialog
+    }
+
+    LanguageChooserDialog {
+        id: languageChooserDialog
+        // First-launch only. After Continue the language is stored, then the usual
+        // recovery / layout prompts can run.
+        onClosed: window.continueStartupAfterLanguage()
     }
 
     LayoutChooserDialog {
@@ -439,6 +457,8 @@ ApplicationWindow {
     }
 
     function promptRecoveryIfNeeded() {
+        if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+            return
         if (!EditorState.recoveryAvailable || recoveryDialog.visible)
             return
         // Opt-in reopen handles recovery (and last .drift) without asking.
@@ -484,6 +504,12 @@ ApplicationWindow {
     }
 
     function beginStartupProject() {
+        if (window.promptLanguageChooserIfNeeded())
+            return
+        window.continueStartupAfterLanguage()
+    }
+
+    function continueStartupAfterLanguage() {
         // A document the shell asked us to open (argv / QFileOpenEvent) wins over last-session
         // reopen and the recovery prompt.
         if (EditorState.consumeStartupProject())
@@ -513,6 +539,8 @@ ApplicationWindow {
             })
         }
         function onRecoveryChanged() {
+            if (EditorState.needsUiLanguagePrompt || languageChooserDialog.visible)
+                return
             if (EditorState.reopenLastProject)
                 return
             if (EditorState.recoveryAvailable) {

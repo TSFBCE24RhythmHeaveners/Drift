@@ -246,6 +246,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: {
+                            Haptics.press()
                             overflowMenu.close()
                             menuRow.triggered()
                         }
@@ -309,7 +310,7 @@ Item {
                 }
                 MenuRow {
                     text: qsTr("Multicam")
-                    glyph: Theme.icons.grid
+                    glyph: Theme.icons.shuffle
                     onTriggered: root.Window.window.openMulticam()
                 }
                 MenuRow {

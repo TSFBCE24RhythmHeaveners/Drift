@@ -48,11 +48,14 @@
 #include "engine/FaceMesh.h"
 #include "engine/FaceModelTransform.h"
 #include "engine/ModelAsset.h"
+#include "engine/GlFaceSwapRenderer.h"
+#include "engine/FaceSwapSource.h"
 #include "engine/GlModelRenderer.h"
 #include "engine/GlRuntime.h"
 #include "engine/EmojiCatalog.h"
 #include "engine/FontCatalog.h"
 #include "engine/FrameCompositor.h"
+#include "engine/GpuCompositor.h"
 #include "engine/TextRaster.h"
 #include "engine/GpuEffectExecutor.h"
 #include "engine/GpuPackageParse.h"
@@ -73,6 +76,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/pixfmt.h>
+#include <libswscale/swscale.h>
 }
 
 class EngineTest : public QObject
@@ -106,15 +110,26 @@ private slots:
     void faceMesh3dPassThroughWithoutMesh();
     void faceMesh3dDrawsWarpedOverlay();
     void faceMeshParamsSkipHeadProxy();
+    void faceSwapEffectPackageLoads();
+    void faceSwapMeshTopologyLoads();
+    void faceSwapVertexAlphaRamps();
+    void faceSwapPassThroughWithoutSource();
+    void faceSwapDrawsSwappedFace();
+    void faceSwapMakeThumbnail();
     void beautyEffectsPassThroughWithoutContours();
     void emojiCatalogNeedsFontAddon();
     void emojiRasterisesGlyph();
     void effectProcessorPassthroughWithoutEffects();
     void effectProcessorBrightness();
     void clipReaderSequentialAndSeek();
+    void clipReaderHoldsFrameAcrossGaps();
     void clipReaderAppliesDisplayRotation_data();
     void clipReaderAppliesDisplayRotation();
     void hwAccelBackendIdsRoundTrip();
+    void previewFrameAcceptsHardwareSurfaces();
+    void vaapiPreviewMatchesSoftwareDecode();
+    void p010PreviewConvertsThroughSoftwarePath();
+    void hardwareDecodeSurvivesScrubbing();
     void clipReaderPicksHwAv1Decoder();
     void clipReaderStaysOnSoftwareWhenHardwareDisabled();
     void clipReaderAutoKeepsCheapClipsOnSoftware();
@@ -196,6 +211,7 @@ private slots:
     void exporterProducesPlayableFileWithBackground();
     void exporterProducesAudioOnlyMp3();
     void exporterTagsSdrBt709ColorMetadata();
+    void gpuNv12MatchesSwsBt709();
     void exporterDefaultCrfIsNearLosslessForH264();
     void exporterHardwareCodecsListedForThisOs();
     void exporterHardwarePreferredContainerIsMp4();
@@ -248,6 +264,7 @@ private slots:
 private:
     static QString makeColorSegmentsVideo(QTemporaryDir &dir);
     static QString makeRotatedHalvesVideo(QTemporaryDir &dir, int displayDegrees);
+    static QString makeHdHalvesVideo(QTemporaryDir &dir);
     static QString makeAv1ColorVideo(QTemporaryDir &dir);
     static QString makeToneAudio(QTemporaryDir &dir);
     static QString makeSweepAudio(QTemporaryDir &dir);
@@ -1340,6 +1357,323 @@ void EngineTest::faceMeshParamsSkipHeadProxy()
 
 // Every beauty package must pass the frame through untouched when the clip has no contours, or an
 // un-rescanned clip looks broken rather than merely un-scanned.
+namespace {
+
+// The canonical rest mesh laid out around `centre` at `halfWidth`, as a plausible tracked face:
+// head space is +Y toward the forehead while uv.y grows downward, so y is negated.
+QList<QVector3D> faceSwapTestMesh(const drift::FaceMeshRest &rest, QPointF centre, double halfWidth)
+{
+    QList<QVector3D> mesh;
+    mesh.reserve(drift::kFaceMeshPoints);
+    const float s = float(2.0 * halfWidth);
+    for (int i = 0; i < drift::kFaceMeshPoints; ++i) {
+        const QVector3D &p = rest.positions.at(i);
+        mesh.append(QVector3D(float(centre.x()) + p.x() * s, float(centre.y()) - p.y() * s,
+                              p.z() * s));
+    }
+    return mesh;
+}
+
+drift::FaceAnchors faceSwapTestAnchors(const drift::FaceMeshRest &rest, double halfWidth)
+{
+    drift::FaceAnchors a;
+    a.valid = true;
+    a.faceCenter = QPointF(0.5, 0.5);
+    a.faceRx = halfWidth;
+    a.faceRy = halfWidth * 1.2;
+    a.hasMesh = true;
+    a.mesh = faceSwapTestMesh(rest, QPointF(0.5, 0.5), halfWidth);
+    return a;
+}
+
+} // namespace
+
+void EngineTest::faceSwapEffectPackageLoads()
+{
+    const EffectPresetEntry *def = effectDefForId(QStringLiteral("face_swap"));
+    QVERIFY2(def, "face_swap package missing from catalog");
+    QVERIFY(def->isFaceSwap);
+    QVERIFY(!def->isModel3d);
+    QVERIFY(def->needsFace);
+    QVERIFY(def->meta.compositorOnly);
+
+    bool hasSource = false;
+    for (const drift::EffectParamSpec &spec : def->meta.parameters) {
+        if (spec.key != QLatin1String("sourceImage"))
+            continue;
+        hasSource = true;
+        QVERIFY(spec.isFilePath());
+        // No default: an unset photo is what makes a freshly added effect pass through, and a
+        // package-relative default would resolve to a file that is not a photo.
+        QVERIFY(spec.defaultString.isEmpty());
+        QVERIFY(!spec.fileFilters.isEmpty());
+    }
+    QVERIFY2(hasSource, "face_swap must expose a sourceImage file parameter");
+
+    // The renderer resolves the topology from the package directory rather than a parameter, so
+    // that lookup has to keep working.
+    const QString bin = QDir(def->gpu.packageDir).filePath(QStringLiteral("mediapipe_face.bin"));
+    QVERIFY2(QFileInfo::exists(bin), qPrintable(bin));
+}
+
+void EngineTest::faceSwapMeshTopologyLoads()
+{
+    const QString bin = QDir(QString::fromUtf8(DRIFT_TEST_EFFECTS_DIR))
+                            .filePath(QStringLiteral("face_swap/mediapipe_face.bin"));
+    QVERIFY2(QFileInfo::exists(bin), qPrintable(bin));
+
+    const auto rest = drift::loadFaceMeshRest(bin);
+    QVERIFY2(rest, qPrintable(drift::faceMeshRestWarning(bin)));
+
+    // The index buffer addresses tracked mesh points directly, so the vertex count has to be
+    // exactly the landmark count — anything else reads past the end of the vertex stream.
+    QCOMPARE(rest->positions.size(), drift::kFaceMeshPoints);
+    QVERIFY(rest->indices.size() >= 3);
+    QCOMPARE(rest->indices.size() % 3, 0);
+    // No handles: the swap never warps a rest pose, it draws the tracked points themselves.
+    QVERIFY(rest->handles.isEmpty());
+
+    for (uint32_t i : rest->indices)
+        QVERIFY(int(i) < drift::kFaceMeshPoints);
+
+    QSet<QString> seen;
+    for (int i = 0; i + 2 < rest->indices.size(); i += 3) {
+        const uint32_t a = rest->indices[i];
+        const uint32_t b = rest->indices[i + 1];
+        const uint32_t c = rest->indices[i + 2];
+        QVERIFY2(a != b && b != c && a != c, "degenerate triangle in the topology");
+        QList<uint32_t> tri{a, b, c};
+        std::sort(tri.begin(), tri.end());
+        const QString key = QStringLiteral("%1-%2-%3").arg(tri[0]).arg(tri[1]).arg(tri[2]);
+        QVERIFY2(!seen.contains(key), qPrintable(QStringLiteral("duplicate triangle %1").arg(key)));
+        seen.insert(key);
+    }
+}
+
+void EngineTest::faceSwapVertexAlphaRamps()
+{
+    const QString bin = QDir(QString::fromUtf8(DRIFT_TEST_EFFECTS_DIR))
+                            .filePath(QStringLiteral("face_swap/mediapipe_face.bin"));
+    const auto rest = drift::loadFaceMeshRest(bin);
+    QVERIFY(rest);
+
+    // Feather only: the oval itself is fully transparent so the swap never ends on a hard
+    // silhouette, and the middle of the face is fully covered.
+    const QVector<float> plain = drift::faceSwapVertexAlpha(*rest, 0.35, 0.0, 0.0);
+    QCOMPARE(plain.size(), drift::kFaceMeshPoints);
+    for (int i : drift::mpidx::kFaceOval)
+        QCOMPARE(plain.at(i), 0.f);
+    QVERIFY2(plain.at(1) > 0.99f, "the nose tip should be fully covered");
+    QVERIFY2(plain.at(drift::mpidx::kEyeLeftRing[0]) > 0.f,
+             "the eyes should be covered when keepEyes is 0");
+
+    // A wider feather cannot make any vertex more covered than a narrow one.
+    const QVector<float> wide = drift::faceSwapVertexAlpha(*rest, 1.0, 0.0, 0.0);
+    for (int i = 0; i < drift::kFaceMeshPoints; ++i)
+        QVERIFY(wide.at(i) <= plain.at(i) + 1e-5f);
+
+    // Keeping the eyes and mouth opens them right up, and leaves the nose alone.
+    const QVector<float> holes = drift::faceSwapVertexAlpha(*rest, 0.35, 1.0, 1.0);
+    for (int i : drift::mpidx::kEyeLeftRing)
+        QCOMPARE(holes.at(i), 0.f);
+    for (int i : drift::mpidx::kEyeRightRing)
+        QCOMPARE(holes.at(i), 0.f);
+    for (int i : drift::mpidx::kLipInner)
+        QCOMPARE(holes.at(i), 0.f);
+    QVERIFY2(holes.at(1) > 0.99f, "opening the eyes and mouth should not uncover the nose");
+
+    for (int i = 0; i < drift::kFaceMeshPoints; ++i) {
+        QVERIFY(holes.at(i) >= 0.f && holes.at(i) <= 1.f);
+        QVERIFY(plain.at(i) >= 0.f && plain.at(i) <= 1.f);
+    }
+}
+
+void EngineTest::faceSwapPassThroughWithoutSource()
+{
+    if (!GpuEffectExecutor::instance().isAvailable())
+        QSKIP("GPU effect executor unavailable");
+    const EffectPresetEntry *def = effectDefForId(QStringLiteral("face_swap"));
+    if (!def)
+        QSKIP("face_swap package missing from catalog");
+
+    const QString bin = QDir(def->gpu.packageDir).filePath(QStringLiteral("mediapipe_face.bin"));
+    const auto rest = drift::loadFaceMeshRest(bin);
+    QVERIFY(rest);
+
+    QImage source(128, 128, QImage::Format_RGBA8888);
+    source.fill(QColor(80, 90, 100));
+
+    // A fully tracked face, but no photo picked yet: the effect must leave the frame alone
+    // rather than render a hole where the face is.
+    const drift::FaceAnchors face = faceSwapTestAnchors(*rest, 0.25);
+
+    drift::Effect effect;
+    effect.catalogId = QStringLiteral("face_swap");
+    const QImage out = EffectProcessor::applyEffects(source, {effect}, 0, {face});
+    QVERIFY(!out.isNull());
+    QCOMPARE(out.size(), source.size());
+    QCOMPARE(out.pixelColor(64, 64), source.pixelColor(64, 64));
+
+    // Same again with a path that was never ingested — no sidecar, so still pass-through.
+    effect.parameters.insert(QStringLiteral("sourceImage"),
+                             QStringLiteral("/nonexistent/never-ingested.png"));
+    const QImage out2 = EffectProcessor::applyEffects(source, {effect}, 0, {face});
+    QVERIFY(!out2.isNull());
+    QCOMPARE(out2.pixelColor(64, 64), source.pixelColor(64, 64));
+}
+
+void EngineTest::faceSwapDrawsSwappedFace()
+{
+    if (!GpuEffectExecutor::instance().isAvailable())
+        QSKIP("GPU effect executor unavailable");
+    const EffectPresetEntry *def = effectDefForId(QStringLiteral("face_swap"));
+    if (!def)
+        QSKIP("face_swap package missing from catalog");
+
+    const QString bin = QDir(def->gpu.packageDir).filePath(QStringLiteral("mediapipe_face.bin"));
+    const auto rest = drift::loadFaceMeshRest(bin);
+    QVERIFY(rest);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString photoPath = dir.filePath(QStringLiteral("face.png"));
+    QImage photo(256, 256, QImage::Format_RGBA8888);
+    photo.fill(QColor(230, 40, 40));
+    QVERIFY(photo.save(photoPath));
+
+    // Stand in for the landmarker: the sidecar is an ordinary one-frame face track, so the test
+    // can write the photo's landmarks directly instead of needing the face models installed.
+    drift::FaceAnchors sourceFace = faceSwapTestAnchors(*rest, 0.25);
+    drift::FaceTrack sourceTrack;
+    sourceTrack.fps = 1;
+    sourceTrack.frames.append(drift::FaceTrackFrame{{sourceFace}});
+    QString writeError;
+    QVERIFY2(drift::writeFaceTrack(drift::faceSwapSourcePath(photoPath), sourceTrack, &writeError),
+             qPrintable(writeError));
+    QVERIFY(drift::faceSwapSourceReady(photoPath));
+
+    QImage source(128, 128, QImage::Format_RGBA8888);
+    source.fill(QColor(20, 20, 20));
+    const drift::FaceAnchors face = faceSwapTestAnchors(*rest, 0.25);
+
+    drift::Effect effect;
+    effect.catalogId = QStringLiteral("face_swap");
+    effect.parameters.insert(QStringLiteral("sourceImage"), photoPath);
+    // Lighting match off so the assertion is about the swap landing, not about the correction.
+    effect.parameters.insert(QStringLiteral("colorMatch"), 0.0);
+    effect.parameters.insert(QStringLiteral("keepEyes"), 0.0);
+    effect.parameters.insert(QStringLiteral("keepMouth"), 0.0);
+
+    const QImage out = EffectProcessor::applyEffects(source, {effect}, 0, {face});
+    QVERIFY(!out.isNull());
+    QCOMPARE(out.size(), source.size());
+    const QColor centre = out.pixelColor(64, 64);
+    QVERIFY2(centre.red() > 150,
+             qPrintable(QStringLiteral("centre is %1; the photo should cover the face")
+                            .arg(centre.name())));
+    // Outside the oval the frame is untouched.
+    QCOMPARE(out.pixelColor(2, 2), source.pixelColor(2, 2));
+
+    // A following effect must still render — catches a leaked GL_DEPTH_TEST or depth mask, the
+    // same failure the model3d state test guards against.
+    drift::Effect brightness;
+    brightness.catalogId = QStringLiteral("adjust.brightness");
+    brightness.parameters.insert(QStringLiteral("brightness"), 0.25);
+    const QImage chained = EffectProcessor::applyEffects(source, {effect, brightness}, 0, {face});
+    QVERIFY(!chained.isNull());
+    QVERIFY2(chained.pixelColor(2, 2).red() > out.pixelColor(2, 2).red(),
+             "brightness after a face swap step did not apply");
+}
+
+// Generates effects/face_swap/thumbnail.png. Skipped unless DRIFT_FACE_SWAP_THUMB names an output
+// path, so it costs a normal run nothing.
+//
+// It lives here rather than in tools/effectthumbs because that tool only handles `backend: "gpu"`
+// packages — the compositor-only face backends are skipped outright, which is why face_mesh_3d's
+// thumbnail is a hand-made asset with no way to reproduce it. This one is a real render of the
+// effect through EffectProcessor, on two deliberately mismatched synthetic faces so the swap, the
+// feathered edge and the eye/mouth passthrough are all visible.
+void EngineTest::faceSwapMakeThumbnail()
+{
+    const QByteArray out = qgetenv("DRIFT_FACE_SWAP_THUMB");
+    if (out.isEmpty())
+        QSKIP("set DRIFT_FACE_SWAP_THUMB to regenerate");
+    if (!GpuEffectExecutor::instance().isAvailable())
+        QSKIP("GPU unavailable");
+    const EffectPresetEntry *def = effectDefForId(QStringLiteral("face_swap"));
+    QVERIFY(def);
+    const auto rest =
+        drift::loadFaceMeshRest(QDir(def->gpu.packageDir).filePath(QStringLiteral("mediapipe_face.bin")));
+    QVERIFY(rest);
+
+    const int S = 512;
+    auto paintFace = [&](QColor bg, QColor skin, QColor hair, QColor eye, QColor lip, bool stripes) {
+        QImage img(S, S, QImage::Format_RGBA8888);
+        img.fill(bg);
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        if (stripes) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(255, 255, 255, 12));
+            for (int i = -S; i < S * 2; i += 46)
+                p.drawRect(QRectF(i, 0, 20, S));
+        }
+        const QPointF c(S * 0.5, S * 0.5);
+        const double rx = S * 0.26, ry = S * 0.33;
+        p.setBrush(hair);
+        p.setPen(Qt::NoPen);
+        p.drawEllipse(QPointF(c.x(), c.y() - ry * 0.30), rx * 1.16, ry * 0.92);
+        p.setBrush(skin);
+        p.drawEllipse(c, rx, ry);
+        const double eyeY = c.y() - ry * 0.20, eyeDx = rx * 0.42;
+        for (double sx : {-1.0, 1.0}) {
+            p.setBrush(QColor(250, 250, 250));
+            p.drawEllipse(QPointF(c.x() + sx * eyeDx, eyeY), rx * 0.20, ry * 0.11);
+            p.setBrush(eye);
+            p.drawEllipse(QPointF(c.x() + sx * eyeDx, eyeY), rx * 0.095, rx * 0.095);
+        }
+        p.setBrush(skin.darker(115));
+        p.drawEllipse(QPointF(c.x(), c.y() + ry * 0.16), rx * 0.11, ry * 0.07);
+        p.setBrush(lip);
+        p.drawEllipse(QPointF(c.x(), c.y() + ry * 0.48), rx * 0.34, ry * 0.11);
+        p.end();
+        return img;
+    };
+
+    // The frame being edited: cool, and the face whose eyes and mouth stay.
+    const QImage frame = paintFace(QColor(32, 40, 58), QColor(122, 142, 172), QColor(44, 54, 74),
+                                   QColor(40, 78, 120), QColor(96, 104, 130), true);
+    // The photo the identity comes from: warm, and clearly a different person.
+    const QImage photo = paintFace(QColor(60, 40, 34), QColor(238, 178, 132), QColor(104, 56, 32),
+                                   QColor(104, 60, 24), QColor(214, 88, 78), false);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString photoPath = dir.filePath(QStringLiteral("photo.png"));
+    QVERIFY(photo.save(photoPath));
+
+    drift::FaceTrack track;
+    track.fps = 1;
+    track.frames.append(drift::FaceTrackFrame{{faceSwapTestAnchors(*rest, 0.26)}});
+    QString e;
+    QVERIFY2(drift::writeFaceTrack(drift::faceSwapSourcePath(photoPath), track, &e), qPrintable(e));
+
+    drift::Effect effect;
+    effect.catalogId = QStringLiteral("face_swap");
+    effect.parameters.insert(QStringLiteral("sourceImage"), photoPath);
+    effect.parameters.insert(QStringLiteral("colorMatch"), 0.12);
+    effect.parameters.insert(QStringLiteral("keepEyes"), 0.85);
+    effect.parameters.insert(QStringLiteral("keepMouth"), 0.6);
+    effect.parameters.insert(QStringLiteral("feather"), 0.22);
+
+    const QImage result =
+        EffectProcessor::applyEffects(frame, {effect}, 0, {faceSwapTestAnchors(*rest, 0.26)});
+    QVERIFY(!result.isNull());
+    QVERIFY(result.convertToFormat(QImage::Format_RGBA8888)
+                .scaled(256, 256, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                .save(QString::fromUtf8(out), "PNG"));
+}
+
 void EngineTest::beautyEffectsPassThroughWithoutContours()
 {
     if (!GpuEffectExecutor::instance().isAvailable())
@@ -1468,10 +1802,11 @@ void EngineTest::reverseRendererPlaysSourceBackwards()
     QVERIFY(QFileInfo::exists(proxyPath));
     QVERIFY(!QFileInfo::exists(proxyPath + QStringLiteral(".part")));
 
-    // Each source frame keeps the mirror of its own timestamp, so source frame i lands at
-    // coverOut - i frames into the proxy. Walking the proxy forwards must walk the source back.
-    for (int j = 1; j <= frames; ++j) {
-        const drift::TimeUs us = drift::TimeUs(j) * drift::kUsPerSecond / fps;
+    // Each source frame keeps the mirror of its own timestamp, so walking the proxy
+    // forwards walks the source back. Sample the middle of each frame's interval —
+    // the boundary can land a hair below the next PTS and resolve to the previous frame.
+    for (int j = 0; j < frames; ++j) {
+        const drift::TimeUs us = (2 * drift::TimeUs(j) + 1) * drift::kUsPerSecond / (2 * fps);
         const QImage frame = ClipReaderPool::instance().readVideoFrame(proxyPath, 1, us, 0, 0);
         QVERIFY2(!frame.isNull(), qPrintable(QStringLiteral("proxy frame %1 did not decode").arg(j)));
 
@@ -1482,7 +1817,7 @@ void EngineTest::reverseRendererPlaysSourceBackwards()
                 break;
             }
         }
-        QCOMPARE(band, frames - j);
+        QCOMPARE(band, frames - 1 - j);
     }
 }
 
@@ -1614,6 +1949,13 @@ void EngineTest::resolveVideoReadMirrorsTheClipOntoTheProxy()
     QCOMPARE(read.sourceUs, coverOut - clip.srcIn);
 
     QCOMPARE(drift::videoReadPath(clip), proxyPath);
+
+    clip.reverse = false;
+    clip.stabilizePath = proxyPath;
+    read = drift::resolveVideoRead(clip, clip.timelineStart);
+    QCOMPARE(read.path, proxyPath);
+    QCOMPARE(read.sourceUs, clip.srcIn);
+    QCOMPARE(drift::videoReadPath(clip), proxyPath);
 }
 
 void EngineTest::effectProcessorPassthroughWithoutEffects()
@@ -1708,9 +2050,111 @@ void EngineTest::clipReaderSequentialAndSeek()
     QCOMPARE(dominant(1'500'000), QChar('G'));
 }
 
+// Game captures are VFR: the file is tagged 60 fps but frames arrive in bursts and
+// gaps. Playback ticks at project fps, so most ticks land in a gap. The reader used
+// to treat the overshot next-frame PTS as "we have gone backwards" and re-seek the
+// GOP on every tick — that is the stutter. Sampling 10 fps source at 60 Hz is the
+// same pattern with a file ffmpeg can make.
+void EngineTest::clipReaderHoldsFrameAcrossGaps()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("sparse.mp4"));
+    QProcess proc;
+    proc.start(ffmpeg,
+               {QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"),
+                QStringLiteral("-i"), QStringLiteral("testsrc2=s=64x64:r=10:d=2"),
+                QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-g"),
+                QStringLiteral("20"), QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+                path});
+    QVERIFY(proc.waitForFinished(30000));
+    QCOMPARE(proc.exitCode(), 0);
+
+    const auto previous = ClipReader::hardwareDecodeMode();
+    ClipReader::setHardwareDecodeMode(ClipReader::HardwareDecodeMode::Software);
+    const auto restore = qScopeGuard([previous] {
+        ClipReader::setHardwareDecodeMode(previous);
+    });
+
+    ClipReader reader;
+    QVERIFY(reader.open(path));
+
+    constexpr int kRequests = 60;                 // 1 s at 60 Hz
+    constexpr drift::TimeUs kStep = 1'000'000 / 60;
+
+    PreviewVideoFrame first;
+    QVERIFY(reader.readPreviewVideoFrame(0, first, 64, 64) && first.isValid());
+    PreviewVideoFrame second;
+    QVERIFY(reader.readPreviewVideoFrame(kStep, second, 64, 64) && second.isValid());
+    const quint64 beforeHold = ClipReader::videoFramesDecoded();
+    PreviewVideoFrame third;
+    // 5 ticks is 83 ms, past the 50 ms cache window of a 10 fps file, still
+    // inside the first source frame — so this only stays cheap if the cover/peek
+    // cursor holds rather than seeking.
+    QVERIFY(reader.readPreviewVideoFrame(kStep * 5, third, 64, 64) && third.isValid());
+    const quint64 holdDecoded = ClipReader::videoFramesDecoded() - beforeHold;
+    QVERIFY2(holdDecoded == 0,
+             qPrintable(QStringLiteral("in-gap tick decoded %1 frames").arg(holdDecoded)));
+
+    const quint64 before = ClipReader::videoFramesDecoded();
+    for (int i = 0; i < kRequests; ++i) {
+        PreviewVideoFrame frame;
+        QVERIFY2(reader.readPreviewVideoFrame(drift::TimeUs(i) * kStep, frame, 64, 64)
+                     && frame.isValid(),
+                 qPrintable(QStringLiteral("request %1 failed").arg(i)));
+    }
+    const quint64 decoded = ClipReader::videoFramesDecoded() - before;
+
+    // 10 source frames in that second, plus a peek past each one. Frame-threaded
+    // software decode may pull extra pictures out of the GOP; a seek storm walks
+    // that GOP on most ticks and lands in the hundreds.
+    QVERIFY2(decoded < 80,
+             qPrintable(QStringLiteral("decoded %1 frames for %2 60 Hz ticks of 10 fps source")
+                            .arg(decoded)
+                            .arg(kRequests)));
+
+    // A real backward jump must still reseek rather than holding the late frame.
+    PreviewVideoFrame early;
+    QVERIFY(reader.readPreviewVideoFrame(0, early, 64, 64));
+    QVERIFY(early.isValid());
+}
+
 // 64x32 landscape, red left half / blue right half, tagged with a display matrix.
 // `displayDegrees` is the clockwise turn a player should apply, i.e. what
 // displayRotationOf() reports; the matrix stores its negation.
+// 1080p, so the VAAPI surface is padded to 1088 and a wrongly-sized dma-buf import shows up as
+// a garbage strip along the bottom edge rather than as a clean failure.
+QString EngineTest::makeHdHalvesVideo(QTemporaryDir &dir)
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        return {};
+
+    const QString out = dir.filePath(QStringLiteral("hd-halves.mp4"));
+    QStringList args{
+        QStringLiteral("-y"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("color=c=red:s=960x1080:r=25:d=1"),
+        QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+        QStringLiteral("color=c=blue:s=960x1080:r=25:d=1"),
+        QStringLiteral("-filter_complex"), QStringLiteral("[0][1]hstack=inputs=2[v]"),
+        QStringLiteral("-map"), QStringLiteral("[v]"),
+        QStringLiteral("-c:v"), QStringLiteral("libx264"),
+        QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+        out,
+    };
+
+    QProcess proc;
+    proc.start(ffmpeg, args);
+    if (!proc.waitForFinished(60000) || proc.exitCode() != 0)
+        return {};
+    return QFileInfo::exists(out) ? out : QString{};
+}
+
 QString EngineTest::makeRotatedHalvesVideo(QTemporaryDir &dir, int displayDegrees)
 {
     const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
@@ -1794,15 +2238,39 @@ void EngineTest::clipReaderAppliesDisplayRotation()
     QVERIFY(qRed(red) > qBlue(red));
     QVERIFY(qBlue(blue) > qRed(blue));
 
-    // The preview path converts to NV12 separately and needs the same treatment.
-    Nv12Frame nv12;
-    QVERIFY(reader.readVideoFrameAtNv12(500'000, nv12, expectedSize.width(), expectedSize.height()));
-    QCOMPARE(QSize(nv12.width, nv12.height), expectedSize);
-    // Red is markedly brighter than blue, so luma alone shows the halves are upright.
-    const auto lumaAt = [&](QPoint p) {
-        return uchar(nv12.data.at(qsizetype(p.y()) * nv12.width + p.x()));
-    };
-    QVERIFY(lumaAt(redAt) > lumaAt(blueAt));
+    // Preview keeps coded orientation and applies rotation in the GL shader.
+    PreviewVideoFrame preview;
+    QVERIFY(reader.readPreviewVideoFrame(500'000, preview, expectedSize.width(), expectedSize.height()));
+    QVERIFY(preview.isValid());
+    QCOMPARE(preview.rotation, displayDegrees);
+    QCOMPARE(QSize(preview.displayWidth(), preview.displayHeight()), expectedSize);
+
+    if (!GpuCompositor::isAvailable())
+        return;
+
+    drift::Project project;
+    project.setResolution(expectedSize.width(), expectedSize.height());
+    project.setFps(30);
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+
+    drift::Clip clip;
+    clip.id = QStringLiteral("rot");
+    clip.type = drift::ClipType::Video;
+    clip.path = path;
+    clip.timelineStart = 0;
+    clip.timelineDuration = drift::secondsToUs(1.0);
+    project.tracks()[0].clips.append(clip);
+
+    FrameCompositor compositor;
+    compositor.setProject(&project);
+    const QImage composited = compositor.compositeAt(500'000);
+    QVERIFY(!composited.isNull());
+    QCOMPARE(composited.size(), expectedSize);
+    const QRgb cred = composited.pixel(redAt);
+    const QRgb cblue = composited.pixel(blueAt);
+    QVERIFY(qRed(cred) > qBlue(cred));
+    QVERIFY(qBlue(cblue) > qRed(cblue));
 }
 
 QString EngineTest::makeAv1ColorVideo(QTemporaryDir &dir)
@@ -1832,6 +2300,257 @@ QString EngineTest::makeAv1ColorVideo(QTemporaryDir &dir)
 
 // The picker and the saved setting both key off these ids, so a backend whose id does
 // not round-trip would silently become Auto on the next launch.
+// A VAAPI or VideoToolbox surface lives in data[3], not data[0], and for VAAPI data[3] is a
+// VASurfaceID cast to a pointer — surface id 0 is legal and iHD hands it out first. Testing
+// either data slot therefore rejects real frames, and ClipReader reads that rejection as a
+// decoder failure and drops the whole reader to software for good.
+void EngineTest::previewFrameAcceptsHardwareSurfaces()
+{
+    auto hardwareFrame = [](AVPixelFormat format, uintptr_t surface) {
+        AVFrame *raw = av_frame_alloc();
+        raw->format = format;
+        raw->width = 1920;
+        raw->height = 1080;
+        raw->data[3] = reinterpret_cast<uint8_t *>(surface);
+        // What actually keeps the surface alive; the pool buffer's payload is the id itself.
+        raw->buf[0] = av_buffer_alloc(1);
+        PreviewVideoFrame out;
+        out.frame.reset(raw, [](AVFrame *f) {
+            f->data[3] = nullptr;
+            av_frame_free(&f);
+        });
+        return out;
+    };
+
+    for (const AVPixelFormat format : {AV_PIX_FMT_VAAPI, AV_PIX_FMT_VIDEOTOOLBOX}) {
+        // Surface id 0 is the regression that matters: it makes data[3] a null pointer.
+        for (const uintptr_t surface : {uintptr_t(0), uintptr_t(7)}) {
+            const PreviewVideoFrame frame = hardwareFrame(format, surface);
+            QVERIFY(frame.isValid());
+            QVERIFY(frame.isHardware());
+            QCOMPARE(frame.displayWidth(), 1920);
+            QCOMPARE(frame.displayHeight(), 1080);
+        }
+    }
+
+    // A hardware frame with no surface reference at all is still invalid.
+    PreviewVideoFrame empty;
+    QVERIFY(!empty.isValid());
+    AVFrame *bare = av_frame_alloc();
+    bare->format = AV_PIX_FMT_VAAPI;
+    bare->width = 1920;
+    bare->height = 1080;
+    empty.frame.reset(bare, avFrameDeleter);
+    QVERIFY(!empty.isValid());
+
+    // And a software frame still needs its pixels.
+    PreviewVideoFrame blank;
+    AVFrame *sw = av_frame_alloc();
+    sw->format = AV_PIX_FMT_NV12;
+    sw->width = 64;
+    sw->height = 64;
+    blank.frame.reset(sw, avFrameDeleter);
+    QVERIFY(!blank.isValid());
+}
+
+// Preview hardware decode had never actually run before the isValid() fix, so this covers the
+// path that fix switched on — not the dma-buf importer, which is off by default. Two overlapping
+// clips of one file share a reader and halve the hardware preview cache, which is the case most
+// likely to exhaust the decoder's surface pool.
+void EngineTest::hardwareDecodeSurvivesScrubbing()
+{
+    if (!drift::hwaccel::availableDecodeBackends().contains(drift::hwaccel::Backend::Vaapi))
+        QSKIP("no vaapi");
+    if (!GpuCompositor::isAvailable())
+        QSKIP("no gl");
+    QTemporaryDir dir;
+    const QString path = makeHdHalvesVideo(dir);
+    if (path.isEmpty())
+        QSKIP("no ffmpeg");
+
+    ClipReader::setHardwareDecodeMode(ClipReader::HardwareDecodeMode::Hardware,
+                                      drift::hwaccel::Backend::Vaapi);
+    drift::Project project;
+    project.setResolution(1920, 1080);
+    project.setFps(25);
+    project.tracks().clear();
+    // Two overlapping clips of one file: shares a reader, halves the hw preview cache.
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    for (int t = 0; t < 2; ++t) {
+        drift::Clip c;
+        c.id = QStringLiteral("c%1").arg(t);
+        c.type = drift::ClipType::Video;
+        c.path = path;
+        c.timelineStart = 0;
+        c.timelineDuration = drift::secondsToUs(1.0);
+        if (t == 1)
+            c.opacity.setKeyframe(0, 0.5);
+        project.tracks()[t].clips.append(c);
+    }
+    FrameCompositor compositor;
+    compositor.setProject(&project);
+
+    const quint64 before = ClipReader::hardwareFallbackCount();
+    // Forward playback, reverse playback, then out-of-order scrubs.
+    for (int pass = 0; pass < 4; ++pass) {
+        for (int i = 0; i < 25; ++i) {
+            const drift::TimeUs at = (pass % 3 == 0)   ? i * 40'000
+                                     : (pass % 3 == 1) ? (24 - i) * 40'000
+                                                       : ((i * 7) % 25) * 40'000;
+            const QImage img = compositor.compositeAt(at);
+            QVERIFY2(!img.isNull(), qPrintable(QStringLiteral("null at pass %1 t=%2").arg(pass).arg(at)));
+            QCOMPARE(img.size(), QSize(1920, 1080));
+            QVERIFY(qRed(img.pixel(200, 540)) > qBlue(img.pixel(200, 540)));
+            QVERIFY(qBlue(img.pixel(1700, 540)) > qRed(img.pixel(1700, 540)));
+        }
+    }
+    // A demotion to software would still render correctly, so the picture checks alone cannot
+    // tell whether hardware decode actually held up across the scrubbing.
+    QCOMPARE(ClipReader::hardwareFallbackCount(), before);
+    ClipReader::setHardwareDecodeMode(ClipReader::HardwareDecodeMode::Auto,
+                                      drift::hwaccel::Backend::None);
+}
+
+void EngineTest::vaapiPreviewMatchesSoftwareDecode()
+{
+    if (!drift::hwaccel::availableDecodeBackends().contains(drift::hwaccel::Backend::Vaapi))
+        QSKIP("No VAAPI device");
+    if (!GpuCompositor::isAvailable())
+        QSKIP("OpenGL offscreen context unavailable");
+
+    // The importer is off by default; opting in here is what a user would do, and it keeps this
+    // test meaningful rather than silently measuring the PBO path against itself.
+    qputenv("DRIFT_VAAPI_ZEROCOPY", "1");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = makeHdHalvesVideo(dir);
+    if (path.isEmpty())
+        QSKIP("ffmpeg not available to generate a 1080p test clip");
+
+    const QSize size(1920, 1080);
+    auto composite = [&](ClipReader::HardwareDecodeMode mode, drift::hwaccel::Backend backend,
+                         drift::TimeUs at) {
+        ClipReader::setHardwareDecodeMode(mode, backend);
+
+        drift::Project project;
+        project.setResolution(size.width(), size.height());
+        project.setFps(25);
+        project.tracks().clear();
+        project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+
+        drift::Clip clip;
+        clip.id = QStringLiteral("hd");
+        clip.type = drift::ClipType::Video;
+        clip.path = path;
+        clip.timelineStart = 0;
+        clip.timelineDuration = drift::secondsToUs(1.0);
+        project.tracks()[0].clips.append(clip);
+
+        FrameCompositor compositor;
+        compositor.setProject(&project);
+        return compositor.compositeAt(at);
+    };
+
+    // t=0 first: that frame lands on the first surface the driver allocates, whose VASurfaceID
+    // is 0 — the case that makes AVFrame::data[3] a null pointer.
+    for (const drift::TimeUs at : {drift::TimeUs(0), drift::TimeUs(400'000)}) {
+        const quint64 fallbacksBefore = ClipReader::hardwareFallbackCount();
+        const QImage hardware =
+            composite(ClipReader::HardwareDecodeMode::Hardware, drift::hwaccel::Backend::Vaapi, at);
+        // Without this the test would still pass on the PBO fallback, which is pixel-identical:
+        // a reader that demoted itself to software proves nothing about the import.
+        QCOMPARE(ClipReader::hardwareFallbackCount(), fallbacksBefore);
+        const QImage software =
+            composite(ClipReader::HardwareDecodeMode::Software, drift::hwaccel::Backend::None, at);
+
+        QVERIFY(!hardware.isNull());
+        QVERIFY(!software.isNull());
+        QCOMPARE(hardware.size(), size);
+        QCOMPARE(software.size(), size);
+
+        // Sample the bottom rows too: a dma-buf import sized from the padded 1088-tall surface
+        // instead of the 1080-tall picture leaks decoder padding into exactly that band.
+        const QList<QPoint> probes{{200, 40},   {1700, 40},   {200, 540}, {1700, 540},
+                                   {200, 1074}, {1700, 1074}, {960, 1078}};
+        for (const QPoint &probe : probes) {
+            const QRgb hw = hardware.pixel(probe);
+            const QRgb sw = software.pixel(probe);
+            QVERIFY2(qAbs(qRed(hw) - qRed(sw)) <= 6 && qAbs(qGreen(hw) - qGreen(sw)) <= 6
+                         && qAbs(qBlue(hw) - qBlue(sw)) <= 6,
+                     qPrintable(QStringLiteral("t=%1 at %2,%3: hw #%4 sw #%5")
+                                    .arg(at)
+                                    .arg(probe.x())
+                                    .arg(probe.y())
+                                    .arg(hw, 8, 16, QLatin1Char('0'))
+                                    .arg(sw, 8, 16, QLatin1Char('0'))));
+        }
+
+        // And that the picture is the one we encoded, not two matching shades of wrong.
+        QVERIFY(qRed(hardware.pixel(200, 540)) > qBlue(hardware.pixel(200, 540)));
+        QVERIFY(qBlue(hardware.pixel(1700, 540)) > qRed(hardware.pixel(1700, 540)));
+    }
+
+    ClipReader::setHardwareDecodeMode(ClipReader::HardwareDecodeMode::Auto,
+                                      drift::hwaccel::Backend::None);
+    qunsetenv("DRIFT_VAAPI_ZEROCOPY");
+}
+
+// Locks in the two-frame invariant in ensureSoftwareNv12: a software P010 frame
+// (the shape of a hwframe transfer that kept a 10-bit format) must sws into a
+// separate destination, not into itself after realloc. Does not reproduce the
+// original aliasing, which needs a hardware frame whose transfer yields P010.
+void EngineTest::p010PreviewConvertsThroughSoftwarePath()
+{
+    if (!GpuCompositor::isAvailable())
+        QSKIP("OpenGL offscreen context unavailable");
+
+    AVFrame *raw = av_frame_alloc();
+    QVERIFY(raw);
+    raw->format = AV_PIX_FMT_P010LE;
+    raw->width = 64;
+    raw->height = 64;
+    raw->colorspace = AVCOL_SPC_BT709;
+    raw->color_range = AVCOL_RANGE_JPEG;
+    QVERIFY(av_frame_get_buffer(raw, 0) >= 0);
+
+    const uint16_t y10 = uint16_t(1023u << 6);
+    const uint16_t uv10 = uint16_t(512u << 6);
+    for (int y = 0; y < raw->height; ++y) {
+        auto *row = reinterpret_cast<uint16_t *>(raw->data[0] + y * raw->linesize[0]);
+        for (int x = 0; x < raw->width; ++x)
+            row[x] = y10;
+    }
+    for (int y = 0; y < raw->height / 2; ++y) {
+        auto *row = reinterpret_cast<uint16_t *>(raw->data[1] + y * raw->linesize[1]);
+        for (int x = 0; x < raw->width; ++x)
+            row[x] = uv10;
+    }
+
+    GpuLayer layer;
+    layer.video = takePreviewFrame(raw, 0);
+    layer.rect = QRectF(0, 0, 64, 64);
+    layer.valid = true;
+
+    GpuItem item;
+    item.layer = layer;
+
+    GpuScene scene;
+    scene.canvasSize = QSize(64, 64);
+    scene.backgroundColor = Qt::black;
+    scene.items.append(item);
+
+    const QImage out = GpuCompositor::render(scene);
+    QVERIFY(!out.isNull());
+    QCOMPARE(out.size(), QSize(64, 64));
+
+    const QRgb centre = out.pixel(32, 32);
+    QVERIFY2(qRed(centre) > 230 && qGreen(centre) > 230 && qBlue(centre) > 230,
+             qPrintable(QStringLiteral("expected near-white, got #%1")
+                            .arg(centre, 8, 16, QLatin1Char('0'))));
+}
+
 void EngineTest::hwAccelBackendIdsRoundTrip()
 {
     const QList<drift::hwaccel::Backend> order = drift::hwaccel::decodeBackendOrder();
@@ -1969,6 +2688,15 @@ void EngineTest::debugReportListsCommonCodecs()
     QVERIFY(!info.value(QStringLiteral("system")).toList().isEmpty());
     QVERIFY(!info.value(QStringLiteral("package")).toString().isEmpty());
     QVERIFY(info.contains(QStringLiteral("hardwareDecodeAvailable")));
+
+    QStringList systemLabels;
+    for (const QVariant &entry : info.value(QStringLiteral("system")).toList())
+        systemLabels.append(entry.toMap().value(QStringLiteral("label")).toString());
+    QVERIFY(systemLabels.contains(QStringLiteral("Preview decode")));
+    QVERIFY(systemLabels.contains(QStringLiteral("Active decode")));
+    QVERIFY(systemLabels.contains(QStringLiteral("Window platform")));
+    QVERIFY(systemLabels.contains(QStringLiteral("Preview upload")));
+    QVERIFY(systemLabels.contains(QStringLiteral("Zero-copy")));
 
     const QVariantList encoders = info.value(QStringLiteral("encoders")).toList();
     QCOMPARE(encoders.size(), 5);
@@ -2136,10 +2864,10 @@ void EngineTest::videoStreamsDoNotReseekPerFrame()
     const quint64 twoFileBefore = ClipReader::videoFramesDecoded();
     for (int i = 0; i < kFrames; ++i) {
         QVERIFY(ClipReaderPool::instance()
-                    .readVideoFrameNv12(path, 101, drift::TimeUs(i) * kStep, 640, 360)
+                    .readPreviewVideoFrame(path, 101, drift::TimeUs(i) * kStep, 640, 360)
                     .isValid());
         QVERIFY(ClipReaderPool::instance()
-                    .readVideoFrameNv12(copy, 202, kSecondStart + drift::TimeUs(i) * kStep, 640, 360)
+                    .readPreviewVideoFrame(copy, 202, kSecondStart + drift::TimeUs(i) * kStep, 640, 360)
                     .isValid());
     }
     const quint64 twoFileDecoded = ClipReader::videoFramesDecoded() - twoFileBefore;
@@ -2148,10 +2876,10 @@ void EngineTest::videoStreamsDoNotReseekPerFrame()
     const quint64 oneFileBefore = ClipReader::videoFramesDecoded();
     for (int i = 0; i < kFrames; ++i) {
         QVERIFY(ClipReaderPool::instance()
-                    .readVideoFrameNv12(path, 303, drift::TimeUs(i) * kStep, 640, 360)
+                    .readPreviewVideoFrame(path, 303, drift::TimeUs(i) * kStep, 640, 360)
                     .isValid());
         QVERIFY(ClipReaderPool::instance()
-                    .readVideoFrameNv12(path, 404, kSecondStart + drift::TimeUs(i) * kStep, 640, 360)
+                    .readPreviewVideoFrame(path, 404, kSecondStart + drift::TimeUs(i) * kStep, 640, 360)
                     .isValid());
     }
     const quint64 oneFileDecoded = ClipReader::videoFramesDecoded() - oneFileBefore;
@@ -4865,6 +5593,109 @@ void EngineTest::exporterTagsSdrBt709ColorMetadata()
     QCOMPARE(vstream->codecpar->color_space, AVCOL_SPC_BT709);
 
     avformat_close_input(&fmt);
+}
+
+void EngineTest::gpuNv12MatchesSwsBt709()
+{
+    if (!GpuCompositor::isAvailable())
+        QSKIP("OpenGL unavailable");
+
+    const auto convertSws = [](const QImage &img, std::vector<uint8_t> *y, std::vector<uint8_t> *uv) {
+        const int w = img.width();
+        const int h = img.height();
+        y->assign(size_t(w) * h, 0);
+        uv->assign(size_t(w) * (h / 2), 0);
+        SwsContext *sws = sws_getContext(w, h, AV_PIX_FMT_RGBA, w, h, AV_PIX_FMT_NV12, SWS_BICUBIC,
+                                         nullptr, nullptr, nullptr);
+        if (!sws)
+            return false;
+        const int *coeff = sws_getCoefficients(SWS_CS_ITU709);
+        if (sws_setColorspaceDetails(sws, coeff, 1, coeff, 0, 0, 1 << 16, 1 << 16) < 0) {
+            sws_freeContext(sws);
+            return false;
+        }
+        uint8_t *dstData[4] = {y->data(), uv->data(), nullptr, nullptr};
+        int dstStride[4] = {w, w, 0, 0};
+        const uint8_t *srcData[4] = {img.constBits(), nullptr, nullptr, nullptr};
+        const int srcStride[4] = {int(img.bytesPerLine()), 0, 0, 0};
+        sws_scale(sws, srcData, srcStride, 0, h, dstData, dstStride);
+        sws_freeContext(sws);
+        return true;
+    };
+
+    const auto convertGpu = [](const QImage &img, std::vector<uint8_t> *y, std::vector<uint8_t> *uv) {
+        const int w = img.width();
+        const int h = img.height();
+        GpuScene scene;
+        scene.canvasSize = QSize(w, h);
+        scene.backgroundColor = Qt::black;
+        GpuItem item;
+        item.layer.valid = true;
+        item.layer.source = img;
+        item.layer.rect = QRectF(0, 0, w, h);
+        item.layer.opacity = 1.0;
+        scene.items.append(item);
+        y->assign(size_t(w) * h, 0);
+        uv->assign(size_t(w) * (h / 2), 0);
+        if (!GpuCompositor::beginExportNv12(scene, w, h, 0))
+            return false;
+        return GpuCompositor::finishExportNv12(0, y->data(), w, uv->data(), w, w, h);
+    };
+
+    const auto maxAbs = [](const std::vector<uint8_t> &a, const std::vector<uint8_t> &b) {
+        int m = 0;
+        for (size_t i = 0; i < a.size(); ++i)
+            m = qMax(m, qAbs(int(a[i]) - int(b[i])));
+        return m;
+    };
+
+    const QRgb solids[] = {qRgba(0, 0, 0, 255),       qRgba(255, 255, 255, 255),
+                           qRgba(255, 0, 0, 255),     qRgba(0, 255, 0, 255),
+                           qRgba(0, 0, 255, 255),     qRgba(128, 128, 128, 255)};
+    for (QRgb color : solids) {
+        QImage img(32, 32, QImage::Format_RGBA8888);
+        img.fill(color);
+        std::vector<uint8_t> gy, gu, sy, su;
+        QVERIFY(convertGpu(img, &gy, &gu));
+        QVERIFY(convertSws(img, &sy, &su));
+        QVERIFY2(maxAbs(gy, sy) <= 1, "solid Y");
+        QVERIFY2(maxAbs(gu, su) <= 2, "solid UV");
+    }
+
+    constexpr int kW = 64;
+    constexpr int kH = 64;
+    QImage img(kW, kH, QImage::Format_RGBA8888);
+    const QRgb tiles[] = {
+        qRgba(0, 0, 0, 255),     qRgba(255, 255, 255, 255), qRgba(255, 0, 0, 255),
+        qRgba(0, 255, 0, 255),   qRgba(0, 0, 255, 255),     qRgba(128, 128, 128, 255),
+        qRgba(255, 255, 0, 255), qRgba(0, 255, 255, 255),
+    };
+    for (int y = 0; y < kH; ++y) {
+        for (int x = 0; x < kW; ++x) {
+            const int tile = (y / 16) * 4 + (x / 16);
+            img.setPixel(x, y, tiles[tile % 8]);
+        }
+    }
+
+    std::vector<uint8_t> gpuY, gpuUv, swsY, swsUv;
+    QVERIFY(convertGpu(img, &gpuY, &gpuUv));
+    QVERIFY(convertSws(img, &swsY, &swsUv));
+    QVERIFY2(maxAbs(gpuY, swsY) <= 1,
+             qPrintable(QStringLiteral("tiled Y delta %1").arg(maxAbs(gpuY, swsY))));
+
+    int maxUv = 0;
+    for (int cy = 2; cy < kH / 2 - 2; ++cy) {
+        for (int cx = 2; cx < kW / 2 - 2; ++cx) {
+            const int px = cx * 2;
+            const int py = cy * 2;
+            if ((px % 16) < 2 || (px % 16) > 13 || (py % 16) < 2 || (py % 16) > 13)
+                continue;
+            const int i = cy * kW + cx * 2;
+            maxUv = qMax(maxUv, qAbs(int(gpuUv[size_t(i)]) - int(swsUv[size_t(i)])));
+            maxUv = qMax(maxUv, qAbs(int(gpuUv[size_t(i) + 1]) - int(swsUv[size_t(i) + 1])));
+        }
+    }
+    QVERIFY2(maxUv <= 2, qPrintable(QStringLiteral("tiled interior UV delta %1").arg(maxUv)));
 }
 
 void EngineTest::exporterDefaultCrfIsNearLosslessForH264()
