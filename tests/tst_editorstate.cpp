@@ -19,6 +19,7 @@
 #include <QJsonDocument>
 
 #include "engine/HwAccel.h"
+#include "engine/FrameCompositor.h"
 #include "models/AppController.h"
 #include "models/AssetLibrary.h"
 #include "MulticamImageProvider.h"
@@ -62,6 +63,9 @@ private slots:
     void importIntoDeletedFolderFallsBackToRoot();
     void importUnreadableUrlReportsFailed();
     void moveAssetToFolderAndUndo();
+    void moveBinFolderReparentsAndUndo();
+    void moveBinFolderRefusesCycle();
+    void moveBinFolderRefusesNonexistentParent();
     void deleteBinFolderMovesChildrenAndUndo();
     void removeAssetsIsOneUndoStep();
     void removeAssetsRefusesBatchWithInUseAsset();
@@ -69,6 +73,7 @@ private slots:
     void addClipsFromAssetsPlacesThemSequentially();
     void moveTrackReordersAndRemapsSelection();
     void addTrackInsertsEmptyTrackByType();
+    void renameTrackAndUndo();
     void projectPersistenceRoundTrip();
     void projectJsonExportImportRoundTrip();
     void projectJsonImportRejectsGarbageAndLeavesTimeline();
@@ -119,6 +124,7 @@ private slots:
     void multicamSessionPublishesADecodedTilePerAngle();
     void multicamProviderServesTilesByAngleIdWithRevisionQuery();
     void multicamSetUpBuildsAWorkingRigFromTheBin();
+    void adjustmentLayerCreationAndCompositing();
 };
 
 void EditorStateTest::snapTimeEnabled()
@@ -508,6 +514,64 @@ void EditorStateTest::moveAssetToFolderAndUndo()
     QCOMPARE(library.assetAt(0).value(QStringLiteral("folderId")).toString(), QString());
 }
 
+void EditorStateTest::moveBinFolderReparentsAndUndo()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    const QString interviewsId = state.createBinFolder(QStringLiteral("Interviews"), QString());
+    const QString day1Id = state.createBinFolder(QStringLiteral("Day 1"), QString());
+    const QString clipId = state.createBinFolder(QStringLiteral("Close-ups"), day1Id);
+
+    // Reparent "Day 1" (and everything under it) into "Interviews".
+    QVERIFY(state.moveBinFolder(day1Id, interviewsId));
+    QCOMPARE(state.binFolderModel()->folderById(day1Id).value(QStringLiteral("parentId")).toString(),
+             interviewsId);
+    // The child folder never had its own parentId touched — it moved along for free.
+    QCOMPARE(state.binFolderModel()->folderById(clipId).value(QStringLiteral("parentId")).toString(),
+             day1Id);
+
+    state.undo();
+    QCOMPARE(state.binFolderModel()->folderById(day1Id).value(QStringLiteral("parentId")).toString(),
+             QString());
+}
+
+void EditorStateTest::moveBinFolderRefusesCycle()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    const QString parentId = state.createBinFolder(QStringLiteral("Interviews"), QString());
+    const QString childId = state.createBinFolder(QStringLiteral("Day 1"), parentId);
+    const QString grandchildId = state.createBinFolder(QStringLiteral("Close-ups"), childId);
+
+    // Into itself, and into its own descendant at any depth — either would disconnect the
+    // whole branch from the root by making "Interviews" its own ancestor.
+    QVERIFY(!state.moveBinFolder(parentId, parentId));
+    QVERIFY(!state.moveBinFolder(parentId, childId));
+    QVERIFY(!state.moveBinFolder(parentId, grandchildId));
+    QCOMPARE(state.binFolderModel()->folderById(parentId).value(QStringLiteral("parentId")).toString(),
+             QString());
+
+    // Already there is refused too — not a cycle, just not an actual move.
+    QVERIFY(!state.moveBinFolder(childId, parentId));
+}
+
+void EditorStateTest::moveBinFolderRefusesNonexistentParent()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    const QString folderId = state.createBinFolder(QStringLiteral("Interviews"), QString());
+
+    // A stale or fabricated id (moveBinFolder is QML-invokable, so a caller could pass
+    // anything) must not be assigned as-is — that would silently detach the folder and
+    // everything under it from the root hierarchy instead of failing loudly.
+    QVERIFY(!state.moveBinFolder(folderId, QStringLiteral("no-such-folder")));
+    QCOMPARE(state.binFolderModel()->folderById(folderId).value(QStringLiteral("parentId")).toString(),
+             QString());
+}
+
 void EditorStateTest::deleteBinFolderMovesChildrenAndUndo()
 {
     AssetLibrary library;
@@ -736,6 +800,40 @@ void EditorStateTest::addTrackInsertsEmptyTrackByType()
     QVERIFY(state.undoAvailable());
     state.undo();
     QCOMPARE(state.tracks().size(), 2);
+}
+
+void EditorStateTest::renameTrackAndUndo()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    QCOMPARE(state.tracks().size(), 1);
+
+    // No custom name yet.
+    QCOMPARE(state.tracks().at(0).toMap().value(QStringLiteral("name")).toString(), QString());
+
+    QVERIFY(state.renameTrack(0, QStringLiteral("Dialogue")));
+    QCOMPARE(state.tracks().at(0).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Dialogue"));
+
+    QString error;
+    const drift::Project reloaded = drift::Project::fromJson(state.project()->toJson(), &error);
+    QVERIFY(error.isEmpty());
+    QCOMPARE(reloaded.tracks().at(0).name, QStringLiteral("Dialogue"));
+
+    // Unchanged and out-of-range are both refused, not pushed as no-op undo steps.
+    QVERIFY(!state.renameTrack(0, QStringLiteral("Dialogue")));
+    QVERIFY(!state.renameTrack(5, QStringLiteral("Nope")));
+
+    // Empty clears the custom name back to the type+position fallback, rather than being
+    // refused the way an empty asset name is.
+    QVERIFY(state.renameTrack(0, QStringLiteral("  ")));
+    QCOMPARE(state.tracks().at(0).toMap().value(QStringLiteral("name")).toString(), QString());
+
+    state.undo();
+    QCOMPARE(state.tracks().at(0).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Dialogue"));
+    state.undo();
+    QCOMPARE(state.tracks().at(0).toMap().value(QStringLiteral("name")).toString(), QString());
 }
 
 // Packaging embeds the derived artifacts and repoints the project at the extraction directory, so
@@ -3351,6 +3449,113 @@ void EditorStateTest::multiTrackAudioSelectionAndExtraction()
     }
     QVERIFY(hasAudioTrack1);
     QVERIFY(hasAudioTrack2);
+}
+
+void EditorStateTest::adjustmentLayerCreationAndCompositing()
+{
+    AssetLibrary library;
+    AppController state(&library);
+
+    // Initial state: 1 default video track with 0 clips
+    QCOMPARE(state.project()->tracks().size(), 1);
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 0);
+
+    // Add an adjustment clip at 0 with duration 5.0 seconds
+    state.addAdjustmentClip(0.0, 5.0);
+
+    // Video track should now have 1 clip
+    QCOMPARE(state.project()->tracks().size(), 1);
+    const drift::Track &track = state.project()->tracks().at(0);
+    QCOMPARE(track.type, drift::TrackType::Video);
+    QCOMPARE(track.clips.size(), 1);
+
+    const drift::Clip &adjClip = track.clips.at(0);
+    QCOMPARE(adjClip.type, drift::ClipType::Adjustment);
+    QCOMPARE(adjClip.timelineStart, 0);
+    QCOMPARE(adjClip.timelineDuration, drift::secondsToUs(5.0));
+
+    // Exposed to QML as "adjustment"
+    const QVariantMap clipMap = state.clipAt(0, 0);
+    QCOMPARE(clipMap.value(QStringLiteral("kind")).toString(), QStringLiteral("adjustment"));
+    QCOMPARE(clipMap.value(QStringLiteral("duration")).toDouble(), 5.0);
+
+    // Selection should be on the new clip
+    QCOMPARE(state.selectedTrack(), 0);
+    QCOMPARE(state.selectedClip(), 0);
+
+    // Add an effect to the adjustment clip
+    state.addEffect(0, 0, QStringLiteral("builtin.effects.gaussian_blur"));
+    const drift::Clip &withEffect = state.project()->tracks().at(0).clips.at(0);
+    QCOMPARE(withEffect.effects.size(), 1);
+    QCOMPARE(withEffect.effects.at(0).catalogId, QStringLiteral("builtin.effects.gaussian_blur"));
+
+    // Test addAdjustmentClipWithEffect
+    state.addAdjustmentClipWithEffect(QStringLiteral("builtin.effects.gaussian_blur"), -1, 6.0, 3.0);
+    // Should be placed on track 0 (starts at 6.0, no overlap with 0..5.0)
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 2);
+    const drift::Clip &secondAdj = state.project()->tracks().at(0).clips.at(1);
+    QCOMPARE(secondAdj.type, drift::ClipType::Adjustment);
+    QCOMPARE(secondAdj.effects.size(), 1);
+    QCOMPARE(secondAdj.timelineDuration, drift::secondsToUs(3.0));
+
+    // Test project JSON serialization roundtrip for Adjustment clips
+    const QJsonObject json = state.project()->toJson();
+    QString error;
+    drift::Project reloaded = drift::Project::fromJson(json, &error);
+    QVERIFY(error.isEmpty());
+    QCOMPARE(reloaded.tracks().size(), 1);
+    QCOMPARE(reloaded.tracks().at(0).clips.size(), 2);
+    QCOMPARE(reloaded.tracks().at(0).clips.at(0).type, drift::ClipType::Adjustment);
+    QCOMPARE(reloaded.tracks().at(0).clips.at(0).effects.size(), 1);
+
+    // Test Undo/Redo
+    state.undo(); // undo second adjustment clip
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    state.redo();
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 2);
+
+    // Test GpuScene building with adjustment item
+    FrameCompositor compositor;
+    compositor.setProject(state.project());
+    GpuScene scene;
+    QVERIFY(compositor.buildSceneAt(drift::secondsToUs(2.0), {}, &scene));
+    QVERIFY(scene.items.size() > 0);
+    bool foundAdjustment = false;
+    for (const GpuItem &item : scene.items) {
+        if (item.isAdjustment) {
+            foundAdjustment = true;
+            QCOMPARE(item.layer.effects.size(), 1);
+            QCOMPARE(item.layer.effects.at(0).catalogId, QStringLiteral("builtin.effects.gaussian_blur"));
+        }
+    }
+    QVERIFY(foundAdjustment);
+
+    // Test trimming adjustment layer length (right edge): extend from 3.0s to 10.0s
+    state.trimClipRight(0, 1, 16.0); // starts at 6.0, end dragged to 16.0 => duration 10.0s
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).timelineDuration, drift::secondsToUs(10.0));
+
+    // Test trimming adjustment layer left edge: trim start from 6.0s to 8.0s => duration 8.0s
+    state.trimClipLeft(0, 1, 8.0);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).timelineStart, drift::secondsToUs(8.0));
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).timelineDuration, drift::secondsToUs(8.0));
+
+    // Test setClipDuration on adjustment layer
+    state.setClipDuration(0, 1, 25.0);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).timelineDuration, drift::secondsToUs(25.0));
+
+    // Test splitting adjustment layer at 15.0s (offset 7.0s into clip)
+    state.splitClipAt(0, 1, 15.0);
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 3);
+    const drift::Clip &head = state.project()->tracks().at(0).clips.at(1);
+    const drift::Clip &tail = state.project()->tracks().at(0).clips.at(2);
+    QCOMPARE(head.type, drift::ClipType::Adjustment);
+    QCOMPARE(tail.type, drift::ClipType::Adjustment);
+    QCOMPARE(head.timelineStart, drift::secondsToUs(8.0));
+    QCOMPARE(head.timelineDuration, drift::secondsToUs(7.0));
+    QCOMPARE(tail.timelineStart, drift::secondsToUs(15.0));
+    QCOMPARE(tail.timelineDuration, drift::secondsToUs(18.0));
+    QCOMPARE(head.effects.size(), 1);
+    QCOMPARE(tail.effects.size(), 1);
 }
 
 QTEST_MAIN(EditorStateTest)

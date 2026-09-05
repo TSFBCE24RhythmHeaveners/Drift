@@ -2026,6 +2026,22 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Adjustment Layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Adjustment (%1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add adjustment layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Adjustment layer added</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Install the emoji sticker pack to add emoji</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2857,6 +2873,14 @@
     </message>
     <message>
         <source>Clips added</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Folder moved</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track renamed</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -3868,11 +3892,19 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drag a preset onto a clip in the timeline</source>
+        <source>Click to add as adjustment layer, or drag onto a clip</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Search effects</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add adjustment layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add an adjustment layer to apply effects across all clips underneath</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -4556,6 +4588,10 @@
     </message>
     <message>
         <source>Sticker</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Adjustment</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -8174,6 +8210,10 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Add adjustment layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Scene 1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -8323,6 +8363,22 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Reset row height</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename…</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

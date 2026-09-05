@@ -1198,6 +1198,7 @@ QVariantList AppController::tracks() const
 
         result.append(QVariantMap{
             {QStringLiteral("type"), drift::trackTypeToString(track.type)},
+            {QStringLiteral("name"), track.name},
             {QStringLiteral("clips"), clips},
             {QStringLiteral("transitions"), transitions},
             {QStringLiteral("muted"), track.muted},
@@ -1483,12 +1484,13 @@ QVariantMap transitionToMap(const drift::Track &track, const drift::Transition &
 bool isSyntheticTimelineClip(drift::ClipType type)
 {
     return type == drift::ClipType::Text || type == drift::ClipType::Subtitle
-           || type == drift::ClipType::Shape || type == drift::ClipType::Image;
+           || type == drift::ClipType::Shape || type == drift::ClipType::Image
+           || type == drift::ClipType::Adjustment;
 }
 
 drift::TimeUs syntheticClipMaxDurationUs()
 {
-    return drift::secondsToUs(300.0);
+    return drift::secondsToUs(86400.0);
 }
 
 void syncSyntheticSourceRange(drift::Clip &clip)
@@ -2414,6 +2416,20 @@ bool AppController::renameBinFolder(const QString &folderId, const QString &name
         return false;
 
     pushProjectEdit(before, tr("Folder renamed"));
+    return true;
+}
+
+bool AppController::moveBinFolder(const QString &folderId, const QString &newParentId)
+{
+    // Plain copy, not detachedCopy(): nothing here runs off the GUI thread, so there's no
+    // concurrent reader to race — the same reasoning removeAsset already relies on. A full
+    // detach walks every clip's keyframes/masks/effects across the whole timeline, which is
+    // real, perceptible latency on a project of any size for an edit that touches none of it.
+    const drift::Project before = m_project;
+    if (!m_binFolderModel.moveFolder(folderId, newParentId))
+        return false;
+
+    pushProjectEdit(before, tr("Folder moved"));
     return true;
 }
 
@@ -4320,13 +4336,13 @@ void AppController::trimClipRight(int trackIndex, int clipIndex, double newEnd)
             ? static_cast<drift::TimeUs>(llround(static_cast<double>(maxSourceSpan) / clip.effectiveSpeed()))
             : maxSourceSpan;
     const drift::TimeUs maxDuration =
-        syntheticVisual ? drift::secondsToUs(300.0) : mediaMaxDuration;
+        syntheticVisual ? syntheticClipMaxDurationUs() : mediaMaxDuration;
     newDuration = qBound(drift::kMinClipDurationUs, newDuration, maxDuration);
 
     clip.timelineDuration = newDuration;
     const drift::TimeUs span =
         clip.hasSpeedCurve() ? trimSourceDelta(clip, newDuration, false, true) : clip.sourceSpanUs();
-    const drift::TimeUs maxSrcOut = syntheticVisual ? drift::secondsToUs(300.0) : maxSource;
+    const drift::TimeUs maxSrcOut = syntheticVisual ? syntheticClipMaxDurationUs() : maxSource;
     if (clip.reverse) {
         clip.srcIn = qMax<drift::TimeUs>(0, clip.srcOut - span);
     } else {
@@ -4348,7 +4364,8 @@ void AppController::setClipTrim(int trackIndex, int clipIndex, double inPoint, d
         return;
 
     drift::Clip &clip = track.clips[clipIndex];
-    const drift::TimeUs sourceDuration = sourceDurationForClip(clip);
+    const bool syntheticVisual = isSyntheticTimelineClip(clip.type);
+    const drift::TimeUs sourceDuration = syntheticVisual ? syntheticClipMaxDurationUs() : sourceDurationForClip(clip);
     const drift::TimeUs clampedIn = qBound<drift::TimeUs>(0, drift::secondsToUs(inPoint),
                                                           sourceDuration - drift::kMinClipDurationUs);
     const drift::TimeUs clampedOut = qBound(clampedIn + drift::kMinClipDurationUs, drift::secondsToUs(outPoint),
@@ -8093,6 +8110,87 @@ void AppController::addShapeClipAt(const QString &shapeId, int trackIndex, doubl
     track.clips.append(clip);
     pushProjectEdit(before, tr("Shape added"));
     finishEdit(tr("Shape added"));
+    selectClip(target, track.clips.size() - 1);
+}
+
+void AppController::addAdjustmentClip(double atSeconds, double durationSeconds)
+{
+    addAdjustmentClipAt(-1, atSeconds, durationSeconds);
+}
+
+void AppController::addAdjustmentClipAt(int trackIndex, double atSeconds, double durationSeconds)
+{
+    addAdjustmentClipWithEffect(QString(), trackIndex, atSeconds, durationSeconds);
+}
+
+void AppController::addAdjustmentClipWithEffect(const QString &effectId, int trackIndex, double atSeconds, double durationSeconds)
+{
+    const drift::Project before = m_project;
+
+    int target = trackIndex;
+    const drift::TimeUs durUs = durationSeconds > 0.0
+        ? drift::secondsToUs(durationSeconds)
+        : drift::kImageClipDurationUs;
+    const drift::TimeUs startSeconds = atSeconds < 0.0 ? m_playheadUs : drift::secondsToUs(atSeconds);
+
+    if (target < 0 || target >= m_project.tracks().size()
+        || !m_project.tracks().at(target).allowsClipType(drift::ClipType::Adjustment)) {
+        int candidateTrack = -1;
+        for (int i = 0; i < m_project.tracks().size(); ++i) {
+            const drift::Track &t = m_project.tracks().at(i);
+            if (t.type == drift::TrackType::Video && t.allowsClipType(drift::ClipType::Adjustment)) {
+                bool hasOverlap = false;
+                for (const drift::Clip &c : t.clips) {
+                    if (startSeconds < c.timelineEnd() && startSeconds + durUs > c.timelineStart) {
+                        hasOverlap = true;
+                        break;
+                    }
+                }
+                if (!hasOverlap) {
+                    candidateTrack = i;
+                    break;
+                }
+            }
+        }
+        if (candidateTrack >= 0) {
+            target = candidateTrack;
+        } else {
+            target = drift::insertTrackAtTopForClipType(m_project, drift::ClipType::Adjustment);
+        }
+    }
+    if (target < 0)
+        return;
+
+    drift::Track &track = m_project.tracks()[target];
+    const drift::TimeUs start = drift::resolveClipStart(m_project, track, -1, startSeconds,
+                                                        durUs, m_snapEnabled, m_playheadUs);
+
+    drift::Clip clip;
+    clip.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    clip.type = drift::ClipType::Adjustment;
+    clip.name = tr("Adjustment Layer");
+    clip.timelineStart = start;
+    clip.timelineDuration = durUs;
+    clip.srcIn = 0;
+    clip.srcOut = durUs;
+
+    if (!effectId.isEmpty()) {
+        if (const EffectPresetEntry *def = effectDefForId(effectId)) {
+            drift::Effect effect;
+            effect.name = def->filterName;
+            effect.catalogId = def->meta.id;
+            for (auto it = def->fixedParams.constBegin(); it != def->fixedParams.constEnd(); ++it)
+                effect.parameters.insert(it.key(), it.value());
+            for (const drift::EffectParamSpec &p : def->meta.parameters)
+                effect.parameters.insert(p.key, p.defaultVariant());
+            clip.effects.append(effect);
+            clip.name = tr("Adjustment (%1)").arg(def->filterName);
+        }
+    }
+
+    track.clips.append(clip);
+    pushProjectEdit(before, tr("Add adjustment layer"));
+    finishEdit(tr("Adjustment layer added"));
     selectClip(target, track.clips.size() - 1);
 }
 
@@ -12285,6 +12383,25 @@ void AppController::setTrackHidden(int trackIndex, bool hidden)
     m_project.tracks()[trackIndex].hidden = hidden;
     pushProjectEdit(before, tr("Track visibility"));
     finishEdit(hidden ? tr("Track hidden") : tr("Track shown"));
+}
+
+bool AppController::renameTrack(int trackIndex, const QString &name)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return false;
+
+    // Unlike renameAsset, an empty result is allowed through rather than refused — it clears
+    // the custom name back to the type+position fallback ("Video 1"), which is a real,
+    // reachable state (Track::name's own default) rather than an invalid one.
+    const QString trimmed = name.trimmed();
+    if (m_project.tracks()[trackIndex].name == trimmed)
+        return false;
+
+    const drift::Project before = m_project;
+    m_project.tracks()[trackIndex].name = trimmed;
+    pushProjectEdit(before, tr("Track renamed"));
+    finishEdit(tr("Track renamed"));
+    return true;
 }
 
 bool AppController::trackMuted(int trackIndex) const

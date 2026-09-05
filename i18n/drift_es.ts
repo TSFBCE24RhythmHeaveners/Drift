@@ -2030,6 +2030,22 @@
         <translation>Forma añadida</translation>
     </message>
     <message>
+        <source>Adjustment Layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Adjustment (%1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add adjustment layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Adjustment layer added</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Install the emoji sticker pack to add emoji</source>
         <translation>Instala el paquete de pegatinas de emojis para añadir emojis</translation>
     </message>
@@ -2865,6 +2881,14 @@
     <message>
         <source>Clips added</source>
         <translation>Clips añadidos</translation>
+    </message>
+    <message>
+        <source>Folder moved</source>
+        <translation>Carpeta movida</translation>
+    </message>
+    <message>
+        <source>Track renamed</source>
+        <translation>Pista renombrada</translation>
     </message>
 </context>
 <context>
@@ -3881,12 +3905,20 @@
         <translation>Arrastra un ajuste predeterminado a un clip o haz clic para aplicarlo a la selección</translation>
     </message>
     <message>
-        <source>Drag a preset onto a clip in the timeline</source>
-        <translation>Arrastra un ajuste predeterminado a un clip en la línea de tiempo</translation>
+        <source>Click to add as adjustment layer, or drag onto a clip</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Search effects</source>
         <translation>Buscar efectos</translation>
+    </message>
+    <message>
+        <source>Add adjustment layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add an adjustment layer to apply effects across all clips underneath</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>No effects match “%1”.</source>
@@ -4570,6 +4602,10 @@
     <message>
         <source>Sticker</source>
         <translation>Pegatina</translation>
+    </message>
+    <message>
+        <source>Adjustment</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Untitled clip</source>
@@ -8199,6 +8235,10 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>Más acciones de edición</translation>
     </message>
     <message>
+        <source>Add adjustment layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Scene 1</source>
         <translation>Escena 1</translation>
     </message>
@@ -8350,6 +8390,22 @@ Si la reproducción se corta, prueba con otra opción.</translation>
     <message>
         <source>Reset row height</source>
         <translation>Restablecer altura de fila</translation>
+    </message>
+    <message>
+        <source>Rename track</source>
+        <translation>Cambiar nombre de la pista</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Cambiar nombre</translation>
+    </message>
+    <message>
+        <source>Track name</source>
+        <translation>Nombre de la pista</translation>
+    </message>
+    <message>
+        <source>Rename…</source>
+        <translation>Cambiar nombre…</translation>
     </message>
 </context>
 <context>
