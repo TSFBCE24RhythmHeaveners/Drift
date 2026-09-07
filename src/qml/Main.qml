@@ -372,6 +372,14 @@ ApplicationWindow {
         id: debugInfoDialog
     }
 
+    SettingsDialog {
+        id: settingsDialog
+    }
+
+    PasteAttributesDialog {
+        id: pasteAttributesDialog
+    }
+
     SegmentationWindow {
         id: segmentationWindow
     }
@@ -380,6 +388,9 @@ ApplicationWindow {
         target: EditorState
         function onOpenSegmentationWindowRequested(track, clip, startSeconds, durationSeconds) {
             segmentationWindow.openFor(track, clip, startSeconds, durationSeconds, true)
+        }
+        function onOpenPasteAttributesRequested() {
+            window.openPasteAttributes()
         }
     }
 
@@ -431,6 +442,12 @@ ApplicationWindow {
         multicamWindow.openSession()
     }
 
+    // Opened from the header's Settings menu. Every preference lives here now; the
+    // assets rail no longer carries a settings tab.
+    function openSettings() {
+        settingsDialog.open()
+    }
+
     // Opened from the header, and from every empty state that a missing addon causes.
     function openAddonManager(kind) {
         if (kind === undefined)
@@ -454,6 +471,10 @@ ApplicationWindow {
 
     function openDebugInfo() {
         debugInfoDialog.open()
+    }
+
+    function openPasteAttributes() {
+        pasteAttributesDialog.openDialog()
     }
 
     function promptRecoveryIfNeeded() {
@@ -693,6 +714,19 @@ ApplicationWindow {
                     }
                     if (modelData.id === "bladeTool") {
                         timelinePanel.timelineTool = "split"
+                        return
+                    }
+                    // Timeline zoom is QML state as well, and the 1.5 step matches the
+                    // toolbar buttons. setZoom clamps to minZoom/maxZoom and re-anchors on
+                    // the playhead, so holding the key walks to the end of the range and stops.
+                    if (modelData.id === "zoomIn") {
+                        if (timelinePanel.visible)
+                            timelinePanel.setZoom(timelinePanel.zoom * 1.5)
+                        return
+                    }
+                    if (modelData.id === "zoomOut") {
+                        if (timelinePanel.visible)
+                            timelinePanel.setZoom(timelinePanel.zoom / 1.5)
                         return
                     }
                     EditorState.triggerAction(modelData.id)

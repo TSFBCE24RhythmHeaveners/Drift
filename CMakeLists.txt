@@ -73,7 +73,7 @@ set(DRIFT_ADDON_CLIENT_TOKEN "79a388bba9301cacc81cc6eb0724c81e948e1b27c69aee1b"
 set(DRIFT_UPDATE_FEED_URL "https://api.github.com/repos/CutWire-Studios/Drift/releases/latest"
     CACHE STRING "Release feed polled for updates; empty disables the update check")
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Test Concurrent Widgets OpenGL Network QuickEffects Svg)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 Multimedia Test Concurrent Widgets OpenGL Network QuickEffects Svg Xml)
 find_package(Qt6 COMPONENTS LinguistTools QUIET)
 
 # IconImage loads Lucide SVGs from qrc. The SVG imageformat plugin is refused when it was
@@ -197,6 +197,7 @@ if(NOT ANDROID)
     endif()
     find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 endif()
+find_package(ZLIB REQUIRED)
 
 # SoundTouch does the pitch shifting behind the voice effects. juce_dsp has no pitch shifter, and a
 # hand-rolled granular one cancels the signal outright wherever the tap spacing lands on an odd
@@ -359,13 +360,15 @@ add_library(driftcore STATIC
     src/core/Track.cpp
     src/core/Project.h
     src/core/Project.cpp
+    src/core/PrprojReader.h
+    src/core/PrprojReader.cpp
     src/core/TimelineOps.h
     src/core/TimelineOps.cpp
     src/core/commands/ProjectCommands.h
     src/core/commands/ProjectCommands.cpp
 )
 target_include_directories(driftcore PUBLIC src)
-target_link_libraries(driftcore PUBLIC Qt6::Core Qt6::Gui)
+target_link_libraries(driftcore PUBLIC Qt6::Core Qt6::Gui Qt6::Xml ZLIB::ZLIB)
 
 # Audio effect DSP. JUCE modules compile into whatever target links them, so keeping them in a
 # library of their own is what stops JUCE's headers, its compile definitions and its build time
@@ -474,6 +477,8 @@ add_library(driftengine STATIC
     src/engine/GpuCompositor.cpp
     src/engine/GlRuntime.h
     src/engine/GlRuntime.cpp
+    src/engine/GpuStatus.h
+    src/engine/GpuStatus.cpp
     src/engine/VaapiZeroCopy.h
     src/engine/GpuEffectExecutor.h
     src/engine/GpuEffectExecutor.cpp
@@ -498,6 +503,8 @@ add_library(driftengine STATIC
     src/engine/OrtRuntime.cpp
     src/engine/Sam2Segmenter.h
     src/engine/Sam2Segmenter.cpp
+    src/engine/RvmMatter.h
+    src/engine/RvmMatter.cpp
     src/engine/FaceLandmarker.h
     src/engine/FaceLandmarker.cpp
     src/engine/FaceTrack.h
@@ -599,6 +606,10 @@ qt_add_executable(drift
     src/playback/ClipPreviewPlayer.cpp
     src/playback/CompositorService.h
     src/playback/CompositorService.cpp
+    src/playback/PlaybackStats.h
+    src/playback/PlaybackStats.cpp
+    src/playback/PlaybackDiagnostics.h
+    src/playback/PlaybackDiagnostics.cpp
     src/preview/PreviewItem.h
     src/preview/PreviewItem.cpp
 )
@@ -621,7 +632,11 @@ if(NOT ANDROID)
         src/mcp/McpServer.cpp
         src/mcp/McpStdio.h
         src/mcp/McpStdio.cpp
+        src/mcp/McpStdioServer.h
+        src/mcp/McpStdioServer.cpp
         src/mcp/McpJson.h
+        src/HeadlessApp.h
+        src/HeadlessApp.cpp
     )
 endif()
 
@@ -670,6 +685,14 @@ qt_add_resources(drift "drift_app_icon"
     FILES resources/drift.png
 )
 
+# Fixed input for the playback diagnostics benchmark, so numbers from two different bug
+# reports are comparable. See resources/diagnostics/README.md for how it is generated.
+qt_add_resources(drift "drift_diagnostics"
+    PREFIX "/diagnostics"
+    BASE resources/diagnostics
+    FILES resources/diagnostics/bench1080p60.mp4
+)
+
 set_source_files_properties(src/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
 # App-wide notification queue; the visual host is components/ToastHost.qml.
 set_source_files_properties(src/qml/Toasts.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
@@ -707,6 +730,7 @@ qt_add_qml_module(drift
         src/qml/PreviewPanel.qml
         src/qml/components/preview/TransformOverlay.qml
         src/qml/components/preview/CropOverlay.qml
+        src/qml/components/preview/MaskOverlay.qml
         src/qml/components/preview/PreviewToolbar.qml
         src/qml/components/preview/AndroidTransformOverlay.qml
         src/qml/components/preview/AndroidCropOverlay.qml
@@ -735,8 +759,8 @@ qt_add_qml_module(drift
         src/qml/components/assets/SubtitlesTab.qml
         src/qml/components/assets/StickersTab.qml
         src/qml/components/assets/ShapesTab.qml
+        src/qml/components/assets/MasksTab.qml
         src/qml/components/assets/SoundsTab.qml
-        src/qml/components/assets/SettingsTab.qml
         src/qml/components/assets/ShortcutsTab.qml
         src/qml/components/assets/MediaAssetsTab.qml
         src/qml/components/assets/BinBreadcrumb.qml
@@ -785,6 +809,7 @@ qt_add_qml_module(drift
         src/qml/components/MissingAddonsDialog.qml
         src/qml/components/UpdateDialog.qml
         src/qml/components/DebugInfoDialog.qml
+        src/qml/components/preview/PlaybackStatsOverlay.qml
         src/qml/components/ProjectSetupDialog.qml
         src/qml/components/LayoutChooserDialog.qml
         src/qml/components/LanguageChooserDialog.qml
@@ -792,6 +817,9 @@ qt_add_qml_module(drift
         src/qml/components/VideoSizeDialog.qml
         src/qml/components/VideoSizeControls.qml
         src/qml/components/ProjectPropertiesDialog.qml
+        src/qml/components/SettingsPane.qml
+        src/qml/components/SettingsDialog.qml
+        src/qml/components/PasteAttributesDialog.qml
         src/qml/components/PackageProgressDialog.qml
         src/qml/components/ExportDialog.qml
         src/qml/components/ExportProgressDialog.qml
@@ -959,6 +987,53 @@ if(Qt6LinguistTools_FOUND)
     )
     if(NOT TARGET update_translations AND TARGET drift_lupdate)
         add_custom_target(update_translations DEPENDS drift_lupdate)
+    endif()
+
+    # An lupdate built before qtdeclarative has no QML parser: it warns "missing qml/javascript
+    # support", skips every .qml, and -no-obsolete then strips every QML string out of i18n/*.ts.
+    # org.kde.Sdk ships exactly that lupdate, and flatpak-builder does not pass CI into its
+    # sandbox, so the Flatpak regenerated its catalogs down to the C++ strings on every build and
+    # shipped a UI that was English apart from the toasts (#167). Probe once and stay off where
+    # lupdate cannot see QML, rather than letting it gut the committed catalogs.
+    if(NOT DEFINED DRIFT_LUPDATE_HAS_QML AND TARGET Qt6::lupdate)
+        get_target_property(_drift_lupdate_exe Qt6::lupdate IMPORTED_LOCATION)
+        if(NOT _drift_lupdate_exe)
+            get_target_property(_drift_lupdate_cfgs Qt6::lupdate IMPORTED_CONFIGURATIONS)
+            foreach(_drift_cfg IN LISTS _drift_lupdate_cfgs)
+                get_target_property(_drift_lupdate_exe Qt6::lupdate IMPORTED_LOCATION_${_drift_cfg})
+                if(_drift_lupdate_exe)
+                    break()
+                endif()
+            endforeach()
+        endif()
+        set(_drift_probe_dir "${CMAKE_CURRENT_BINARY_DIR}/lupdate-qml-probe")
+        file(REMOVE_RECURSE "${_drift_probe_dir}")
+        file(WRITE "${_drift_probe_dir}/probe.qml"
+            "import QtQuick\nItem { property string s: qsTr(\"drift_lupdate_qml_probe\") }\n")
+        if(_drift_lupdate_exe)
+            execute_process(
+                COMMAND "${_drift_lupdate_exe}" probe.qml -ts probe.ts
+                WORKING_DIRECTORY "${_drift_probe_dir}"
+                OUTPUT_QUIET ERROR_QUIET)
+        endif()
+        set(_drift_probe_ts "")
+        if(EXISTS "${_drift_probe_dir}/probe.ts")
+            file(READ "${_drift_probe_dir}/probe.ts" _drift_probe_ts)
+        endif()
+        string(FIND "${_drift_probe_ts}" "drift_lupdate_qml_probe" _drift_probe_hit)
+        if(_drift_probe_hit GREATER -1)
+            set(DRIFT_LUPDATE_HAS_QML ON CACHE INTERNAL "lupdate can parse QML")
+        else()
+            set(DRIFT_LUPDATE_HAS_QML OFF CACHE INTERNAL "lupdate can parse QML")
+        endif()
+    endif()
+
+    if(DRIFT_AUTO_UPDATE_TRANSLATIONS AND NOT DRIFT_LUPDATE_HAS_QML)
+        message(WARNING
+            "lupdate has no QML/JavaScript support; running it would delete every QML string from "
+            "i18n/*.ts and ship English-only .qm files. Not running lupdate as part of this build. "
+            "Install a Qt Linguist build with QML support to refresh the catalogs.")
+        set(DRIFT_AUTO_UPDATE_TRANSLATIONS OFF)
     endif()
 
     # Qt keeps lupdate out of the default build, so a new qsTr() only reaches i18n/*.ts when

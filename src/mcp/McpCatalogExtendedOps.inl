@@ -439,8 +439,10 @@
           objectSchema(clipRefProps()), false, false, true },
 
         { "segmentation_status", "segmentation", "Check availability",
-          "Returns {available, model}. Check available is true before any other segmentation op — the "
-          "model ships separately and the session ops do not report its absence.",
+          "Returns {available, model, backends}. Check available is true before any other segmentation "
+          "op — the models ship separately and the session ops do not report their absence. backends "
+          "lists what is installed: sam2 takes hint points and can cut out anything; rvm takes no "
+          "points at all and cuts out people only, with a soft edge.",
           objectSchema({}), true, false, true },
         { "begin_segmentation_session", "segmentation", "Open segment UI state",
           "Open an interactive segmentation session on one frame of a clip. REQUIRED before "
@@ -479,13 +481,18 @@
           "with no progress field — re-read inspect({clips:true,detail:true}) and compare to detect "
           "completion. Cancel with cancel_segmentation.",
           objectSchema({{QStringLiteral("output"),
-                         propWithDefault(enumProp(QStringLiteral("clips splits the subject onto its own clip; mask writes a mask onto the existing clip"),
-                                                  {QStringLiteral("clips"), QStringLiteral("mask")}),
-                                         QStringLiteral("clips"))}}) },
+                         propWithDefault(enumProp(QStringLiteral("adjustment adds the cutout as a mask layer on the clip's own lane, leaving the clip itself untouched. clips and mask are older spellings of the same thing, kept working."),
+                                                  {QStringLiteral("adjustment"), QStringLiteral("clips"), QStringLiteral("mask")}),
+                                         QStringLiteral("adjustment"))},
+                        {QStringLiteral("backend"),
+                propWithDefault(enumProp(QStringLiteral("sam2 needs hint points and cuts out anything; rvm ignores points and cuts out people automatically"),
+                                         {QStringLiteral("sam2"), QStringLiteral("rvm")}),
+                                QStringLiteral("sam2"))}}) },
         { "segment_clip", "segmentation", "One-shot segment",
           "Segment a clip with explicit points in a single call — no session needed. Prefer this over "
           "the session ops for scripted use. Async and with no progress field: re-read "
-          "inspect({clips:true,detail:true}) and compare to detect completion.",
+          "inspect({clips:true,detail:true}) and compare to detect completion. points are required for "
+          "the sam2 backend and ignored by rvm, which finds people on its own.",
           objectSchema(mergeProps(
               {{QStringLiteral("points"),
                 arrayProp(objectSchema({{QStringLiteral("x"), numberProp(QStringLiteral("X, 0..1 across the frame"))},
@@ -493,11 +500,14 @@
                                         {QStringLiteral("include"), boolProp(QStringLiteral("true keeps this region, false excludes it (default true)"))}}),
                            QStringLiteral("Hint points, at least one"))},
                {QStringLiteral("output"),
-                propWithDefault(enumProp(QStringLiteral("clips splits the subject onto its own clip; mask writes a mask onto the existing clip"),
-                                         {QStringLiteral("clips"), QStringLiteral("mask")}),
-                                QStringLiteral("clips"))}},
-              clipRefProps()),
-                       {QStringLiteral("points")}) },
+                propWithDefault(enumProp(QStringLiteral("adjustment adds the cutout as a mask layer on the clip's own lane, leaving the clip itself untouched. clips and mask are older spellings of the same thing, kept working."),
+                                         {QStringLiteral("adjustment"), QStringLiteral("clips"), QStringLiteral("mask")}),
+                                QStringLiteral("adjustment"))},
+               {QStringLiteral("backend"),
+                propWithDefault(enumProp(QStringLiteral("sam2 needs hint points and cuts out anything; rvm ignores points and cuts out people automatically"),
+                                         {QStringLiteral("sam2"), QStringLiteral("rvm")}),
+                                QStringLiteral("sam2"))}},
+              clipRefProps())) },
         { "cancel_segmentation", "segmentation", "Stop segment job",
           "Cancel an in-flight segmentation. Returns ok even when nothing was running.",
           objectSchema({}) },

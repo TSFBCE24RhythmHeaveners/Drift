@@ -12,8 +12,16 @@ Item {
 
     // Owning TimelinePanel (pxPerSecond, clipColor, trackIndexAtY, landing
     // preview + effect-drop state, tracks) and the enclosing column.
-    // trackRow is the Repeater parent (the track Rectangle) — do not take it as a
-    // property named trackRow or the call-site binding shadows the outer id.
+    //
+    // trackRow is whatever Item this delegate is parented to — the track row itself, or the
+    // clip-area / adjustment-lane wrapper inside it. Sizing off `parent` is what lets a clip in
+    // a nested lane fit its strip without knowing lanes exist.
+    //
+    // Because this property exists, `trackRow` inside a binding AT THE CALL SITE resolves to it
+    // and NOT to an enclosing `id: trackRow` — so a call site must never write
+    // `trackIndex: trackRow.trackIndex`. It reads as the row's index and silently yields 0 when
+    // the immediate parent is a wrapper, which renders every track's clips as track 0's. Bind
+    // through the wrapper's own id instead (see trackClipArea / laneStrip in TimelinePanel).
     property var panel
     readonly property var trackRow: parent
     property var timelineColumn
@@ -24,11 +32,32 @@ Item {
     // Wider trim/move hit areas for phones; desktop leaves this false.
     property bool touchMode: false
 
+    // Desktop timeline deletion is intentionally scoped to the clip that owns
+    // keyboard focus. Clicking a clip already calls forceActiveFocus(), so this
+    // does not steal Delete from the Media Bin, dialogs or other editor surfaces.
+    //
+    // macOS sends the key labelled Delete on MacBook keyboards as Backspace;
+    // extended keyboards can also send the forward-delete Key_Delete.
+    //
+    // deleteSelectedClip() owns the A/V semantics:
+    //   linked pair   -> delete the whole linked set
+    //   unlinked pair -> delete only the current selection
+    Keys.onPressed: function(event) {
+        if ((event.key === Qt.Key_Delete
+                || event.key === Qt.Key_Backspace)
+                && clipItem.selected) {
+
+            EditorState.deleteSelectedClip()
+            event.accepted = true
+        }
+    }
+
     property var clipData: panel.tracks[trackIndex].clips[clipIndex]
     property bool selected: (EditorState.selection,
                              EditorState.selectionContains(trackIndex, clipIndex))
     property string trackType: panel.tracks[trackIndex].type
     property bool showWaveform: panel.tracks[trackIndex].showWaveform === true
+    property bool showChannelWaveforms: panel.tracks[trackIndex].showChannelWaveforms === true
     property var clipEffects: clipData.effects || []
     property var clipAudioEffects: clipData.audioEffects || []
     readonly property bool hasAnyEffects: clipEffects.length > 0 || clipAudioEffects.length > 0
@@ -46,6 +75,21 @@ Item {
         }
         return names.join(" · ")
     }
+    // An adjustment is its stack — the name ("Adjustment Layer") says nothing the colour and
+    // lane do not already. So it shows the effects it carries, and falls back to naming its kind
+    // only while it is still empty.
+    readonly property string adjustmentLabelText: {
+        if (clipItem.effectsLabelText.length > 0)
+            return clipItem.effectsLabelText
+        // Nothing in it yet: a name the user gave it, else what kind of layer it is.
+        if (clipItem.clipData.name && clipItem.clipData.name.length > 0)
+            return clipItem.clipData.name
+        const kind = clipItem.clipData.adjustmentKind
+        if (kind === "audioEffects") return qsTr("Audio adjustment")
+        if (kind === "mask") return qsTr("Mask")
+        return qsTr("Adjustment")
+    }
+
     property bool effectDropTarget: panel.effectDropTrackIndex === trackIndex
                                     && panel.effectDropClipIndex === clipIndex
     // Subtitles keep cue-owned timing; text clips use the same edge fades as video.
@@ -100,11 +144,16 @@ Item {
             panel.setScrollLocked(false)
     }
 
+    // An adjustment pinned to a clip takes its extent from that clip, so its edges are not the
+    // user's to drag — unlink it first and they become live.
+    readonly property bool pinnedToClip: clipData.kind === "adjustment"
+                                         && !!clipData.linkedClipId
+
     // Trim handles stay on whenever selected.
     // Width is floored so the clip never becomes
     // an unusable sliver; at that floor both
     // edges stay trimmable and the middle moves.
-    readonly property bool showTrimHandles: selected
+    readonly property bool showTrimHandles: selected && !pinnedToClip
     readonly property real minDurationSeconds: Math.max(
         Theme.clipMinDurationSeconds,
         Theme.clipMinWidth / panel.pxPerSecond)
@@ -200,12 +249,9 @@ Item {
     // being hardcoded at three separate sites,
     // and clamped so it can never swallow a
     // short (25px) text or subtitle row.
-    readonly property real headerBandHeight: {
-        const wanted = clipItem.hasAnyEffects
-            ? Theme.clipHeaderBandHeight * 1.6
-            : Theme.clipHeaderBandHeight
-        return Math.min(wanted, Math.max(0, height * 0.5))
-    }
+    // One line now: the effect list that used to need a taller band moved to the lane.
+    readonly property real headerBandHeight:
+        Math.min(Theme.clipHeaderBandHeight, Math.max(0, height * 0.5))
 
     y: Theme.clipSelectionRingWidth
     // Floored so short clips stay visible and
@@ -224,8 +270,9 @@ Item {
     function updateMovePreview() {
         if (!clipMouse.moving)
             return
-        // Keep linked/selected partners locked to this clip's live X.
-        panel.updateMoveFollow(x - clipMouse.moveOriginX)
+        // Keep linked/selected partners locked to this clip's live X and Y.
+        panel.updateMoveFollow(x - clipMouse.moveOriginX,
+                               y - Theme.clipSelectionRingWidth)
         const desired = Math.max(0, (x - Theme.clipSelectionRingWidth) / panel.pxPerSecond)
         const pos = mapToItem(timelineColumn, width / 2, height / 2)
         const targetTrack = panel.trackIndexAtY(pos.y)
@@ -241,21 +288,24 @@ Item {
                                               && !(panel.moveLeaderTrack === trackIndex
                                                    && panel.moveLeaderClip === clipIndex)
     readonly property real followOffsetX: moveFollowFollower ? panel.moveFollowDeltaX : 0
+    readonly property real followOffsetY: (moveFollowFollower && trackIndex === panel.moveLeaderTrack)
+                                          ? panel.moveFollowDeltaY : 0
 
     Binding {
         target: clipItem
         property: "x"
         when: !clipMouse.drag.active
-        value: clipItem.clipData.start * panel.pxPerSecond
-               + Theme.clipSelectionRingWidth
-               + clipItem.followOffsetX
+        value: Math.max(Theme.clipSelectionRingWidth,
+                        clipItem.clipData.start * panel.pxPerSecond
+                        + Theme.clipSelectionRingWidth
+                        + clipItem.followOffsetX)
     }
 
     Binding {
         target: clipItem
         property: "y"
         when: !clipMouse.drag.active
-        value: Theme.clipSelectionRingWidth
+        value: Theme.clipSelectionRingWidth + followOffsetY
     }
 
     // No `Behavior on y` here. A drop settle looks appealing but cannot work at this
@@ -270,7 +320,7 @@ Item {
     // neighbours for as long as the finger owns it.
     readonly property bool lifted: clipItem.touchMode
                                   && (clipMouse.moveArmed || clipMouse.drag.active)
-    z: lifted ? 10 : 0
+    z: (lifted || clipMouse.drag.active || (moveFollowFollower && Math.abs(followOffsetY) > 1)) ? 10 : 0
     scale: lifted ? 1.03 : 1.0
     Behavior on scale {
         NumberAnimation { duration: Theme.durationPress; easing.type: Theme.easing }
@@ -284,7 +334,7 @@ Item {
         // in the clip reacted to the pointer.
         color: {
             if (clipItem.clipData.kind === "adjustment") {
-                const base = Theme.clipEffect
+                const base = panel.adjustmentColor(clipItem.clipData.adjustmentKind)
                 const lit = clipMouse.containsMouse || clipItem.lifted
                 return lit ? Qt.lighter(base, 1.15) : base
             }
@@ -457,36 +507,41 @@ Item {
             color: Theme.scrimColor
             z: 1
 
-            Column {
+            // Just the name. The effect stack used to be listed on a second line here, but it
+            // now lives on the clip's adjustment lane, which shows it in the row above — two
+            // copies of the same list, one of them detached from the thing you edit.
+            Text {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 6
                 anchors.rightMargin: 6
-                spacing: 1
+                text: clipItem.clipData.name
+                color: Theme.onMedia
+                font.pixelSize: Theme.fontSizeTiny
+                font.family: Theme.fontFamily
+                elide: Text.ElideRight
+            }
+        }
 
-                Text {
-                    width: parent.width
-                    text: clipItem.clipData.name
-                    color: Theme.onMedia
-                    font.pixelSize: Theme.fontSizeTiny
-                    font.family: Theme.fontFamily
-                    elide: Text.ElideRight
-                }
+        // Adjustments get a single centred line rather than the scrim band above: a nested lane
+        // is a ~20px strip, and a band plus two text rows has nowhere to be legible.
+        Item {
+            visible: clipItem.clipData.kind === "adjustment"
+            anchors.fill: parent
+            z: 1
 
-                Text {
-                    width: parent.width
-                    visible: clipItem.hasAnyEffects
-                    text: clipItem.effectsLabelText
-                    // Amber-on-clip was 1.6-2.1:1. White at 0.85 clears 7:1 on every
-                    // clip fill; weight keeps it distinct from the name line above.
-                    color: Theme.onMedia
-                    opacity: 0.85
-                    font.pixelSize: Theme.fontSizeTiny
-                    font.weight: Font.DemiBold
-                    font.family: Theme.fontFamily
-                    elide: Text.ElideRight
-                }
+            Text {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 6
+                anchors.rightMargin: 6
+                text: clipItem.adjustmentLabelText
+                color: Theme.onMedia
+                font.pixelSize: Theme.fontSizeTiny
+                font.family: Theme.fontFamily
+                elide: Text.ElideRight
             }
         }
 
@@ -515,15 +570,6 @@ Item {
                 elide: Text.ElideRight
             }
 
-            Text {
-                width: parent.width
-                visible: clipItem.hasAnyEffects
-                text: clipItem.effectsLabelText
-                color: Theme.panelSecondaryForeground
-                font.pixelSize: Theme.fontSizeTiny
-                font.family: Theme.fontFamily
-                elide: Text.ElideRight
-            }
         }
 
         // Waveform: only the slice of the clip that is on screen gets a Canvas, at 1:1 px,
@@ -540,6 +586,39 @@ Item {
             anchors.topMargin: clipItem.headerBandHeight
             anchors.bottom: parent.bottom
             clip: true
+
+            // Bumped when an off-thread decode lands, to re-run the peaks and lane-count
+            // bindings. Lives on the host because the labels below need it too.
+            property int decodeRevision: 0
+
+            // Channels the decoder found, 0 until the first block lands — so a multi-channel
+            // clip draws the merged lane for one frame and then splits.
+            readonly property int sourceChannels: {
+                void decodeRevision
+                if (!clipItem.showChannelWaveforms || !clipItem.clipData.path)
+                    return 0
+                return EditorState.waveformChannelCount(
+                    clipItem.clipData.path, clipItem.clipData.audioStreamIndex || 0)
+            }
+
+            // Below this a lane is a grey smear rather than a waveform, so fall back to the
+            // single merged envelope instead of drawing something unreadable.
+            readonly property real minLaneHeight: 8
+
+            readonly property int laneCount: {
+                if (sourceChannels < 2)
+                    return 1
+                return (height / sourceChannels) >= minLaneHeight ? sourceChannels : 1
+            }
+            readonly property real laneHeight: height / Math.max(1, laneCount)
+
+            Connections {
+                target: EditorState
+                function onWaveformRangeReady(path) {
+                    if (path === clipItem.clipData.path)
+                        waveformHost.decodeRevision++
+                }
+            }
 
             Canvas {
                 id: waveformCanvas
@@ -569,12 +648,13 @@ Item {
                 width: Math.max(1, Math.min(4096, Math.floor(visibleRight - visibleLeft)))
                 height: waveformHost.height
 
-                // Bumped when the off-thread decode lands, to re-run the peaks binding.
-                property int decodeRevision: 0
-
                 property var peaks: {
-                    void decodeRevision
+                    void waveformHost.decodeRevision
                     if (!clipItem.clipData.path || srcPerPx <= 0)
+                        return []
+                    // The per-channel query covers this window already; asking for the merged
+                    // envelope as well would double the work for something nothing draws.
+                    if (waveformHost.laneCount > 1)
                         return []
                     return EditorState.waveformPeaksRange(
                         clipItem.clipData.path,
@@ -584,21 +664,96 @@ Item {
                         clipItem.clipData.audioStreamIndex || 0)
                 }
 
+                // { channels, buckets, names, peaks } with peaks channel-major and flat.
+                property var channelData: {
+                    void waveformHost.decodeRevision
+                    if (!clipItem.clipData.path || srcPerPx <= 0
+                            || waveformHost.laneCount <= 1)
+                        return null
+                    return EditorState.waveformChannelPeaksRange(
+                        clipItem.clipData.path,
+                        (clipItem.clipData.inPoint || 0) + x * srcPerPx,
+                        width * srcPerPx,
+                        Math.ceil(width),
+                        clipItem.clipData.audioStreamIndex || 0)
+                }
+
                 onPeaksChanged: requestPaint()
+                onChannelDataChanged: requestPaint()
                 onWidthChanged: requestPaint()
                 onHeightChanged: requestPaint()
 
-                Connections {
-                    target: EditorState
-                    function onWaveformRangeReady(path) {
-                        if (path === clipItem.clipData.path)
-                            waveformCanvas.decodeRevision++
+                // One lane per source channel. Drawn as a single filled path per lane rather
+                // than a rect per column: 8 lanes over a viewport-wide clip is tens of
+                // thousands of fillRect calls, which visibly hitches on repaint.
+                function paintLanes(ctx, data) {
+                    const channels = data.channels
+                    const buckets = data.buckets
+                    const values = data.peaks
+                    const w = Math.max(1, Math.floor(width))
+                    const laneH = height / channels
+
+                    ctx.fillStyle = Theme.waveformColor
+                    for (var c = 0; c < channels; c++) {
+                        const base = c * buckets
+                        const mid = c * laneH + laneH / 2
+                        const half = (laneH / 2) * 0.85
+                        ctx.beginPath()
+                        // Top edge left to right, then the mirrored bottom edge back, so the
+                        // lane closes into one shape.
+                        for (var x = 0; x < w; x++) {
+                            var i0 = base + Math.floor(x * buckets / w)
+                            var i1 = base + Math.floor((x + 1) * buckets / w)
+                            if (i1 <= i0)
+                                i1 = Math.min(base + buckets, i0 + 1)
+                            var peak = 0
+                            for (var i = i0; i < i1; i++) {
+                                if (values[i] > peak)
+                                    peak = values[i]
+                            }
+                            const amp = Math.max(0.5, peak * half)
+                            if (x === 0)
+                                ctx.moveTo(x, mid - amp)
+                            else
+                                ctx.lineTo(x, mid - amp)
+                            ctx.lineTo(x + 1, mid - amp)
+                        }
+                        for (var xb = w - 1; xb >= 0; xb--) {
+                            var j0 = base + Math.floor(xb * buckets / w)
+                            var j1 = base + Math.floor((xb + 1) * buckets / w)
+                            if (j1 <= j0)
+                                j1 = Math.min(base + buckets, j0 + 1)
+                            var peakB = 0
+                            for (var j = j0; j < j1; j++) {
+                                if (values[j] > peakB)
+                                    peakB = values[j]
+                            }
+                            const ampB = Math.max(0.5, peakB * half)
+                            ctx.lineTo(xb + 1, mid + ampB)
+                            ctx.lineTo(xb, mid + ampB)
+                        }
+                        ctx.closePath()
+                        ctx.fill()
                     }
+
+                    // Without a divider eight lanes read as one grey block. Inner edges only.
+                    ctx.fillStyle = Theme.panelBorder
+                    ctx.globalAlpha = 0.5
+                    for (var d = 1; d < channels; d++)
+                        ctx.fillRect(0, Math.round(d * laneH), w, 1)
+                    ctx.globalAlpha = 1.0
                 }
 
                 onPaint: {
                     var ctx = getContext("2d");
                     ctx.clearRect(0, 0, width, height);
+
+                    if (waveformHost.laneCount > 1 && channelData
+                            && channelData.channels > 1 && channelData.buckets > 0) {
+                        paintLanes(ctx, channelData);
+                        return;
+                    }
+
                     if (!peaks || peaks.length === 0)
                         return;
                     ctx.fillStyle = Theme.waveformColor;
@@ -619,6 +774,26 @@ Item {
                         if (amp > 0.5)
                             ctx.fillRect(x, mid - amp, 1, amp * 2);
                     }
+                }
+            }
+
+            // Channel labels. Pinned to the host, not drawn into the canvas: the canvas x
+            // tracks the viewport, so anything painted in its coordinates slides while you
+            // scroll. Hidden when a lane is too short for the glyph to fit.
+            Repeater {
+                model: waveformHost.laneCount > 1 ? waveformHost.laneCount : 0
+
+                Text {
+                    readonly property var names: waveformCanvas.channelData
+                                                 ? waveformCanvas.channelData.names : null
+                    x: 3
+                    y: index * waveformHost.laneHeight
+                       + (waveformHost.laneHeight - height) / 2
+                    visible: waveformHost.laneHeight >= 14
+                    text: (names && names[index]) ? names[index] : (index + 1)
+                    color: Theme.mutedForeground
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeTiny
                 }
             }
         }
@@ -664,7 +839,14 @@ Item {
         drag.axis: Drag.XAndYAxis
         // Once armed the finger is already down and still, so any motion is the move.
         drag.threshold: clipItem.touchMode ? 0 : 8
-        drag.minimumX: Theme.clipSelectionRingWidth
+        drag.minimumX: {
+            if (clipItem.selected && EditorState.selection.length > 1) {
+                const earliest = EditorState.selectionEarliestStartSeconds()
+                const minStart = Math.max(0, (clipItem.clipData.start || 0) - earliest)
+                return minStart * panel.pxPerSecond + Theme.clipSelectionRingWidth
+            }
+            return Theme.clipSelectionRingWidth
+        }
         // Allow dropping onto any track, not just the immediate neighbours.
         drag.minimumY: -Math.max(clipItem.trackRow.height, panel.totalTracksHeight())
         drag.maximumY: Math.max(clipItem.trackRow.height * 2, panel.totalTracksHeight())
@@ -719,9 +901,9 @@ Item {
             // on release. Undefined on desktop, which has shift-click and the marquee.
             if (panel.multiSelectActive === true)
                 return
-            if ((mouse.modifiers & Qt.ShiftModifier) !== 0)
+            if ((mouse.modifiers & (Qt.ShiftModifier | Qt.ControlModifier)) !== 0)
                 EditorState.addToSelection(clipItem.trackIndex, clipItem.clipIndex)
-            else
+            else if (!wasSelected)
                 EditorState.selectClip(clipItem.trackIndex, clipItem.clipIndex)
             // Only when the press changed the selection. Tapping a clip that is already selected
             // does nothing, and onClicked is about to run this same branch again — ticking on both
@@ -754,7 +936,7 @@ Item {
                 Haptics.select()
                 return
             }
-            if ((mouse.modifiers & Qt.ShiftModifier) !== 0)
+            if ((mouse.modifiers & (Qt.ShiftModifier | Qt.ControlModifier)) !== 0)
                 EditorState.addToSelection(clipItem.trackIndex, clipItem.clipIndex)
             else
                 EditorState.selectClip(clipItem.trackIndex, clipItem.clipIndex)
@@ -767,7 +949,11 @@ Item {
             id: clipContextMenu
 
             property bool canPasteEffects: false
-            onAboutToShow: canPasteEffects = EditorState.clipboardHasEffects()
+            property bool canPasteAttributes: false
+            onAboutToShow: {
+                canPasteEffects = EditorState.clipboardHasEffects()
+                canPasteAttributes = EditorState.canPasteAttributes()
+            }
 
             ThemedMenuItem {
                 text: qsTr("Properties")
@@ -836,6 +1022,12 @@ Item {
                 onTriggered: EditorState.copySelection()
             }
             ThemedMenuItem {
+                text: qsTr("Paste attributes…")
+                icon.name: Theme.icons.clipboardPaste
+                enabled: clipContextMenu.canPasteAttributes
+                onTriggered: EditorState.requestPasteAttributes()
+            }
+            ThemedMenuItem {
                 text: qsTr("Duplicate")
                 icon.name: Theme.icons.copyPlus
                 onTriggered: EditorState.duplicateSelectedClip()
@@ -867,6 +1059,22 @@ Item {
                 onTriggered: clipItem.panel.requestSaveEffectPreset(clipItem.trackIndex,
                                                                      clipItem.clipIndex)
             }
+            ThemedMenuSeparator { visible: clipItem.clipData.kind === "adjustment" }
+            ThemedMenuItem {
+                text: qsTr("Unlink from clip")
+                icon.name: Theme.icons.unlink
+                visible: clipItem.pinnedToClip
+                onTriggered: EditorState.unlinkAdjustment(clipItem.trackIndex, clipItem.clipIndex)
+            }
+            ThemedMenuItem {
+                text: qsTr("Move to its own track")
+                icon.name: Theme.icons.layers
+                // Only meaningful for a nested one: a standalone adjustment already has one.
+                visible: clipItem.clipData.kind === "adjustment"
+                         && clipItem.panel.tracks[clipItem.trackIndex].isAdjustmentLane === true
+                onTriggered: EditorState.moveAdjustmentToOwnTrack(clipItem.trackIndex,
+                                                                  clipItem.clipIndex)
+            }
             ThemedMenuSeparator { }
             ThemedMenuItem {
                 text: qsTr("Delete")
@@ -878,7 +1086,11 @@ Item {
             const moved = drag.active || didDrag
             // Armed but never moved: the hold was a request for the menu.
             const wantsMenu = clipItem.touchMode && moveArmed && !moved
-            didDrag = false
+            // NOTE: Keep didDrag true if moved so onClicked (which runs immediately after
+            // onReleased in Qt Quick) knows a drag happened and does not collapse the selection.
+            // didDrag is reset on the next onPressed or onCanceled.
+            if (!moved)
+                didDrag = false
             moving = false
             moveArmed = false
             // Clear follow before committing so partners don't keep the drag
@@ -894,14 +1106,36 @@ Item {
             }
             const newStart = (clipItem.x - Theme.clipSelectionRingWidth) / panel.pxPerSecond
             const pos = clipItem.mapToItem(timelineColumn, clipItem.width / 2, clipItem.height / 2)
-            const targetTrack = panel.trackIndexAtY(pos.y)
+            const target = typeof panel.dropTargetAtY === "function"
+                         ? panel.dropTargetAtY(pos.y)
+                         : { "track": panel.trackIndexAtY(pos.y), "lane": -1 }
             clipItem.y = Theme.clipSelectionRingWidth
+            const isAdjustment = clipItem.clipData.kind === "adjustment"
+            const wasInLane = panel.tracks[originTrack].isAdjustmentLane === true
             // Use indices captured on press — after the model updates, clipIndex
             // on this delegate can already refer to a different clip.
-            if (targetTrack >= 0 && targetTrack !== originTrack)
-                EditorState.moveClipToTrack(originTrack, originClip, targetTrack, newStart)
-            else
+            if (isAdjustment && target.lane >= 0) {
+                // Released on a lane strip: an ordinary cross-track move onto that lane. Only an
+                // adjustment can land there — a media clip aimed at the strip falls through to
+                // the row's own clip area rather than snapping back from a rejected move.
+                if (target.lane !== originTrack)
+                    EditorState.moveClipToTrack(originTrack, originClip, target.lane, newStart)
+                else
+                    EditorState.moveClip(originTrack, originClip, newStart)
+            } else if (isAdjustment && target.track >= 0
+                       && panel.tracks[target.track].type !== "adjustment") {
+                // An adjustment released on a media track's body nests inside it: it stops
+                // applying to everything composited below and applies only to that track.
+                EditorState.moveAdjustmentToLane(originTrack, originClip, target.track, newStart)
+            } else if (isAdjustment && wasInLane && target.track < 0) {
+                // Dragged clear of every row: the inverse gesture, back to a track of its own
+                // affecting everything below it.
+                EditorState.moveAdjustmentToOwnTrack(originTrack, originClip, newStart)
+            } else if (target.track >= 0 && target.track !== originTrack) {
+                EditorState.moveClipToTrack(originTrack, originClip, target.track, newStart)
+            } else {
                 EditorState.moveClip(originTrack, originClip, newStart)
+            }
             // Closes the gesture pickUp opened, and clears the snap and lane latches the drag left
             // engaged.
             Haptics.drop()
@@ -913,7 +1147,8 @@ Item {
                     moving = true
                     panel.beginMoveFollow(originTrack, originClip)
                 }
-                panel.updateMoveFollow(clipItem.x - moveOriginX)
+                panel.updateMoveFollow(clipItem.x - moveOriginX,
+                                       clipItem.y - Theme.clipSelectionRingWidth)
             }
         }
         onCanceled: {

@@ -7,6 +7,7 @@
 #include "core/Mask.h"
 #include "core/SpeedCurve.h"
 #include "core/Stabilize.h"
+#include "core/PrprojReader.h"
 #include "core/ShapePath.h"
 #include "core/SubtitleCue.h"
 #include "core/SrtIO.h"
@@ -37,6 +38,7 @@
 #include "engine/DeepFilterDenoiser.h"
 #include "engine/ObjectDetector.h"
 #include "engine/OrtRuntime.h"
+#include "engine/MaskApplier.h"
 #include "engine/MatteWriter.h"
 #include "engine/MediaEditor.h"
 #include "engine/AudioOnsets.h"
@@ -48,6 +50,8 @@
 #include "engine/FaceTrack.h"
 #include "engine/ModelAsset.h"
 #include "engine/ReverseProxyCache.h"
+#include "engine/VaapiZeroCopy.h"
+#include "playback/PlaybackDiagnostics.h"
 #include "engine/ReverseRenderer.h"
 #include "engine/Sam2Segmenter.h"
 #include "engine/StickerCatalog.h"
@@ -73,6 +77,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QMutex>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -84,6 +89,7 @@
 #include <QLibraryInfo>
 #include <QLocale>
 #include <QAudioDevice>
+#include <QThreadPool>
 #include <QSaveFile>
 #include <QSettings>
 #include <QByteArray>
@@ -680,6 +686,12 @@ AppController::AppController(AssetLibrary *assetLibrary, QObject *parent)
     connect(this, &AppController::selectionChanged, this, &AppController::editCapabilitiesChanged);
     connect(this, &AppController::tracksChanged, this, &AppController::editCapabilitiesChanged);
     connect(this, &AppController::tracksChanged, this, &AppController::selectedClipDataChanged);
+    // Selecting a mask clip turns the preview's handles on, so anything that can change what is
+    // selected — or move a mask out from under the playhead — has to re-ask.
+    connect(this, &AppController::selectionChanged, this, &AppController::maskEditActiveChanged);
+    connect(this, &AppController::tracksChanged, this, &AppController::maskEditActiveChanged);
+    connect(this, &AppController::maskEditModeChanged, this, &AppController::maskEditActiveChanged);
+    connect(this, &AppController::playheadSecondsChanged, this, &AppController::maskEditActiveChanged);
     if (m_assetLibrary) {
         connect(m_assetLibrary, &AssetLibrary::assetMetadataChanged, this,
                 &AppController::editCapabilitiesChanged);
@@ -787,6 +799,25 @@ AppController::AppController(AssetLibrary *assetLibrary, QObject *parent)
                                         "instead.")
                                          .arg(backendName),
                                QStringLiteral("warning"));
+            });
+
+    // Unlike a decode fallback, nothing still works when this fires: the preview
+    // panel is blank and used to blame the timeline for it. "error", not "warning".
+    connect(&m_playback, &PlaybackEngine::gpuCompositorUnavailable, this,
+            [this](const QString &statusId, const QString &detail) {
+                QString message;
+                if (statusId == QStringLiteral("version-too-low")) {
+                    message = detail.isEmpty()
+                        ? tr("Your graphics driver is too old for the preview, which needs "
+                             "OpenGL 3.3. See Help → Debug info.")
+                        : tr("Your graphics driver only provides %1; the preview needs "
+                             "OpenGL 3.3. See Help → Debug info.")
+                              .arg(detail);
+                } else {
+                    message = tr("GPU preview rendering is unavailable on this machine. "
+                                 "See Help → Debug info.");
+                }
+                setLastMessage(message, QStringLiteral("error"));
             });
 
     // An empty device list on a machine that plainly has speakers means the multimedia backend
@@ -897,7 +928,11 @@ AppController::AppController(AssetLibrary *assetLibrary, QObject *parent)
     // keyframe, and an animation appears where the user only meant to reposition something.
     m_autoKeyEnabled = settings.value(QStringLiteral("editor/autoKeyEnabled"), false).toBool();
     m_reopenLastProject = settings.value(QStringLiteral("editor/reopenLastProject"), false).toBool();
-    m_vaapiZeroCopy = settings.value(QStringLiteral("preview/vaapiZeroCopy"), false).toBool();
+    // Checked means "allowed", not "forced": with the key unset the engine is in Auto and
+    // will use zero-copy on drivers it has been verified against, so showing the box
+    // unchecked would contradict what the preview is actually doing. Unchecking writes an
+    // explicit false, which turns it off everywhere.
+    m_vaapiZeroCopy = drift::vaapiZeroCopyMode() != drift::VaapiZeroCopyMode::Off;
     m_invertTimelineScroll = settings.value(QStringLiteral("timeline/invertScroll"), false).toBool();
     m_uiLanguage = storedUiLanguage();
     m_needsUiLanguagePrompt = needsFirstLaunchLanguagePrompt();
@@ -1184,12 +1219,38 @@ QVariantList AppController::tracks() const
     QVariantList result;
     result.reserve(m_project.tracks().size());
 
-    for (const drift::Track &track : m_project.tracks()) {
+    for (int ti = 0; ti < m_project.tracks().size(); ++ti) {
+        const drift::Track &track = m_project.tracks().at(ti);
+
+        // Each clip's effect stack lives on the adjustment linked to it in one of this track's
+        // lanes. Gathered once per track rather than resolved per clip: tracks() is rebuilt on
+        // every read and every binding re-reads it, so a per-clip lookup would be quadratic.
+        QHash<QString, const drift::Clip *> videoHosts;
+        QHash<QString, const drift::Clip *> audioHosts;
+        QHash<QString, const drift::Clip *> maskHosts;
+        if (!track.isAdjustment()) {
+            for (const int laneIndex : drift::adjustmentLaneIndexes(m_project, ti)) {
+                for (const drift::Clip &adjustment : m_project.tracks().at(laneIndex).clips) {
+                    if (adjustment.linkedClipId.isEmpty())
+                        continue;
+                    if (adjustment.adjustmentKind == drift::AdjustmentKind::VideoEffects)
+                        videoHosts.insert(adjustment.linkedClipId, &adjustment);
+                    else if (adjustment.adjustmentKind == drift::AdjustmentKind::AudioEffects)
+                        audioHosts.insert(adjustment.linkedClipId, &adjustment);
+                    else if (adjustment.adjustmentKind == drift::AdjustmentKind::Mask)
+                        maskHosts.insert(adjustment.linkedClipId, &adjustment);
+                }
+            }
+        }
+
         QVariantList clips;
         clips.reserve(track.clips.size());
 
-        for (const drift::Clip &clip : track.clips)
-            clips.append(clipToMap(clip));
+        for (const drift::Clip &clip : track.clips) {
+            clips.append(clipToMap(clip, videoHosts.value(clip.id, nullptr),
+                                   audioHosts.value(clip.id, nullptr),
+                                   maskHosts.value(clip.id, nullptr)));
+        }
 
         QVariantList transitions;
         transitions.reserve(track.transitions.size());
@@ -1197,13 +1258,20 @@ QVariantList AppController::tracks() const
             transitions.append(transitionToMap(track, transition));
 
         result.append(QVariantMap{
+            {QStringLiteral("id"), track.id},
             {QStringLiteral("type"), drift::trackTypeToString(track.type)},
+            {QStringLiteral("adjustmentScope"), drift::adjustmentScopeToString(track.adjustmentScope)},
+            {QStringLiteral("parentTrackId"), track.parentTrackId},
+            // The timeline draws a lane inside its parent's row instead of giving it one of its
+            // own, so it needs to tell the two apart without re-deriving the rule.
+            {QStringLiteral("isAdjustmentLane"), track.isAdjustmentLane()},
             {QStringLiteral("name"), track.name},
             {QStringLiteral("clips"), clips},
             {QStringLiteral("transitions"), transitions},
             {QStringLiteral("muted"), track.muted},
             {QStringLiteral("hidden"), track.hidden},
             {QStringLiteral("showWaveform"), track.showWaveform},
+            {QStringLiteral("showChannelWaveforms"), track.showChannelWaveforms},
             {QStringLiteral("heightScale"), track.heightScale},
         });
     }
@@ -1398,14 +1466,51 @@ QVariantMap shapeStyleToMap(const drift::ShapeStyle &s)
     };
 }
 
-QVariantMap maskToMap(const drift::Mask &m)
-{
-    QVariantList points;
-    for (const QPointF &pt : m.points)
-        points.append(QVariantList{pt.x(), pt.y()});
+QVariantMap keyframeTrackToMap(const drift::KeyframeTrack<double> &track,
+                               drift::TimeUs timelineStart);
 
+// `timelineStart` is the carrying adjustment's start: mask keys are stored relative to it, and
+// the inspector reports every key time on the timeline.
+// A freeform with no vertices rasterizes to an empty path, which blanks the clip with no way back
+// except removing the mask. Seed the rect it would have had as a quad, so picking Freeform gives
+// you something to drag instead of a hole.
+void seedFreeformMask(drift::Mask &mask)
+{
+    if (mask.shape != drift::MaskShape::Freeform || !mask.points.isEmpty())
+        return;
+    const double left = mask.x - mask.w / 2.0;
+    const double right = mask.x + mask.w / 2.0;
+    const double top = mask.y - mask.h / 2.0;
+    const double bottom = mask.y + mask.h / 2.0;
+    mask.points = {QPointF(left, top), QPointF(right, top), QPointF(right, bottom),
+                   QPointF(left, bottom)};
+}
+
+QVariantMap maskToMap(const drift::Mask &m, drift::TimeUs timelineStart = 0)
+{
+    // {x, y} objects rather than [x, y] pairs: a Repeater delegate's `modelData` does not index
+    // a nested array reliably, so a freeform's vertices came through as undefined and piled up in
+    // the corner. Named fields are also what every other point-ish map in this file uses.
+    QVariantList points;
+    for (const QPointF &pt : m.points) {
+        points.append(QVariantMap{{QStringLiteral("x"), pt.x()},
+                                  {QStringLiteral("y"), pt.y()}});
+    }
+
+    QVariantMap maskKeyframes;
+    for (auto it = m.keyframes.constBegin(); it != m.keyframes.constEnd(); ++it) {
+        if (!it->isEmpty())
+            maskKeyframes.insert(it.key(), keyframeTrackToMap(it.value(), timelineStart));
+    }
+
+    // Every field round-trips, media included. The inspector edits a mask by copying this map,
+    // changing one key and handing it back to setClipMask, so anything missing here is silently
+    // reset to its default — which is how toggling Invert used to erase a cutout's media path.
     return {
         {QStringLiteral("shape"), drift::maskShapeToString(m.shape)},
+        {QStringLiteral("op"), drift::maskOpToString(m.op)},
+        {QStringLiteral("enabled"), m.enabled},
+        {QStringLiteral("name"), m.name},
         {QStringLiteral("x"), m.x},
         {QStringLiteral("y"), m.y},
         {QStringLiteral("w"), m.w},
@@ -1414,6 +1519,17 @@ QVariantMap maskToMap(const drift::Mask &m)
         {QStringLiteral("feather"), m.feather},
         {QStringLiteral("invert"), m.invert},
         {QStringLiteral("points"), points},
+        {QStringLiteral("mediaPath"), m.mediaPath},
+        {QStringLiteral("mediaFgrPath"), m.mediaFgrPath},
+        {QStringLiteral("mediaSrcOffsetUs"), qint64(m.mediaSrcOffsetUs)},
+        {QStringLiteral("mediaFit"), drift::maskMediaFitToString(m.mediaFit)},
+        {QStringLiteral("mediaChannel"), drift::maskMediaChannelToString(m.mediaChannel)},
+        {QStringLiteral("mediaLoop"), m.mediaLoop},
+        // Read-only, for the inspector and the preview overlay: keyframe edits go through the
+        // generic keyframe invokables under "mask.<key>", never through setClipMask, so these are
+        // deliberately not parsed back in maskFromMap.
+        {QStringLiteral("animated"), m.isAnimated()},
+        {QStringLiteral("keyframes"), maskKeyframes},
     };
 }
 
@@ -1428,8 +1544,27 @@ drift::Mask maskFromMap(const QVariantMap &m)
     mask.rotation = m.value(QStringLiteral("rotation"), mask.rotation).toDouble();
     mask.feather = m.value(QStringLiteral("feather"), mask.feather).toDouble();
     mask.invert = m.value(QStringLiteral("invert"), mask.invert).toBool();
+    mask.op = drift::maskOpFromString(m.value(QStringLiteral("op")).toString());
+    mask.enabled = m.value(QStringLiteral("enabled"), mask.enabled).toBool();
+    mask.name = m.value(QStringLiteral("name"), mask.name).toString();
+    mask.mediaPath = m.value(QStringLiteral("mediaPath"), mask.mediaPath).toString();
+    mask.mediaFgrPath = m.value(QStringLiteral("mediaFgrPath"), mask.mediaFgrPath).toString();
+    mask.mediaSrcOffsetUs =
+        drift::TimeUs(m.value(QStringLiteral("mediaSrcOffsetUs"), qint64(0)).toLongLong());
+    mask.mediaFit = drift::maskMediaFitFromString(m.value(QStringLiteral("mediaFit")).toString());
+    mask.mediaChannel =
+        drift::maskMediaChannelFromString(m.value(QStringLiteral("mediaChannel")).toString());
+    mask.mediaLoop = m.value(QStringLiteral("mediaLoop"), mask.mediaLoop).toBool();
     const QVariantList points = m.value(QStringLiteral("points")).toList();
     for (const QVariant &value : points) {
+        // The [x, y] pair form is what this map used to emit, so anything already sending it
+        // over MCP keeps working.
+        if (value.canConvert<QVariantMap>() && !value.canConvert<QVariantList>()) {
+            const QVariantMap point = value.toMap();
+            mask.points.append(QPointF(point.value(QStringLiteral("x")).toDouble(),
+                                       point.value(QStringLiteral("y")).toDouble()));
+            continue;
+        }
         const QVariantList pair = value.toList();
         if (pair.size() >= 2)
             mask.points.append(QPointF(pair.at(0).toDouble(), pair.at(1).toDouble()));
@@ -1542,6 +1677,20 @@ bool parseEffectProp(const QString &prop, int *effectIndex, QString *paramKey)
     return true;
 }
 
+// A mask scalar is addressed as "mask.<key>" — no index, because a Mask adjustment carries
+// exactly one mask. The prop resolves against the adjustment clip itself; redirectToKeyframeHost
+// is what walks there from the media clip the user actually has selected.
+bool parseMaskProp(const QString &prop, QString *key)
+{
+    if (!prop.startsWith(QLatin1String("mask.")))
+        return false;
+    const QString suffix = prop.mid(5);
+    if (!drift::maskKeyframeProperties().contains(suffix))
+        return false;
+    *key = suffix;
+    return true;
+}
+
 drift::KeyframeTrack<double> *transformTrackForProp(drift::Clip &clip, const QString &prop)
 {
     if (prop == QStringLiteral("opacity"))
@@ -1566,6 +1715,14 @@ drift::KeyframeTrack<double> *transformTrackForProp(drift::Clip &clip, const QSt
 drift::KeyframeTrack<double> *keyframeTrackForProp(drift::Clip &clip, const QString &prop,
                                                    bool createIfMissing)
 {
+    QString maskKey;
+    if (parseMaskProp(prop, &maskKey)) {
+        if (createIfMissing)
+            return &clip.mask.keyframes[maskKey];
+        const auto it = clip.mask.keyframes.find(maskKey);
+        return it == clip.mask.keyframes.end() ? nullptr : &it.value();
+    }
+
     int effectIndex = -1;
     QString paramKey;
     if (!parseEffectProp(prop, &effectIndex, &paramKey))
@@ -1603,6 +1760,9 @@ bool isKnownKeyframeProp(const QString &prop)
     QString paramKey;
     if (parseEffectProp(prop, &effectIndex, &paramKey))
         return true;
+    QString maskKey;
+    if (parseMaskProp(prop, &maskKey))
+        return true;
     drift::Clip probe;
     return transformTrackForProp(probe, prop) != nullptr;
 }
@@ -1612,6 +1772,7 @@ bool isKnownKeyframeProp(const QString &prop)
 // compound form must survive normalization untouched.
 QString normalizeKeyframeProp(const QString &prop)
 {
+    // "mask.<key>" needs no exemption: every mask key is already lower-case.
     const QString trimmed = prop.trimmed();
     return trimmed.startsWith(QLatin1String("fx.")) ? trimmed : trimmed.toLower();
 }
@@ -1659,9 +1820,42 @@ bool writeKeyframeValue(drift::KeyframeTrack<double> &track, drift::TimeUs relat
 // diamond click (force) or with auto-key on; otherwise the write lands on the static value. Keyed
 // params mirror into the static value too, so deleting the last key leaves the param where the
 // user last put it rather than snapping back to the catalog default.
+bool writeMaskScalar(drift::Mask &mask, const QString &key, double value)
+{
+    if (key == QStringLiteral("x"))
+        mask.x = value;
+    else if (key == QStringLiteral("y"))
+        mask.y = value;
+    else if (key == QStringLiteral("w"))
+        mask.w = value;
+    else if (key == QStringLiteral("h"))
+        mask.h = value;
+    else if (key == QStringLiteral("rotation"))
+        mask.rotation = value;
+    else if (key == QStringLiteral("feather"))
+        mask.feather = value;
+    else
+        return false;
+    return true;
+}
+
 bool writeClipPropValue(drift::Clip &clip, const QString &prop, drift::TimeUs relative, double value,
                         bool autoKey, bool force)
 {
+    // A mask scalar mirrors an effect param: the static member holds the last value so clearing
+    // the track leaves the mask where the user put it, rather than snapping to the struct default.
+    QString maskKey;
+    if (parseMaskProp(prop, &maskKey)) {
+        const auto existing = clip.mask.keyframes.constFind(maskKey);
+        const bool keyed = existing != clip.mask.keyframes.constEnd() && !existing->isEmpty();
+        if (!keyed && !force && !autoKey)
+            return writeMaskScalar(clip.mask, maskKey, value);
+        if (!writeKeyframeValue(clip.mask.keyframes[maskKey], relative, value, autoKey, force))
+            return false;
+        writeMaskScalar(clip.mask, maskKey, value);
+        return true;
+    }
+
     int effectIndex = -1;
     QString paramKey;
     if (!parseEffectProp(prop, &effectIndex, &paramKey)) {
@@ -1828,6 +2022,26 @@ QVariantMap keyframesToMap(const drift::Clip &clip)
     };
 }
 
+template<typename T>
+drift::KeyframeTrack<T> rescaleKeyframeTrackTimes(const drift::KeyframeTrack<T> &track,
+                                                  drift::TimeUs fromDurationUs,
+                                                  drift::TimeUs toDurationUs)
+{
+    if (track.isEmpty() || fromDurationUs <= 0 || toDurationUs <= 0 || fromDurationUs == toDurationUs)
+        return track;
+
+    const double scale = static_cast<double>(toDurationUs) / static_cast<double>(fromDurationUs);
+    drift::KeyframeTrack<T> out;
+    out.setEnabled(track.enabled());
+    for (auto it = track.keyframes().constBegin(); it != track.keyframes().constEnd(); ++it) {
+        drift::Keyframe<T> key = it.value();
+        key.inDx *= scale;
+        key.outDx *= scale;
+        out.setKeyframe(static_cast<drift::TimeUs>(llround(static_cast<double>(it.key()) * scale)), key);
+    }
+    return out;
+}
+
 // Keyframe times are clip-relative, so a clip that changes duration would leave its animation
 // sliding against the picture. Both clips cover the same source range, so each key is carried
 // across through the moment of source it was sitting on.
@@ -1968,13 +2182,56 @@ bool assetHasAudioStreams(const drift::Project &project, AssetLibrary *library, 
     return false;
 }
 
+// MediaProbe::audioStreams reopens the container and runs avformat_find_stream_info every call,
+// and the callers below include QML bindings that re-evaluate on any timeline change — a clip's
+// context menu was re-probing its file just to decide whether to show a menu item.
+//
+// Keyed on size and mtime as well as path, so a file replaced on disk re-probes rather than
+// serving stale streams. Mutexed because the detach helpers run on the GUI thread while the
+// asset probes do not, and this is cheap enough that proving which is which is not worth it.
+QList<StreamInfo> cachedAudioStreams(const QString &path)
+{
+    if (path.isEmpty())
+        return {};
+
+    struct Entry {
+        qint64 size = -1;
+        qint64 mtimeMs = -1;
+        QList<StreamInfo> streams;
+    };
+    static QHash<QString, Entry> cache;
+    static QMutex mutex;
+    // A project references a bounded set of media, but one-shot probes of files that never land
+    // on a timeline would otherwise accumulate for the life of the process.
+    constexpr int kMaxEntries = 256;
+
+    const QFileInfo info(path);
+    const qint64 size = info.size();
+    const qint64 mtimeMs = info.lastModified().toMSecsSinceEpoch();
+
+    {
+        QMutexLocker locker(&mutex);
+        const auto it = cache.constFind(path);
+        if (it != cache.constEnd() && it->size == size && it->mtimeMs == mtimeMs)
+            return it->streams;
+    }
+
+    const QList<StreamInfo> streams = MediaProbe::audioStreams(path);
+
+    QMutexLocker locker(&mutex);
+    if (cache.size() >= kMaxEntries)
+        cache.clear();
+    cache.insert(path, Entry{size, mtimeMs, streams});
+    return streams;
+}
+
 bool clipHasEmbeddedAudio(const drift::Project &project, AssetLibrary *library, const drift::Clip &clip)
 {
     if (clip.type != drift::ClipType::Video || clip.suppressEmbeddedAudio || clip.path.isEmpty())
         return false;
     if (!clip.assetId.isEmpty())
         return assetHasAudioStreams(project, library, clip.assetId);
-    return !MediaProbe::audioStreams(clip.path).isEmpty();
+    return !cachedAudioStreams(clip.path).isEmpty();
 }
 
 drift::Clip makeAudioCompanionFromVideo(const drift::Clip &videoClip, const QString &linkId = {},
@@ -1993,80 +2250,337 @@ drift::Clip makeAudioCompanionFromVideo(const drift::Clip &videoClip, const QStr
     audio.srcIn = videoClip.srcIn;
     audio.srcOut = videoClip.srcOut;
     audio.speed = videoClip.speed;
+    // Mirror the whole retiming, not just the scalar: a curve supersedes `speed` outright, so a
+    // companion without it plays the ramped source at a constant rate and drifts against the
+    // picture until the next edit runs it through syncLinkedTiming.
+    audio.speedCurve = videoClip.speedCurve;
     audio.reverse = videoClip.reverse;
     audio.fadeInUs = videoClip.fadeInUs;
     audio.fadeOutUs = videoClip.fadeOutUs;
     audio.fadeCurve = videoClip.fadeCurve;
     audio.fadeShape = videoClip.fadeShape;
     audio.volume = videoClip.volume;
+    audio.pan = videoClip.pan;
     return audio;
 }
 
-// Split embedded audio onto the audio track (video keeps picture only).
-// CapCut-style: the new audio clip stays linked to the video so they move together
-// until the user explicitly unlinks.
-bool detachEmbeddedAudioFromVideo(drift::Project &project, AssetLibrary *library, drift::Clip &videoClip)
+// Move the audio-effect adjustments pinned to a video clip onto a lane of the audio track that
+// has just taken over its audio.
+//
+// A lane's effects reach the mix through the clips of the track the lane hangs off
+// (AudioMixer's laneAudioEffects), and separating audio sets suppressEmbeddedAudio so the mixer
+// stops reading that video clip at all. Leaving the adjustments on the video track's lane would
+// therefore silently stop them applying: the video clip they modify no longer contributes audio,
+// and the freshly created audio track has no lanes of its own.
+void migrateAudioEffectsToCompanion(drift::Project &project, const QString &videoClipId,
+                                    const QString &audioClipId)
 {
+    int videoTrack = -1;
+    int videoClipIdx = -1;
+    if (!findClipById(project, videoClipId, &videoTrack, &videoClipIdx))
+        return;
+
+    QList<drift::Clip> moved;
+    for (const int laneIndex : drift::adjustmentLaneIndexes(project, videoTrack)) {
+        drift::Track &lane = project.tracks()[laneIndex];
+        for (int c = lane.clips.size() - 1; c >= 0; --c) {
+            const drift::Clip &adjustment = lane.clips.at(c);
+            if (adjustment.adjustmentKind == drift::AdjustmentKind::AudioEffects
+                && adjustment.linkedClipId == videoClipId) {
+                moved.prepend(lane.clips.takeAt(c));
+            }
+        }
+    }
+    if (moved.isEmpty())
+        return;
+
+    for (drift::Clip &adjustment : moved)
+        adjustment.linkedClipId = audioClipId;
+
+    // One at a time, re-resolving the audio track each round: ensureAdjustmentLane mints ids and
+    // may insert a lane, and it is also what puts two overlapping adjustments on separate lanes
+    // instead of stacking them into one.
+    for (const drift::Clip &adjustment : moved) {
+        int audioTrack = -1;
+        int audioClipIdx = -1;
+        if (!findClipById(project, audioClipId, &audioTrack, &audioClipIdx))
+            return;
+        const int laneIndex =
+            drift::ensureAdjustmentLane(project, audioTrack, drift::AdjustmentKind::AudioEffects,
+                                        adjustment.timelineStart, adjustment.timelineDuration);
+        if (laneIndex < 0)
+            return;
+        project.tracks()[laneIndex].clips.append(adjustment);
+    }
+}
+
+// Relative position of a video track inside the video-track group.
+//
+// Example:
+//
+//   project tracks: Video, Video, Video, Audio, Audio
+//                   0      1      2
+//
+// The result is independent of absolute project-track indexes so audio tracks can
+// mirror the video hierarchy without interleaving video and audio tracks.
+int videoTrackOrdinal(const drift::Project &project, int trackIndex)
+{
+    if (trackIndex < 0 || trackIndex >= project.tracks().size())
+        return -1;
+    if (project.tracks().at(trackIndex).type != drift::TrackType::Video)
+        return -1;
+
+    int ordinal = 0;
+    for (int t = 0; t < trackIndex; ++t) {
+        if (project.tracks().at(t).type == drift::TrackType::Video)
+            ++ordinal;
+    }
+    return ordinal;
+}
+
+// Returns the video-track ordinal associated with a linked audio track.
+//
+// Detached A/V companions already carry the same linkId, so there is no need to
+// add persistent track metadata merely to determine their visual hierarchy.
+int ownerVideoOrdinalForAudioTrack(const drift::Project &project, int audioTrackIndex)
+{
+    if (audioTrackIndex < 0 || audioTrackIndex >= project.tracks().size())
+        return -1;
+
+    const drift::Track &audioTrack = project.tracks().at(audioTrackIndex);
+    if (audioTrack.type != drift::TrackType::Audio)
+        return -1;
+
+    for (const drift::Clip &audioClip : audioTrack.clips) {
+        if (audioClip.linkId.isEmpty())
+            continue;
+
+        for (int t = 0; t < project.tracks().size(); ++t) {
+            const drift::Track &videoTrack = project.tracks().at(t);
+            if (videoTrack.type != drift::TrackType::Video)
+                continue;
+
+            for (const drift::Clip &videoClip : videoTrack.clips) {
+                if (!videoClip.linkId.isEmpty()
+                    && videoClip.linkId == audioClip.linkId) {
+                    return videoTrackOrdinal(project, t);
+                }
+            }
+        }
+    }
+
+    // Ordinary/imported audio tracks do not have a linked video owner.
+    return -1;
+}
+
+// Find where a newly detached audio track belongs.
+//
+// Rules:
+//   1. Video tracks remain together.
+//   2. Detached audio tracks remain together below the video group.
+//   3. Their relative order mirrors their source video tracks.
+//   4. Unrelated audio tracks are kept below the linked companion group.
+//   5. Existing companion tracks are shifted down instead of receiving an
+//      overlapping clip.
+int audioTrackInsertIndexForVideoTrack(const drift::Project &project,
+                                       int sourceVideoTrackIndex)
+{
+    const int sourceOrdinal =
+        videoTrackOrdinal(project, sourceVideoTrackIndex);
+
+    if (sourceOrdinal < 0)
+        return project.tracks().size();
+
+    int lastVideoTrack = -1;
+    int firstAudioTrack = -1;
+    int lastAudioTrack = -1;
+
+    for (int t = 0; t < project.tracks().size(); ++t) {
+        const drift::TrackType type = project.tracks().at(t).type;
+
+        if (type == drift::TrackType::Video)
+            lastVideoTrack = t;
+
+        if (type != drift::TrackType::Audio)
+            continue;
+
+        if (firstAudioTrack < 0)
+            firstAudioTrack = t;
+
+        lastAudioTrack = t;
+
+        const int ownerOrdinal =
+            ownerVideoOrdinalForAudioTrack(project, t);
+
+        // An unrelated audio track marks the end of the linked-companion block.
+        if (ownerOrdinal < 0)
+            return t;
+
+        // Insert before the first companion belonging to a lower video track.
+        if (ownerOrdinal > sourceOrdinal)
+            return t;
+    }
+
+    // No audio tracks yet: begin the audio group immediately below all videos.
+    if (firstAudioTrack < 0)
+        return qBound(0, lastVideoTrack + 1, project.tracks().size());
+
+    // All existing companion tracks belong to videos above this one.
+    return lastAudioTrack + 1;
+}
+
+// Split embedded audio onto its own audio track (video keeps picture only).
+//
+// The new audio clip remains linked to the video, but receives a dedicated
+// track whose relative position mirrors the source video track.
+bool detachEmbeddedAudioFromVideo(drift::Project &project,
+                                  AssetLibrary *library,
+                                  int videoTrackIndex,
+                                  int videoClipIndex)
+{
+    if (videoTrackIndex < 0
+        || videoTrackIndex >= project.tracks().size())
+        return false;
+
+    if (videoClipIndex < 0
+        || videoClipIndex >= project.tracks().at(videoTrackIndex).clips.size())
+        return false;
+
+    drift::Clip &videoClip =
+        project.tracks()[videoTrackIndex].clips[videoClipIndex];
+
     if (!clipHasEmbeddedAudio(project, library, videoClip))
         return false;
 
-    const QString linkId = videoClip.linkId.isEmpty()
-        ? QUuid::createUuid().toString(QUuid::WithoutBraces)
-        : videoClip.linkId;
+    const QString linkId =
+        videoClip.linkId.isEmpty()
+            ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+            : videoClip.linkId;
+
     videoClip.linkId = linkId;
     videoClip.suppressEmbeddedAudio = true;
 
-    const int audioTrack = drift::ensureTrackForClipType(project, drift::ClipType::Audio, false);
-    project.tracks()[audioTrack].clips.append(makeAudioCompanionFromVideo(videoClip, linkId, videoClip.audioStreamIndex));
+    // Build the companion before inserting into project.tracks(); QList insertion
+    // may relocate Track objects and invalidate references into that container.
+    const drift::Clip audioClip =
+        makeAudioCompanionFromVideo(
+            videoClip,
+            linkId,
+            videoClip.audioStreamIndex);
+    const QString videoClipId = videoClip.id;
+
+    const int insertAt =
+        audioTrackInsertIndexForVideoTrack(
+            project,
+            videoTrackIndex);
+
+    drift::Track audioTrack;
+    audioTrack.type = drift::TrackType::Audio;
+    audioTrack.clips.append(audioClip);
+
+    project.tracks().insert(insertAt, audioTrack);
+
+    migrateAudioEffectsToCompanion(project, videoClipId, audioClip.id);
+
     return true;
 }
 
-// Split all embedded audio streams onto separate audio tracks (video keeps picture only).
-bool detachAllAudioTracksFromVideo(drift::Project &project, AssetLibrary *library, drift::Clip &videoClip)
+// Split every embedded audio stream onto dedicated, consecutive audio tracks.
+//
+// All streams from the same video stay together, and that group follows the
+// source video's position relative to the other video tracks.
+bool detachAllAudioTracksFromVideo(drift::Project &project,
+                                   AssetLibrary *library,
+                                   int videoTrackIndex,
+                                   int videoClipIndex)
 {
+    if (videoTrackIndex < 0
+        || videoTrackIndex >= project.tracks().size())
+        return false;
+
+    if (videoClipIndex < 0
+        || videoClipIndex >= project.tracks().at(videoTrackIndex).clips.size())
+        return false;
+
+    drift::Clip &videoClip =
+        project.tracks()[videoTrackIndex].clips[videoClipIndex];
+
     if (!clipHasEmbeddedAudio(project, library, videoClip))
         return false;
 
-    const QList<StreamInfo> streams = MediaProbe::audioStreams(videoClip.path);
-    if (streams.isEmpty())
-        return detachEmbeddedAudioFromVideo(project, library, videoClip);
+    const QList<StreamInfo> streams =
+        cachedAudioStreams(videoClip.path);
 
-    const QString linkId = videoClip.linkId.isEmpty()
-        ? QUuid::createUuid().toString(QUuid::WithoutBraces)
-        : videoClip.linkId;
+    if (streams.isEmpty()) {
+        return detachEmbeddedAudioFromVideo(
+            project,
+            library,
+            videoTrackIndex,
+            videoClipIndex);
+    }
+
+    const QString linkId =
+        videoClip.linkId.isEmpty()
+            ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+            : videoClip.linkId;
+
     videoClip.linkId = linkId;
     videoClip.suppressEmbeddedAudio = true;
 
+    const QString videoClipId = videoClip.id;
+    // The effects were applied to the stream the clip was actually playing, so they follow that
+    // companion rather than whichever one happens to come first.
+    const int effectStreamIndex = videoClip.audioStreamIndex;
+
+    QList<drift::Clip> companions;
+    companions.reserve(streams.size());
+
     for (int i = 0; i < streams.size(); ++i) {
-        const StreamInfo &s = streams.at(i);
+        const StreamInfo &stream = streams.at(i);
+
         QString trackName = videoClip.name;
-        if (!s.title.isEmpty()) {
-            trackName = QStringLiteral("%1 (%2)").arg(videoClip.name, s.title);
+
+        if (!stream.title.isEmpty()) {
+            trackName =
+                QStringLiteral("%1 (%2)")
+                    .arg(videoClip.name, stream.title);
         } else if (streams.size() > 1) {
-            trackName = QStringLiteral("%1 (Audio %2)").arg(videoClip.name).arg(i + 1);
+            trackName =
+                QStringLiteral("%1 (Audio %2)")
+                    .arg(videoClip.name)
+                    .arg(i + 1);
         }
 
-        int targetTrack = -1;
-        int audioTrackCount = 0;
-        for (int t = 0; t < project.tracks().size(); ++t) {
-            if (project.tracks()[t].type == drift::TrackType::Audio) {
-                if (audioTrackCount == i) {
-                    targetTrack = t;
-                    break;
-                }
-                ++audioTrackCount;
-            }
-        }
-        if (targetTrack < 0) {
-            drift::Track newTrack;
-            newTrack.type = drift::TrackType::Audio;
-            project.tracks().append(newTrack);
-            targetTrack = project.tracks().size() - 1;
-        }
-
-        project.tracks()[targetTrack].clips.append(
-            makeAudioCompanionFromVideo(videoClip, linkId, i, trackName));
+        companions.append(
+            makeAudioCompanionFromVideo(
+                videoClip,
+                linkId,
+                i,
+                trackName));
     }
+
+    const int insertAt =
+        audioTrackInsertIndexForVideoTrack(
+            project,
+            videoTrackIndex);
+
+    QString effectCompanionId;
+    for (int i = 0; i < companions.size(); ++i) {
+        drift::Track audioTrack;
+        audioTrack.type = drift::TrackType::Audio;
+        audioTrack.clips.append(companions.at(i));
+
+        if (companions.at(i).audioStreamIndex == effectStreamIndex)
+            effectCompanionId = companions.at(i).id;
+
+        project.tracks().insert(
+            insertAt + i,
+            audioTrack);
+    }
+
+    if (!effectCompanionId.isEmpty())
+        migrateAudioEffectsToCompanion(project, videoClipId, effectCompanionId);
+
     return true;
 }
 
@@ -2162,7 +2676,8 @@ QHash<QString, QString> defaultShortcuts()
         {QStringLiteral("duplicate"), QStringLiteral("Ctrl+D")},
         // Premiere's Copy/Paste Attributes bindings, and clear of the clip clipboard on Ctrl+C/V.
         {QStringLiteral("copyEffects"), QStringLiteral("Ctrl+Alt+C")},
-        {QStringLiteral("pasteEffects"), QStringLiteral("Ctrl+Alt+V")},
+        {QStringLiteral("pasteEffects"), QStringLiteral("Ctrl+Shift+V")},
+        {QStringLiteral("pasteAttributes"), QStringLiteral("Ctrl+Alt+V")},
         {QStringLiteral("split"), QStringLiteral("S")},
         {QStringLiteral("merge"), QStringLiteral("Ctrl+M")},
         {QStringLiteral("unlink"), QStringLiteral("Ctrl+Shift+U")},
@@ -2172,6 +2687,20 @@ QHash<QString, QString> defaultShortcuts()
         {QStringLiteral("paste"), QStringLiteral("Ctrl+V")},
         {QStringLiteral("nudgeLeft"), QStringLiteral("Alt+Left")},
         {QStringLiteral("nudgeRight"), QStringLiteral("Alt+Right")},
+        // Cut-point navigation joins the nudge pair on Alt+arrow rather than taking the bare
+        // Up/Down that Premiere uses: an application-context Shortcut is resolved before the
+        // key reaches the focused item, so bare arrows would swallow the number-field spinners
+        // and the list navigation in the font, track and asset pickers.
+        {QStringLiteral("previousEdit"), QStringLiteral("Alt+Up")},
+        {QStringLiteral("nextEdit"), QStringLiteral("Alt+Down")},
+        {QStringLiteral("goToStart"), QStringLiteral("Home")},
+        // Premiere's ripple-trim-to-playhead keys, which is exactly what these do.
+        {QStringLiteral("deleteLeft"), QStringLiteral("Q")},
+        {QStringLiteral("deleteRight"), QStringLiteral("W")},
+        // Shuttle-style speed keys for reviewing long footage. Audio keeps its pitch at every
+        // rate, so the material stays listenable while it runs fast.
+        {QStringLiteral("speedUp"), QStringLiteral("L")},
+        {QStringLiteral("speedDown"), QStringLiteral("J")},
         {QStringLiteral("toggleGuides"), QStringLiteral("G")},
         {QStringLiteral("toggleBookmark"), QStringLiteral("M")},
         {QStringLiteral("nextBookmark"), QStringLiteral("Shift+M")},
@@ -2188,6 +2717,9 @@ QHash<QString, QString> defaultShortcuts()
         // TimelinePanel they were neither.
         {QStringLiteral("selectTool"), QStringLiteral("V")},
         {QStringLiteral("bladeTool"), QStringLiteral("B")},
+        // Timeline zoom is QML state too, so these take the same route as the tool modes.
+        {QStringLiteral("zoomIn"), QStringLiteral("Ctrl+=")},
+        {QStringLiteral("zoomOut"), QStringLiteral("Ctrl+-")},
         // QML owns the window, so triggerAction only raises the request — same shape as the
         // file actions above.
         {QStringLiteral("multicam"), QStringLiteral("Ctrl+Shift+C")},
@@ -2196,14 +2728,27 @@ QHash<QString, QString> defaultShortcuts()
 
 } // namespace
 
-QVariantMap AppController::clipToMap(const drift::Clip &clip) const
+QVariantMap AppController::clipToMap(const drift::Clip &clip, const drift::Clip *videoEffectHost,
+                                     const drift::Clip *audioEffectHost,
+                                     const drift::Clip *maskHost,
+                                     const drift::Clip *faceSource) const
 {
+    // Face landmarks live on the media clip, so a linked adjustment reports its host's.
+    const drift::Clip &face = faceSource ? *faceSource : clip;
+    // A media clip's stack physically lives on the adjustment linked to it, but the inspector,
+    // the timeline badge and the MCP tools all still ask the clip for "its" effects — so report
+    // the host's list here. Indices line up 1:1 with what the effect invokables take, because a
+    // clip has at most one linked adjustment per kind. The two kinds are separate adjustments,
+    // hence two hosts. An adjustment clip passes neither and reports its own lists.
+    const drift::Clip &videoHost = videoEffectHost ? *videoEffectHost : clip;
+    const drift::Clip &audioHost = audioEffectHost ? *audioEffectHost : clip;
+
     QVariantList effects;
-    for (int i = 0; i < clip.effects.size(); ++i)
-        effects.append(effectToMap(clip.effects.at(i), i, clip.timelineStart));
+    for (int i = 0; i < videoHost.effects.size(); ++i)
+        effects.append(effectToMap(videoHost.effects.at(i), i, clip.timelineStart));
 
     QVariantList audioEffects;
-    for (const drift::Effect &effect : clip.audioEffects)
+    for (const drift::Effect &effect : audioHost.audioEffects)
         audioEffects.append(audioEffectToMap(effect));
 
     QVariantList fadeShape;
@@ -2223,6 +2768,10 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip) const
         {QStringLiteral("name"), clip.name},
         {QStringLiteral("path"), clip.path},
         {QStringLiteral("kind"), drift::clipTypeToString(clip.type)},
+        // Adjustment clips only: which inspector they get, and whether the timeline should
+        // treat their edges as pinned.
+        {QStringLiteral("adjustmentKind"), drift::adjustmentKindToString(clip.adjustmentKind)},
+        {QStringLiteral("linkedClipId"), clip.linkedClipId},
         {QStringLiteral("thumbnailPath"), clip.thumbnailPath},
         {QStringLiteral("filmstripPath"), clip.filmstripPath},
         {QStringLiteral("textContent"), clip.textContent},
@@ -2235,10 +2784,17 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip) const
         {QStringLiteral("reverse"), clip.reverse},
         {QStringLiteral("flipH"), clip.flipH},
         {QStringLiteral("flipV"), clip.flipV},
-        {QStringLiteral("mask"), maskToMap(clip.mask)},
-        {QStringLiteral("hasFaceTrack"), !clip.faceTrackPath.isEmpty()},
-        {QStringLiteral("faceTrackHasContours"), faceTrackHasContours(clip.faceTrackPath)},
-        {QStringLiteral("faceTrackHasMesh"), faceTrackHasMesh(clip.faceTrackPath)},
+        // Same redirect as the effect stacks above: a media clip's mask lives on the adjustment
+        // pinned to it, but the inspector and the MCP tools still ask the clip for "its" mask.
+        {QStringLiteral("mask"), maskToMap(maskHost ? maskHost->mask : clip.mask,
+                                           maskHost ? maskHost->timelineStart : clip.timelineStart)},
+        {QStringLiteral("hasFaceTrack"), !face.faceTrackPath.isEmpty()},
+        {QStringLiteral("faceTrackHasContours"), faceTrackHasContours(face.faceTrackPath)},
+        {QStringLiteral("faceTrackHasMesh"), faceTrackHasMesh(face.faceTrackPath)},
+        // Whether there is anything a face scan could run on at all: an unlinked adjustment or an
+        // audio clip has no source, and the inspector must not offer to scan one.
+        {QStringLiteral("canFaceTrack"), face.type == drift::ClipType::Video
+             || face.type == drift::ClipType::Image},
         {QStringLiteral("stabilized"), clip.stabilizeAppliedSmoothing >= 0},
         {QStringLiteral("stabilizing"), clip.stabilizing},
         {QStringLiteral("stabilizeMode"), drift::stabilizeModeToString(clip.stabilizeMode)},
@@ -2259,6 +2815,7 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip) const
         {QStringLiteral("assetIndex"), assetIndexForClip(clip)},
         {QStringLiteral("linked"), !clip.linkId.isEmpty()},
         {QStringLiteral("audioStreamIndex"), clip.audioStreamIndex},
+        {QStringLiteral("pan"), clip.pan},
         {QStringLiteral("volume"), clip.volume.isEmpty() ? 1.0 : clip.volume.evaluateAt(0)},
         {QStringLiteral("fadeIn"), drift::usToSeconds(clip.fadeInUs)},
         {QStringLiteral("fadeOut"), drift::usToSeconds(clip.fadeOutUs)},
@@ -2308,9 +2865,15 @@ bool AppController::removeAsset(int assetIndex)
     if (!m_assetLibrary || clipCountForAsset(assetIndex) > 0)
         return false;
 
+    const QString removedPath =
+        m_assetLibrary->assetAt(assetIndex).value(QStringLiteral("path")).toString();
+
     const drift::Project before = m_project;
     if (!m_assetLibrary->removeAssetAt(assetIndex))
         return false;
+
+    if (!removedPath.isEmpty())
+        m_waveformBlocks.forgetSource(removedPath);
 
     // Rows after the removed one shift down, so any index captured at drag
     // start now points at the wrong asset.
@@ -2342,8 +2905,13 @@ int AppController::removeAssets(const QStringList &assetIds)
         const int index = m_assetLibrary->indexOfId(id);
         if (index < 0)
             continue;
-        if (m_assetLibrary->removeAssetAt(index))
+        const QString removedPath =
+            m_assetLibrary->assetAt(index).value(QStringLiteral("path")).toString();
+        if (m_assetLibrary->removeAssetAt(index)) {
             ++removed;
+            if (!removedPath.isEmpty())
+                m_waveformBlocks.forgetSource(removedPath);
+        }
     }
     if (removed == 0)
         return 0;
@@ -2351,6 +2919,87 @@ int AppController::removeAssets(const QStringList &assetIds)
     setDraggingAssetIndex(-1);
     pushProjectEdit(before, removed == 1 ? tr("Media removed") : tr("%n items removed", "", removed));
     return removed;
+}
+
+int AppController::removeAssetsAndClips(const QStringList &assetIds)
+{
+    if (!m_assetLibrary || assetIds.isEmpty())
+        return 0;
+
+    QSet<QString> targetAssetIds;
+    for (const QString &id : assetIds) {
+        if (m_assetLibrary->indexOfId(id) >= 0)
+            targetAssetIds.insert(id);
+    }
+
+    if (targetAssetIds.isEmpty())
+        return 0;
+
+    // Snapshot before touching either the timeline or the asset library. AssetLibrary
+    // mirrors the project's asset collection, so the ProjectSnapshotCommand restores
+    // the complete operation in one undo step.
+    const drift::Project before = m_project.detachedCopy();
+
+    QSet<QString> removedClipIds;
+    int removedClips = 0;
+
+    // Remove backwards so QList indices remain valid.
+    for (drift::Track &track : m_project.tracks()) {
+        for (int i = track.clips.size() - 1; i >= 0; --i) {
+            const drift::Clip &clip = track.clips.at(i);
+            if (!targetAssetIds.contains(clip.assetId))
+                continue;
+
+            removedClipIds.insert(clip.id);
+            track.clips.removeAt(i);
+            ++removedClips;
+        }
+    }
+
+    // A transition may reference a clip that has just disappeared. Keep the same
+    // invariant enforced by deleteSelectedClip().
+    if (!removedClipIds.isEmpty()) {
+        for (drift::Track &track : m_project.tracks()) {
+            for (int i = track.transitions.size() - 1; i >= 0; --i) {
+                const drift::Transition &transition = track.transitions.at(i);
+                if (removedClipIds.contains(transition.fromClipId)
+                    || removedClipIds.contains(transition.toClipId)) {
+                    track.transitions.removeAt(i);
+                }
+            }
+        }
+    }
+
+    int removedAssets = 0;
+    for (const QString &id : targetAssetIds) {
+        const int index = m_assetLibrary->indexOfId(id);
+        if (index >= 0 && m_assetLibrary->removeAssetAt(index))
+            ++removedAssets;
+    }
+
+    if (removedAssets == 0) {
+        // Defensive rollback. Normally impossible because all ids were resolved before
+        // mutation, but do not leave timeline edits behind if the asset operation fails.
+        m_project = before;
+        m_assetLibrary->syncToProject();
+        return 0;
+    }
+
+    setDraggingAssetIndex(-1);
+    clearSelection();
+
+    pushProjectEdit(
+        before,
+        removedAssets == 1
+            ? tr("Media and referenced clips removed")
+            : tr("%n media items and referenced clips removed", "", removedAssets));
+
+    finishEdit(
+        removedClips == 1
+            ? tr("Media and referenced clip removed")
+            : tr("Media and referenced clips removed"));
+
+    return removedAssets;
 }
 
 bool AppController::renameAsset(int assetIndex, const QString &name)
@@ -2489,6 +3138,167 @@ int AppController::moveAssetsToFolder(const QStringList &assetIds, const QString
 
     pushProjectEdit(before, moved == 1 ? tr("Media moved") : tr("%n items moved", "", moved));
     return moved;
+}
+
+namespace {
+
+// A folder picked by mistake — a home directory, an external drive — can hold tens of thousands
+// of files, and importing them all means a probe and a thumbnail job each. The walk stops here
+// and says so, rather than filling the bin with something nobody asked for.
+constexpr int kFolderImportFileLimit = 500;
+
+// One filesystem directory, flattened out of the walk so the GUI-thread half can replay the tree
+// without touching the disk again. `parentIndex` points at an earlier entry in the same list;
+// -1 is the folder the user picked.
+struct FolderImportEntry
+{
+    QString name;
+    int parentIndex = -1;
+    QStringList files;
+};
+
+struct FolderImportPlan
+{
+    QList<FolderImportEntry> entries;
+    // Files the walk looked at and passed over because nothing recognizes the extension. Only
+    // counts what was actually examined, so hitting the limit below does not inflate it with
+    // everything the walk never reached.
+    int skipped = 0;
+    bool truncated = false;
+};
+
+// Runs on a worker thread: nothing here touches the project, the models, or anything else the
+// GUI thread owns. That matters most under Flatpak, where the picked directory is a
+// document-portal FUSE mount and every stat is a round trip out of the sandbox.
+void planDirectory(const QDir &dir, int parentIndex, FolderImportPlan &plan, int &fileCount,
+                   QSet<QString> &visitedDirs)
+{
+    // Guards against a symlinked subdirectory that loops back to an ancestor (or to another
+    // already-planned directory): canonicalFilePath() resolves the symlink, so the second
+    // visit is recognized and skipped instead of recursing forever.
+    const QString canonicalPath = QFileInfo(dir.absolutePath()).canonicalFilePath();
+    if (canonicalPath.isEmpty() || visitedDirs.contains(canonicalPath))
+        return;
+    visitedDirs.insert(canonicalPath);
+
+    FolderImportEntry entry;
+    entry.name = dir.dirName();
+    entry.parentIndex = parentIndex;
+
+    const QFileInfoList files = dir.entryInfoList(QDir::Files, QDir::Name);
+    for (const QFileInfo &info : files) {
+        if (!AssetLibrary::isMediaPath(info.fileName())) {
+            ++plan.skipped;
+            continue;
+        }
+        if (fileCount >= kFolderImportFileLimit) {
+            plan.truncated = true;
+            break;
+        }
+        entry.files.append(info.absoluteFilePath());
+        ++fileCount;
+    }
+
+    const int index = plan.entries.size();
+    plan.entries.append(entry);
+    // Stop the whole walk at the limit rather than only the file collection, so hitting it
+    // leaves a partial tree instead of thousands of empty mirrored folders.
+    if (plan.truncated)
+        return;
+
+    const QFileInfoList subdirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &subdirInfo : subdirs) {
+        planDirectory(QDir(subdirInfo.absoluteFilePath()), index, plan, fileCount, visitedDirs);
+        if (plan.truncated)
+            return;
+    }
+}
+
+} // namespace
+
+bool AppController::importFolder(const QUrl &folderUrl)
+{
+    if (m_importingFolder)
+        return false;
+
+    const QString path = folderUrl.isLocalFile() ? folderUrl.toLocalFile() : folderUrl.toString();
+    const QDir dir(path);
+    if (path.isEmpty() || !dir.exists())
+        return false;
+
+    m_importingFolder = true;
+    emit importingFolderChanged();
+
+    // Only the walk is off-thread. Creating the bin folders and the asset rows stays on the GUI
+    // thread, because both are model mutations — but with the file limit above, that half is
+    // bounded work on data already in memory.
+    auto *watcher = new QFutureWatcher<FolderImportPlan>(this);
+    connect(watcher, &QFutureWatcher<FolderImportPlan>::finished, this, [this, watcher]() {
+        watcher->deleteLater();
+        const FolderImportPlan plan = watcher->result();
+
+        QStringList folderIds;
+        folderIds.reserve(plan.entries.size());
+        int folderCount = 0;
+        int fileCount = 0;
+
+        for (const FolderImportEntry &entry : plan.entries) {
+            const QString parentId =
+                entry.parentIndex < 0 ? m_currentBinFolderId : folderIds.at(entry.parentIndex);
+            const QString folderId = m_binFolderModel.createFolder(entry.name, parentId);
+            // Appended before the empty check so later entries' parentIndex stays aligned.
+            folderIds.append(folderId);
+            if (folderId.isEmpty())
+                continue;
+            ++folderCount;
+
+            if (entry.files.isEmpty() || !m_assetLibrary)
+                continue;
+
+            // Retargeted for the duration of this one entry — importLocalPaths reads it via
+            // m_importFolderId — then put back once the whole tree is done.
+            m_assetLibrary->setImportFolderId(folderId);
+            const QStringList ids = m_assetLibrary->importLocalPaths(entry.files);
+            fileCount += ids.size();
+            // A path already in the bin from an earlier import is returned as-is by
+            // importLocalPaths, keeping whatever folder it already lived in — otherwise this
+            // mirrored folder would look empty despite the file counting as imported into it.
+            for (const QString &id : ids) {
+                const int index = m_assetLibrary->indexOfId(id);
+                if (index < 0)
+                    continue;
+                if (m_assetLibrary->assetAt(index).value(QStringLiteral("folderId")).toString()
+                    != folderId)
+                    m_assetLibrary->moveAssetToFolder(index, folderId);
+            }
+        }
+
+        // The loop above repointed the import destination at whichever folder it last populated;
+        // put it back at wherever the user is actually browsing.
+        if (m_assetLibrary)
+            m_assetLibrary->setImportFolderId(m_currentBinFolderId);
+
+        // Not pushed through pushProjectEdit: like a plain media import, this isn't meant to be
+        // undoable — "undo" is deleting the folder by hand, same as removing an imported asset.
+        // But unlike plain media import, autosave/the unsaved-changes prompt should still cover
+        // it, so it's marked dirty directly (the same split setProjectName/setProjectMetadata
+        // already use).
+        if (folderCount > 0)
+            setDirty(true);
+
+        m_importingFolder = false;
+        emit importingFolderChanged();
+        emit folderImportFinished(folderCount, fileCount, plan.skipped, plan.truncated);
+    });
+
+    watcher->setFuture(QtConcurrent::run([dir]() {
+        FolderImportPlan plan;
+        int fileCount = 0;
+        QSet<QString> visitedDirs;
+        planDirectory(dir, -1, plan, fileCount, visitedDirs);
+        return plan;
+    }));
+    return true;
 }
 
 bool AppController::replaceAssetSource(int assetIndex, const QUrl &url)
@@ -2913,6 +3723,7 @@ QVariantList AppController::actions() const
         action(QStringLiteral("duplicate"), tr("Duplicate selected clip")),
         action(QStringLiteral("copyEffects"), tr("Copy effects from clip")),
         action(QStringLiteral("pasteEffects"), tr("Paste effects onto clip")),
+        action(QStringLiteral("pasteAttributes"), tr("Paste attributes…")),
         action(QStringLiteral("split"), tr("Split at current time")),
         action(QStringLiteral("merge"), tr("Merge adjacent clips")),
         action(QStringLiteral("separateAudio"), tr("Separate audio")),
@@ -2921,6 +3732,13 @@ QVariantList AppController::actions() const
         action(QStringLiteral("selectAll"), tr("Select all clips")),
         action(QStringLiteral("nudgeLeft"), tr("Move selection left a little")),
         action(QStringLiteral("nudgeRight"), tr("Move selection right a little")),
+        action(QStringLiteral("previousEdit"), tr("Go to previous cut point")),
+        action(QStringLiteral("nextEdit"), tr("Go to next cut point")),
+        action(QStringLiteral("goToStart"), tr("Go to start of timeline")),
+        action(QStringLiteral("deleteLeft"), tr("Delete left of the playhead")),
+        action(QStringLiteral("deleteRight"), tr("Delete right of the playhead")),
+        action(QStringLiteral("speedUp"), tr("Increase playback speed")),
+        action(QStringLiteral("speedDown"), tr("Decrease playback speed")),
         action(QStringLiteral("toggleGuides"), tr("Toggle guides")),
         action(QStringLiteral("toggleBookmark"), tr("Add/remove bookmark at current time")),
         action(QStringLiteral("nextBookmark"), tr("Go to next bookmark")),
@@ -2933,6 +3751,8 @@ QVariantList AppController::actions() const
         action(QStringLiteral("toggleLoop"), tr("Loop work area playback")),
         action(QStringLiteral("selectTool"), tr("Select tool")),
         action(QStringLiteral("bladeTool"), tr("Cut tool")),
+        action(QStringLiteral("zoomIn"), tr("Zoom in")),
+        action(QStringLiteral("zoomOut"), tr("Zoom out")),
         action(QStringLiteral("multicam"), tr("Multicam window")),
     };
 }
@@ -3081,9 +3901,20 @@ void AppController::clearWorkspaceLayoutPreference()
 
 void AppController::setMediaGridMode(bool enabled)
 {
-    if (m_mediaGridMode == enabled)
+    setMediaViewMode(enabled ? QStringLiteral("grid") : QStringLiteral("list"));
+}
+
+void AppController::setMediaViewMode(const QString &mode)
+{
+    // An unknown mode (an older build's project, a bad MCP argument) falls back to the
+    // grid rather than leaving the bin with nothing to render.
+    const QString next = (mode == QLatin1String("list") || mode == QLatin1String("tree"))
+                             ? mode
+                             : QStringLiteral("grid");
+    if (m_mediaViewMode == next)
         return;
-    m_mediaGridMode = enabled;
+    m_mediaViewMode = next;
+    emit mediaViewModeChanged();
     emit mediaGridModeChanged();
 }
 
@@ -3535,7 +4366,18 @@ QVariantMap AppController::clipAt(int trackIndex, int clipIndex) const
     if (clipIndex < 0 || clipIndex >= tracks[trackIndex].clips.size())
         return {};
 
-    return clipToMap(tracks[trackIndex].clips.at(clipIndex));
+    // The single-clip form resolves its own hosts. Unlike tracks(), this runs once, so the two
+    // scans cost nothing worth indexing around — which is also why the face source is looked up
+    // here rather than in tracks(), where finding a clip by id per adjustment would be quadratic.
+    const drift::ClipRef source = sourceClipRef(trackIndex, clipIndex);
+    const bool redirected = source.trackIndex >= 0
+                            && (source.trackIndex != trackIndex || source.clipIndex != clipIndex);
+    return clipToMap(tracks[trackIndex].clips.at(clipIndex),
+                     effectHostClip(trackIndex, clipIndex, drift::AdjustmentKind::VideoEffects),
+                     effectHostClip(trackIndex, clipIndex, drift::AdjustmentKind::AudioEffects),
+                     effectHostClip(trackIndex, clipIndex, drift::AdjustmentKind::Mask),
+                     redirected ? &tracks.at(source.trackIndex).clips.at(source.clipIndex)
+                                : nullptr);
 }
 
 QVariantMap AppController::activeVideoClipAtPlayhead() const
@@ -3591,6 +4433,13 @@ double AppController::sourceTimeAtPlayhead() const
 
 void AppController::pushProjectEdit(const drift::Project &before, const QString &text)
 {
+    // Before the snapshot, not after: the structural invariants have to be part of the recorded
+    // state, or a redo would restore a project with effects still sitting on their clips and the
+    // representation would only settle on the next unrelated edit.
+    //
+    // This is also where a track created by this edit gets its id — nested lanes address their
+    // parent by it, and the dozen places that append a track all leave it empty.
+    normalizeProjectStructure();
     if (m_mcpUndoSuspended)
         return;
     m_undoStack.push(new drift::ProjectSnapshotCommand(&m_project, before, m_project, text));
@@ -3599,6 +4448,15 @@ void AppController::pushProjectEdit(const drift::Project &before, const QString 
 void AppController::finishEdit(const QString &message)
 {
     syncOverlapTransitions(m_project);
+
+    // Catches edit paths that bypass pushProjectEdit (preview drags, MCP batches with undo
+    // suspended). Idempotent, and pushProjectEdit has normally already done the work.
+    normalizeProjectStructure();
+
+    // Pinned adjustments follow their clip from here rather than from each of the dozens of
+    // paths that can move one, so a drag, trim, split, ripple delete or multicam retarget all
+    // keep the link true for free.
+    syncLinkedAdjustments(m_project);
     normalizeSelection();
     if (m_selectedTransitionTrack >= 0) {
         const QVariantMap selected = selectedTransitionData();
@@ -4008,22 +4866,52 @@ void AppController::moveClip(int trackIndex, int clipIndex, double newStart)
     const drift::TimeUs desiredUs = drift::secondsToUs(newStart);
     const drift::TimeUs baseUs = m_project.tracks().at(trackIndex).clips.at(clipIndex).timelineStart;
     const drift::TimeUs delta = desiredUs - baseUs;
+
+    // When moving multiple clips, clamp leftward movement so the earliest clip in the selection
+    // stops at 0 and the relative distance between selected clips is preserved.
+    drift::TimeUs minGroupStartUs = -1;
+    for (const QPair<int, int> &pair : targets) {
+        if (isValidClipIndex(pair.first, pair.second)) {
+            const drift::TimeUs s = m_project.tracks().at(pair.first).clips.at(pair.second).timelineStart;
+            if (minGroupStartUs < 0 || s < minGroupStartUs)
+                minGroupStartUs = s;
+        }
+    }
+    drift::TimeUs clampedDelta = delta;
+    if (clampedDelta < 0 && minGroupStartUs >= 0 && -clampedDelta > minGroupStartUs) {
+        clampedDelta = -minGroupStartUs;
+    }
+
     QSet<QString> movedIds;
     for (const QPair<int, int> &pair : targets) {
         if (!isValidClipIndex(pair.first, pair.second))
             continue;
         drift::Clip &clip = m_project.tracks()[pair.first].clips[pair.second];
-        clip.timelineStart = qMax<drift::TimeUs>(0, clip.timelineStart + delta);
+        clip.timelineStart = qMax<drift::TimeUs>(0, clip.timelineStart + clampedDelta);
         movedIds.insert(clip.id);
     }
     if (!m_allowClipOverlap) {
+        drift::TimeUs maxPushRight = 0;
         for (const QPair<int, int> &pair : targets) {
             if (!isValidClipIndex(pair.first, pair.second))
                 continue;
-            drift::Track &targetTrack = m_project.tracks()[pair.first];
-            drift::Clip &clip = targetTrack.clips[pair.second];
-            clip.timelineStart = drift::clampClipStartNoOverlap(targetTrack, movedIds, clip.timelineStart,
-                                                                clip.timelineDuration);
+            const drift::Track &targetTrack = m_project.tracks().at(pair.first);
+            const drift::Clip &clip = targetTrack.clips.at(pair.second);
+            const drift::TimeUs clampedStart = drift::clampClipStartNoOverlap(targetTrack, movedIds, clip.timelineStart,
+                                                                              clip.timelineDuration);
+            if (clampedStart > clip.timelineStart) {
+                const drift::TimeUs push = clampedStart - clip.timelineStart;
+                if (push > maxPushRight)
+                    maxPushRight = push;
+            }
+        }
+        if (maxPushRight > 0) {
+            for (const QPair<int, int> &pair : targets) {
+                if (!isValidClipIndex(pair.first, pair.second))
+                    continue;
+                drift::Clip &clip = m_project.tracks()[pair.first].clips[pair.second];
+                clip.timelineStart += maxPushRight;
+            }
         }
     }
     for (const QPair<int, int> &pair : targets) {
@@ -4153,20 +5041,26 @@ void AppController::splitClipAt(int trackIndex, int clipIndex, double seconds)
 
 void AppController::splitClipLeftAt(int trackIndex, int clipIndex, double seconds)
 {
-    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+    if (!isValidClipIndex(trackIndex, clipIndex))
         return;
 
-    drift::Track &track = m_project.tracks()[trackIndex];
-    if (clipIndex < 0 || clipIndex >= track.clips.size())
-        return;
-
-    drift::Clip &clip = track.clips[clipIndex];
     const drift::TimeUs atUs = drift::secondsToUs(seconds);
-    if (!clip.containsTime(atUs) || atUs == clip.timelineStart)
-        return;
+    drift::TimeUs offset = 0;
+    {
+        // Read through a const view so nothing detaches before the snapshot below.
+        const drift::Project &project = m_project;
+        const drift::Clip &probe = project.tracks().at(trackIndex).clips.at(clipIndex);
+        if (!probe.containsTime(atUs) || atUs == probe.timelineStart)
+            return;
+        offset = atUs - probe.timelineStart;
+    }
 
-    const drift::TimeUs offset = atUs - clip.timelineStart;
+    // Snapshot before taking any non-const reference into m_project: QList is
+    // copy-on-write, and a reference grabbed first mutates the buffer the copy
+    // still shares, leaving `before` already split and undo a no-op.
     const drift::Project before = m_project;
+    drift::Track &track = m_project.tracks()[trackIndex];
+    drift::Clip &clip = track.clips[clipIndex];
 
     drift::Clip right;
     if (!drift::splitClipAtOffset(clip, right, offset))
@@ -4188,21 +5082,28 @@ void AppController::splitClipLeftAt(int trackIndex, int clipIndex, double second
 
 void AppController::splitClipRightAt(int trackIndex, int clipIndex, double seconds)
 {
-    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+    if (!isValidClipIndex(trackIndex, clipIndex))
         return;
 
-    drift::Track &track = m_project.tracks()[trackIndex];
-    if (clipIndex < 0 || clipIndex >= track.clips.size())
-        return;
-
-    drift::Clip &clip = track.clips[clipIndex];
     const drift::TimeUs atUs = drift::secondsToUs(seconds);
-    if (!clip.containsTime(atUs))
-        return;
+    drift::TimeUs offset = 0;
+    drift::TimeUs oldDuration = 0;
+    {
+        // Read through a const view so nothing detaches before the snapshot below.
+        const drift::Project &project = m_project;
+        const drift::Clip &probe = project.tracks().at(trackIndex).clips.at(clipIndex);
+        if (!probe.containsTime(atUs))
+            return;
+        offset = atUs - probe.timelineStart;
+        oldDuration = probe.timelineDuration;
+    }
 
-    const drift::TimeUs offset = atUs - clip.timelineStart;
+    // Snapshot before taking any non-const reference into m_project: QList is
+    // copy-on-write, and a reference grabbed first mutates the buffer the copy
+    // still shares, leaving `before` already split and undo a no-op.
     const drift::Project before = m_project;
-    const drift::TimeUs oldDuration = clip.timelineDuration;
+    drift::Track &track = m_project.tracks()[trackIndex];
+    drift::Clip &clip = track.clips[clipIndex];
 
     drift::Clip discardedTail;
     if (!drift::splitClipAtOffset(clip, discardedTail, offset))
@@ -4260,6 +5161,8 @@ void AppController::trimClipLeft(int trackIndex, int clipIndex, double newStart)
         syncSyntheticSourceRange(clip);
         syncLinkedPartnersFrom(m_project, clip);
         syncOverlapTransitions(m_project);
+        // Live drag: see the note in trimClipRight.
+        syncLinkedAdjustments(m_project);
         emit tracksChanged();
         return;
     }
@@ -4306,6 +5209,9 @@ void AppController::trimClipLeft(int trackIndex, int clipIndex, double newStart)
     clip.syncDurationFromSpeedCurve();
     syncLinkedPartnersFrom(m_project, clip);
     syncOverlapTransitions(m_project);
+    // Live drag: this path never reaches finishEdit, so a pinned adjustment would visibly lag
+    // its clip until the drag was released.
+    syncLinkedAdjustments(m_project);
     emit tracksChanged();
 }
 
@@ -4351,6 +5257,9 @@ void AppController::trimClipRight(int trackIndex, int clipIndex, double newEnd)
     clip.syncDurationFromSpeedCurve();
     syncLinkedPartnersFrom(m_project, clip);
     syncOverlapTransitions(m_project);
+    // Live drag: this path never reaches finishEdit, so a pinned adjustment would visibly lag
+    // its clip until the drag was released.
+    syncLinkedAdjustments(m_project);
     emit tracksChanged();
 }
 
@@ -4416,59 +5325,18 @@ void AppController::alignSelectedClipRight()
     splitSelectedClipRight();
 }
 
+// The playhead-relative half of the pair above, reached by the "delete left"/"delete right"
+// shortcuts and by the align_clip_left/right MCP tools. These used to carry their own copy
+// of the split, which both broke their undo snapshot and left them ignoring rippleEnabled
+// while the identical context-menu path honoured it.
 void AppController::splitSelectedClipLeft()
 {
-    if (m_selectedTrack < 0 || m_selectedClip < 0)
-        return;
-
-    drift::Track &track = m_project.tracks()[m_selectedTrack];
-    if (m_selectedClip >= track.clips.size())
-        return;
-
-    drift::Clip &clip = track.clips[m_selectedClip];
-    if (!clip.containsTime(m_playheadUs) || m_playheadUs == clip.timelineStart)
-        return;
-
-    const drift::TimeUs offset = m_playheadUs - clip.timelineStart;
-    const drift::Project before = m_project;
-
-    drift::Clip right;
-    if (!drift::splitClipAtOffset(clip, right, offset))
-        return;
-
-    right.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    // Keep only the right half (discard left) — same as previous "split left" behavior.
-    track.clips[m_selectedClip] = right;
-
-    pushProjectEdit(before, tr("Split left"));
-    finishEdit(tr("Split left"));
-    selectClip(m_selectedTrack, m_selectedClip);
+    splitClipLeftAt(m_selectedTrack, m_selectedClip, playheadSeconds());
 }
 
 void AppController::splitSelectedClipRight()
 {
-    if (m_selectedTrack < 0 || m_selectedClip < 0)
-        return;
-
-    drift::Track &track = m_project.tracks()[m_selectedTrack];
-    if (m_selectedClip >= track.clips.size())
-        return;
-
-    drift::Clip &clip = track.clips[m_selectedClip];
-    if (!clip.containsTime(m_playheadUs) || m_playheadUs == clip.timelineEnd())
-        return;
-
-    const drift::TimeUs offset = m_playheadUs - clip.timelineStart;
-    const drift::Project before = m_project;
-
-    drift::Clip discardedTail;
-    if (!drift::splitClipAtOffset(clip, discardedTail, offset))
-        return;
-
-    // Keep only the left half (discard right) — same as previous "split right" behavior.
-    pushProjectEdit(before, tr("Split right"));
-    finishEdit(tr("Split right"));
-    selectClip(m_selectedTrack, m_selectedClip);
+    splitClipRightAt(m_selectedTrack, m_selectedClip, playheadSeconds());
 }
 
 void AppController::moveClipToTrack(int trackIndex, int clipIndex, int newTrackIndex, double newStart)
@@ -4477,50 +5345,164 @@ void AppController::moveClipToTrack(int trackIndex, int clipIndex, int newTrackI
         return;
     if (newTrackIndex < 0 || newTrackIndex >= m_project.tracks().size())
         return;
-
-    drift::Track &fromTrack = m_project.tracks()[trackIndex];
-    if (clipIndex < 0 || clipIndex >= fromTrack.clips.size())
+    if (!isValidClipIndex(trackIndex, clipIndex))
         return;
 
-    drift::Track &toTrack = m_project.tracks()[newTrackIndex];
-    const drift::Clip clip = fromTrack.clips.at(clipIndex);
-    if (!toTrack.allowsClipType(clip.type))
+    const int trackDelta = newTrackIndex - trackIndex;
+    if (trackDelta == 0) {
+        moveClip(trackIndex, clipIndex, newStart);
         return;
-
-    const drift::Project before = m_project;
-    fromTrack.clips.removeAt(clipIndex);
-
-    // Source-track indices after the hole shift down. Drop the moved slot and
-    // remap anything that pointed past it, otherwise finishEdit's normalize
-    // would keep the old (track, index) and light up the wrong clip.
-    for (int i = m_selection.size() - 1; i >= 0; --i) {
-        QPair<int, int> &pair = m_selection[i];
-        if (pair.first != trackIndex)
-            continue;
-        if (pair.second == clipIndex)
-            m_selection.removeAt(i);
-        else if (pair.second > clipIndex)
-            --pair.second;
     }
 
-    drift::Clip moved = clip;
-    moved.timelineStart = drift::resolveClipStart(m_project, toTrack, -1, drift::secondsToUs(newStart),
-                                                  moved.timelineDuration, m_snapEnabled, m_playheadUs,
-                                                  extraSnapTargets());
-    toTrack.clips.append(moved);
-    const int newClipIndex = toTrack.clips.size() - 1;
+    const QPair<int, int> requested(trackIndex, clipIndex);
+    QList<QPair<int, int>> targets = m_selection.contains(requested) ? m_selection
+                                                                      : QList<QPair<int, int>>{requested};
 
-    syncLinkedPartnersFrom(m_project, moved);
+    const drift::Project before = m_project;
+    const drift::TimeUs desiredUs = drift::secondsToUs(newStart);
+    const drift::TimeUs baseUs = m_project.tracks().at(trackIndex).clips.at(clipIndex).timelineStart;
+    const drift::TimeUs timeDelta = desiredUs - baseUs;
 
-    // Selection follows the clip to its new track before tracksChanged fires.
-    m_selectedTrack = newTrackIndex;
-    m_selectedClip = newClipIndex;
-    m_selection = selectionWithLinkedPartners(m_project, newTrackIndex, newClipIndex);
+    // Verify the leader clip can land on the destination track
+    const drift::Clip &leaderClip = m_project.tracks().at(trackIndex).clips.at(clipIndex);
+    if (!m_project.tracks().at(newTrackIndex).allowsClipType(leaderClip.type))
+        return;
+    const QString leaderId = leaderClip.id;
+
+    drift::TimeUs minGroupStartUs = -1;
+    for (const QPair<int, int> &pair : targets) {
+        if (!isValidClipIndex(pair.first, pair.second))
+            continue;
+        const drift::Clip &c = m_project.tracks().at(pair.first).clips.at(pair.second);
+        if (minGroupStartUs < 0 || c.timelineStart < minGroupStartUs)
+            minGroupStartUs = c.timelineStart;
+    }
+
+    drift::TimeUs clampedTimeDelta = timeDelta;
+    if (clampedTimeDelta < 0 && minGroupStartUs >= 0 && -clampedTimeDelta > minGroupStartUs) {
+        clampedTimeDelta = -minGroupStartUs;
+    }
+
+    struct ClipToMove {
+        int fromTrack;
+        int fromClipIndex;
+        int toTrack;
+        drift::Clip clip;
+        drift::TimeUs newTimelineStart;
+    };
+
+    QList<ClipToMove> toMove;
+    QSet<QString> movedIds;
+    for (const QPair<int, int> &pair : targets) {
+        if (!isValidClipIndex(pair.first, pair.second))
+            continue;
+        const drift::Clip &c = m_project.tracks().at(pair.first).clips.at(pair.second);
+        int destTrack = pair.first;
+        if (pair.first == trackIndex) {
+            destTrack = newTrackIndex;
+        } else {
+            const int candidate = pair.first + trackDelta;
+            if (candidate >= 0 && candidate < m_project.tracks().size()
+                && m_project.tracks().at(candidate).allowsClipType(c.type)) {
+                destTrack = candidate;
+            }
+        }
+        ClipToMove item;
+        item.fromTrack = pair.first;
+        item.fromClipIndex = pair.second;
+        item.toTrack = destTrack;
+        item.clip = c;
+        item.newTimelineStart = qMax<drift::TimeUs>(0, c.timelineStart + clampedTimeDelta);
+        movedIds.insert(c.id);
+        toMove.append(item);
+    }
+
+    if (!m_allowClipOverlap) {
+        drift::TimeUs maxPushRight = 0;
+        for (const ClipToMove &item : toMove) {
+            const drift::Track &destTrack = m_project.tracks().at(item.toTrack);
+            const drift::TimeUs clampedStart = drift::clampClipStartNoOverlap(destTrack, movedIds, item.newTimelineStart,
+                                                                              item.clip.timelineDuration);
+            if (clampedStart > item.newTimelineStart) {
+                const drift::TimeUs push = clampedStart - item.newTimelineStart;
+                if (push > maxPushRight)
+                    maxPushRight = push;
+            }
+        }
+        if (maxPushRight > 0) {
+            for (ClipToMove &item : toMove) {
+                item.newTimelineStart += maxPushRight;
+            }
+        }
+    }
+
+    // For clips that stay on the same track, update their timeline start in place
+    for (const ClipToMove &item : toMove) {
+        if (item.fromTrack == item.toTrack) {
+            m_project.tracks()[item.fromTrack].clips[item.fromClipIndex].timelineStart = item.newTimelineStart;
+        }
+    }
+
+    // Removals for clips that change tracks, in descending clip index order
+    QList<ClipToMove> removals;
+    for (const ClipToMove &item : toMove) {
+        if (item.fromTrack != item.toTrack)
+            removals.append(item);
+    }
+    std::sort(removals.begin(), removals.end(), [](const ClipToMove &a, const ClipToMove &b) {
+        if (a.fromTrack != b.fromTrack)
+            return a.fromTrack < b.fromTrack;
+        return a.fromClipIndex > b.fromClipIndex;
+    });
+    for (const ClipToMove &item : removals) {
+        m_project.tracks()[item.fromTrack].clips.removeAt(item.fromClipIndex);
+    }
+
+    // Append clips changing tracks to their new destination tracks
+    for (const ClipToMove &item : toMove) {
+        if (item.fromTrack != item.toTrack) {
+            drift::Clip moved = item.clip;
+            moved.timelineStart = item.newTimelineStart;
+            m_project.tracks()[item.toTrack].clips.append(moved);
+        }
+    }
+
+    // Update selection and sync linked partners
+    QList<QPair<int, int>> newSelection;
+    int selectedT = -1;
+    int selectedC = -1;
+    for (const ClipToMove &item : toMove) {
+        int foundIdx = -1;
+        const drift::Track &t = m_project.tracks().at(item.toTrack);
+        for (int i = 0; i < t.clips.size(); ++i) {
+            if (t.clips.at(i).id == item.clip.id) {
+                foundIdx = i;
+                break;
+            }
+        }
+        if (foundIdx >= 0) {
+            newSelection.append(qMakePair(item.toTrack, foundIdx));
+            if (item.clip.id == leaderId) {
+                selectedT = item.toTrack;
+                selectedC = foundIdx;
+            }
+        }
+        syncLinkedPartnersFrom(m_project, item.clip, movedIds);
+    }
+
+    m_selection = newSelection;
+    if (selectedT >= 0 && selectedC >= 0) {
+        m_selectedTrack = selectedT;
+        m_selectedClip = selectedC;
+    } else if (!newSelection.isEmpty()) {
+        m_selectedTrack = newSelection.constFirst().first;
+        m_selectedClip = newSelection.constFirst().second;
+    }
     m_selectedTransitionTrack = -1;
     m_selectedTransitionLeftClip = -1;
 
-    pushProjectEdit(before, tr("Clip moved"));
-    finishEdit(tr("Clip moved"));
+    pushProjectEdit(before, tr("Clips moved"));
+    finishEdit(tr("Clips moved"));
 }
 
 void AppController::addTextClip(const QString &text, double atSeconds, const QString &presetId)
@@ -4961,12 +5943,55 @@ bool AppController::segmentationAvailable()
 {
     // Deliberately only checks that the model files exist. This is reached from a QML binding, and
     // loading the sessions here would block the GUI thread for seconds.
-    return drift::Sam2Segmenter::modelPresent();
+    return drift::Sam2Segmenter::modelPresent() || drift::RvmMatter::modelPresent();
 }
 
 QString AppController::segmentationModelVariant()
 {
+    if (m_segBackend == QLatin1String("rvm")) {
+        const QStringList variants = drift::RvmMatter::installedVariants();
+        if (m_segQuality.isEmpty())
+            return variants.value(0);
+        return variants.contains(m_segQuality) ? m_segQuality : variants.value(0);
+    }
     return drift::Sam2Segmenter::installedVariant();
+}
+
+QStringList AppController::segmentationBackends()
+{
+    // File-existence checks only, like segmentationAvailable(): this is reached from a QML binding.
+    QStringList out;
+    if (drift::Sam2Segmenter::modelPresent())
+        out.append(QStringLiteral("sam2"));
+    if (drift::RvmMatter::modelPresent())
+        out.append(QStringLiteral("rvm"));
+    return out;
+}
+
+QStringList AppController::rvmQualities()
+{
+    return drift::RvmMatter::installedVariants();
+}
+
+void AppController::setSegmentationBackend(const QString &backend, const QString &quality)
+{
+    const QString wanted =
+        backend == QLatin1String("rvm") ? QStringLiteral("rvm") : QStringLiteral("sam2");
+    if (wanted == m_segBackend && quality == m_segQuality)
+        return;
+
+    m_segBackend = wanted;
+    m_segQuality = quality;
+    // The prompt belongs to SAM2, and the preview on screen was produced by the other model.
+    m_segPoints.clear();
+    SegmentImageStore::setMask(QImage());
+    ++m_segRevision;
+    emit segmentSessionChanged();
+
+    // Re-derive the preview for the new backend: SAM2 needs its encoder run on this frame, RVM
+    // needs its one forward pass, and neither has been done.
+    if (m_segSessionActive)
+        setSegmentationFrame(m_segSeconds);
 }
 
 void AppController::cancelSegmentation()
@@ -4987,6 +6012,12 @@ void AppController::beginSegmentationSession(int trackIndex, int clipIndex, doub
         setLastMessage(tr("Select a video clip to cut out"), QStringLiteral("warning"));
         return;
     }
+
+    // The remembered choice can outlive the addon it names — the user may have removed one model
+    // since the last session.
+    const QStringList backends = segmentationBackends();
+    if (!backends.isEmpty() && !backends.contains(m_segBackend))
+        m_segBackend = backends.first();
 
     m_segTrack = trackIndex;
     m_segClip = clipIndex;
@@ -6154,18 +7185,42 @@ void AppController::setSegmentationFrame(double seconds)
     const int generation = ++m_segGeneration;
     emit segmentSessionChanged();
 
-    // The encoder is the expensive half (seconds per frame on a CPU provider), so it runs off the
-    // GUI thread. Decodes after this are milliseconds and stay inline.
-    (void)QtConcurrent::run([this, path, sourceUs, canvasW, canvasH, generation]() {
+    const bool rvm = m_segBackend == QLatin1String("rvm");
+    const QString quality = m_segQuality;
+
+    // The model pass is the expensive half (seconds per frame for the SAM2 encoder on a CPU
+    // provider), so it runs off the GUI thread. Decodes after this are milliseconds and stay inline.
+    (void)QtConcurrent::run([this, path, sourceUs, canvasW, canvasH, generation, rvm, quality]() {
         const QImage frame = ClipReaderPool::instance().readVideoFrame(path, kSegmentEncodeStreamId,
                                                                        sourceUs, canvasW, canvasH);
         drift::Sam2Embedding embedding;
-        if (!frame.isNull())
-            embedding = drift::Sam2Segmenter::instance().encode(frame);
+        QImage mask;
+        QString error;
+        if (!frame.isNull()) {
+            if (rvm) {
+                // RVM has no prompt, so the preview is the whole answer rather than a seed: one
+                // forward pass on a throwaway track, with no recurrent history to carry.
+                std::unique_ptr<drift::RvmMatter::Track> track =
+                    drift::RvmMatter::instance().newTrack(quality);
+                if (!track) {
+                    error = drift::RvmMatter::instance().lastError();
+                } else {
+                    const drift::RvmResult result = track->step(frame);
+                    if (result.ok)
+                        mask = result.alpha;
+                    else
+                        error = result.error;
+                }
+            } else {
+                embedding = drift::Sam2Segmenter::instance().encode(frame);
+                if (!embedding.valid)
+                    error = drift::Sam2Segmenter::instance().lastError();
+            }
+        }
 
         QMetaObject::invokeMethod(
             this,
-            [this, frame, embedding, generation]() {
+            [this, frame, embedding, mask, error, generation]() {
                 // Dropped when the window closed, reopened, or the user scrubbed again while
                 // this encode was running — otherwise a stale frame would land on a live session.
                 if (generation != m_segGeneration)
@@ -6176,10 +7231,10 @@ void AppController::setSegmentationFrame(double seconds)
                 m_segFrame = frame;
                 m_segEmbedding = embedding;
                 SegmentImageStore::setFrame(frame);
-                SegmentImageStore::setMask(QImage());
+                SegmentImageStore::setMask(mask);
                 ++m_segRevision;
-                if (frame.isNull() || !embedding.valid)
-                    setLastMessage(drift::Sam2Segmenter::instance().lastError(), QStringLiteral("error"));
+                if (frame.isNull() || !error.isEmpty())
+                    setLastMessage(error, QStringLiteral("error"));
                 emit segmentSessionChanged();
             },
             Qt::QueuedConnection);
@@ -6216,6 +7271,10 @@ void AppController::clearSegmentationPoints()
 
 void AppController::refreshSegmentationPreview()
 {
+    // RVM's preview is produced by setSegmentationFrame and has nothing to do with prompts;
+    // falling through here would clear it the moment anything touched the point list.
+    if (m_segBackend != QLatin1String("sam2"))
+        return;
     if (m_segPoints.isEmpty() || !m_segEmbedding.valid) {
         ++m_segSeedGeneration;
         SegmentImageStore::setMask(QImage());
@@ -6273,7 +7332,9 @@ void AppController::runSegmentationSeed(int generation)
 
 void AppController::runSegmentationSession(const QString &outputMode)
 {
-    if (!m_segSessionActive || m_segPoints.isEmpty())
+    if (!m_segSessionActive)
+        return;
+    if (segmentBackendUsesPoints() && m_segPoints.isEmpty())
         return;
     QString mode = outputMode;
     if (m_segForTemplate && m_pendingEffectTemplate && m_pendingEffectTemplate->valid())
@@ -6300,7 +7361,8 @@ void AppController::openSegmentationForTemplate(int trackIndex, int clipIndex)
 }
 
 void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantList &points,
-                                const QString &outputMode)
+                                const QString &outputMode, const QString &backend,
+                                const QString &quality)
 {
     if (m_segmenting) {
         setLastMessage(tr("Cutout is already running"), QStringLiteral("warning"));
@@ -6321,7 +7383,11 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
         setLastMessage(tr("This clip has no video to cut out"), QStringLiteral("warning"));
         return;
     }
-    if (points.isEmpty()) {
+    // Empty means "whatever the session is set to", which is also what a direct MCP call gets.
+    const bool rvm = (backend.isEmpty() ? m_segBackend : backend) == QLatin1String("rvm");
+    const QString rvmQuality = quality.isEmpty() ? m_segQuality : quality;
+
+    if (!rvm && points.isEmpty()) {
         setLastMessage(tr("Click the subject first"), QStringLiteral("warning"));
         return;
     }
@@ -6355,13 +7421,13 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
     const int fps = qMax(1, m_project.fps());
     const int canvasW = m_project.width();
     const int canvasH = m_project.height();
-    const QString mode = outputMode.isEmpty() ? QStringLiteral("clips") : outputMode;
+    const QString mode = outputMode.isEmpty() ? QStringLiteral("adjustment") : outputMode;
     // Resolved by id at the end rather than by index: the timeline can be edited while the job
     // runs, and stale indices would apply the matte to the wrong clip.
     const QString clipId = clip.id;
 
     (void)QtConcurrent::run([this, path, srcIn, srcOut, fps, canvasW, canvasH, normalized, mode,
-                             clipId]() {
+                             clipId, rvm, rvmQuality]() {
         auto setProgress = [this](double fraction, const QString &status) {
             QMetaObject::invokeMethod(
                 this,
@@ -6377,10 +7443,11 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
         };
 
         auto finish = [this, clipId, srcIn, mode](bool ok, const QString &message,
-                                                  const QString &mattePath) {
+                                                  const QString &mattePath,
+                                                  const QString &fgrPath = QString()) {
             QMetaObject::invokeMethod(
                 this,
-                [this, ok, message, mattePath, clipId, srcIn, mode]() {
+                [this, ok, message, mattePath, fgrPath, clipId, srcIn, mode]() {
                     m_segmenting = false;
                     emit segmentingChanged();
                     m_segmentProgress = ok ? 1.0 : 0.0;
@@ -6407,7 +7474,7 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
                         emit segmentationFinished(true, message);
                         return;
                     }
-                    finalizeSegmentation(clipId, mattePath, srcIn, mode);
+                    finalizeSegmentation(clipId, mattePath, fgrPath, srcIn, mode);
                     setLastMessage(message);
                     emit segmentationFinished(true, message);
                 },
@@ -6415,7 +7482,7 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
         };
 
         drift::Sam2Segmenter &sam = drift::Sam2Segmenter::instance();
-        if (!sam.available()) {
+        if (!rvm && !sam.available()) {
             finish(false, sam.lastError(), {});
             return;
         }
@@ -6433,19 +7500,49 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
             return;
         }
 
-        drift::MatteWriter writer;
-        bool writerOpen = false;
-        std::unique_ptr<drift::Sam2Segmenter::Track> track = sam.newTrack();
-        if (!track) {
-            finish(false, sam.lastError(), {});
+        // RVM also produces a colour-decontaminated foreground. It rides in a second sidecar next
+        // to the matte, except for a template cutout, which only ever consumes the coverage map —
+        // writing one there would encode a whole clip for a file nothing reads.
+        const bool wantFgr = rvm && mode != QLatin1String("template");
+        const QString fgrPath = wantFgr ? drift::newMattePath() : QString();
+        if (wantFgr && fgrPath.isEmpty()) {
+            finish(false, tr("Could not create a cutout file"), {});
             return;
+        }
+
+        drift::MatteWriter writer;
+        drift::MatteWriter fgrWriter;
+        bool writerOpen = false;
+
+        std::unique_ptr<drift::Sam2Segmenter::Track> track;
+        std::unique_ptr<drift::RvmMatter::Track> rvmTrack;
+        if (rvm) {
+            rvmTrack = drift::RvmMatter::instance().newTrack(rvmQuality);
+            if (!rvmTrack) {
+                finish(false, drift::RvmMatter::instance().lastError(), {});
+                return;
+            }
+        } else {
+            track = sam.newTrack();
+            if (!track) {
+                finish(false, sam.lastError(), {});
+                return;
+            }
         }
         int occludedFrames = 0;
         QString error;
 
+        // Both sidecars are aborted together: a foreground with no matte is unusable, and a
+        // half-written pair must not look like a finished cutout.
+        const auto abortAll = [&] {
+            writer.abort();
+            if (wantFgr)
+                fgrWriter.abort();
+        };
+
         for (int i = 0; i < totalFrames; ++i) {
             if (m_segmentCancel.loadRelaxed() != 0) {
-                writer.abort();
+                abortAll();
                 finish(false, tr("Cutout cancelled"), {});
                 return;
             }
@@ -6454,7 +7551,7 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
             const QImage frame = ClipReaderPool::instance().readVideoFrame(
                 path, kCutoutRenderStreamId, sourceUs, canvasW, canvasH);
             if (frame.isNull()) {
-                writer.abort();
+                abortAll();
                 finish(false, tr("Could not decode frame %1").arg(i), {});
                 return;
             }
@@ -6464,41 +7561,67 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
                     finish(false, error, {});
                     return;
                 }
+                if (wantFgr
+                    && !fgrWriter.open(fgrPath, frame.size(), fps, 1, &error,
+                                       drift::MatteWriter::Mode::Colour)) {
+                    writer.abort();
+                    finish(false, error, {});
+                    return;
+                }
                 writerOpen = true;
             }
 
-            const drift::Sam2Embedding embedding = sam.encode(frame);
-            if (!embedding.valid) {
-                writer.abort();
-                finish(false, sam.lastError(), {});
-                return;
-            }
-
-            // The first frame is prompted; every later frame is propagated purely from the
-            // model's memory bank, so no prompt is carried forward by hand.
-            drift::Sam2Result result;
-            if (i == 0) {
-                drift::Sam2Prompt prompt;
-                for (int p = 0; p < normalized.points.size(); ++p) {
-                    prompt.points.append(QPointF(normalized.points.at(p).x() * frame.width(),
-                                                 normalized.points.at(p).y() * frame.height()));
-                    prompt.labels.append(normalized.labels.at(p));
+            QImage coverage;
+            if (rvm) {
+                // No prompt and no seed frame: the subject is "the people in shot", and the
+                // recurrent state carries identity from one frame to the next.
+                const drift::RvmResult result = rvmTrack->step(frame);
+                if (!result.ok) {
+                    abortAll();
+                    finish(false, result.error, {});
+                    return;
                 }
-                result = track->seed(embedding, prompt);
+                coverage = result.alpha;
+                if (wantFgr && !fgrWriter.writeFrame(result.foreground, &error)) {
+                    abortAll();
+                    finish(false, error, {});
+                    return;
+                }
             } else {
-                result = track->step(embedding);
+                const drift::Sam2Embedding embedding = sam.encode(frame);
+                if (!embedding.valid) {
+                    abortAll();
+                    finish(false, sam.lastError(), {});
+                    return;
+                }
+
+                // The first frame is prompted; every later frame is propagated purely from the
+                // model's memory bank, so no prompt is carried forward by hand.
+                drift::Sam2Result result;
+                if (i == 0) {
+                    drift::Sam2Prompt prompt;
+                    for (int p = 0; p < normalized.points.size(); ++p) {
+                        prompt.points.append(QPointF(normalized.points.at(p).x() * frame.width(),
+                                                     normalized.points.at(p).y() * frame.height()));
+                        prompt.labels.append(normalized.labels.at(p));
+                    }
+                    result = track->seed(embedding, prompt);
+                } else {
+                    result = track->step(embedding);
+                }
+
+                if (!result.ok) {
+                    abortAll();
+                    finish(false, result.error, {});
+                    return;
+                }
+                if (result.occluded)
+                    ++occludedFrames;
+                coverage = result.mask;
             }
 
-            if (!result.ok) {
-                writer.abort();
-                finish(false, result.error, {});
-                return;
-            }
-            if (result.occluded)
-                ++occludedFrames;
-
-            if (!writer.writeFrame(result.mask, &error)) {
-                writer.abort();
+            if (!writer.writeFrame(coverage, &error)) {
+                abortAll();
                 finish(false, error, {});
                 return;
             }
@@ -6507,8 +7630,8 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
                         tr("Processing frame %1 of %2\u2026").arg(i + 1).arg(totalFrames));
         }
 
-        if (!writer.finish(&error)) {
-            writer.abort();
+        if (!writer.finish(&error) || (wantFgr && !fgrWriter.finish(&error))) {
+            abortAll();
             finish(false, error, {});
             return;
         }
@@ -6521,7 +7644,7 @@ void AppController::segmentClip(int trackIndex, int clipIndex, const QVariantLis
                          .arg(occludedFrames)
                          .arg(totalFrames)
                    : tr("Cutout complete"),
-               mattePath);
+               mattePath, fgrPath);
     });
 }
 
@@ -6538,6 +7661,10 @@ void AppController::cancelFaceDetection()
 
 void AppController::clearFaceTrack(int trackIndex, int clipIndex)
 {
+    // Same redirect as detectFacesForClip: the caller is the effect adjustment's inspector.
+    const drift::ClipRef source = sourceClipRef(trackIndex, clipIndex);
+    trackIndex = source.trackIndex;
+    clipIndex = source.clipIndex;
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
     if (clipIndex < 0 || clipIndex >= m_project.tracks().at(trackIndex).clips.size())
@@ -7067,6 +8194,11 @@ void AppController::detectFacesForClip(int trackIndex, int clipIndex)
         setLastMessage(tr("Face detection already in progress"), QStringLiteral("warning"));
         return;
     }
+    // The prompt that asks for a scan lives in the effect adjustment's inspector, so what it
+    // hands over is the adjustment. The landmarks belong on the clip it is pinned to.
+    const drift::ClipRef source = sourceClipRef(trackIndex, clipIndex);
+    trackIndex = source.trackIndex;
+    clipIndex = source.clipIndex;
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
     const drift::Track &track = m_project.tracks().at(trackIndex);
@@ -7529,6 +8661,7 @@ void AppController::detectScenesForClip(int trackIndex, int clipIndex, bool with
 }
 
 void AppController::finalizeSegmentation(const QString &clipId, const QString &mattePath,
+                                         const QString &matteFgrPath,
                                          drift::TimeUs matteSrcOffsetUs, const QString &outputMode)
 {
     int trackIndex = -1;
@@ -7546,49 +8679,44 @@ void AppController::finalizeSegmentation(const QString &clipId, const QString &m
     if (trackIndex < 0) {
         // The clip was deleted while the job ran; the matte has nothing to attach to.
         QFile::remove(mattePath);
+        if (!matteFgrPath.isEmpty())
+            QFile::remove(matteFgrPath);
         setLastMessage(tr("That clip no longer exists"), QStringLiteral("warning"));
         return;
     }
 
     const drift::Project before = m_project;
-    const drift::Clip source = m_project.tracks().at(trackIndex).clips.at(clipIndex);
+    const QString sourceId = m_project.tracks().at(trackIndex).clips.at(clipIndex).id;
 
-    drift::Mask matte;
-    matte.shape = drift::MaskShape::Matte;
-    matte.mattePath = mattePath;
-    matte.matteSrcOffsetUs = matteSrcOffsetUs;
+    // Full-frame: a segmentation matte's own pixels place the subject, so the mask rect must not
+    // crop it. The parametric defaults would.
+    drift::Mask matte = drift::fullFrameMediaMask(mattePath, matteSrcOffsetUs);
+    matte.mediaFgrPath = matteFgrPath;
+    matte.name = tr("Cutout");
+    // "clips" used to derive a foreground/background pair onto two new video tracks. One mask
+    // layer on the clip itself does the same job non-destructively, so both output modes now land
+    // here; the string is kept accepted for the agents that still pass it.
+    matte.invert = false;
 
-    if (outputMode == QStringLiteral("mask")) {
-        m_project.tracks()[trackIndex].clips[clipIndex].mask = matte;
-        pushProjectEdit(before, tr("Cut out subject"));
-        finishEdit(tr("Cut out subject"));
-        selectClip(trackIndex, clipIndex);
-        return;
-    }
-
-    // Two clips, both referencing the original media: no pixels are re-encoded, and the pair
-    // composites back to the original because they differ only by mask inversion. The original
-    // clip is deliberately left in place.
-    auto derive = [&source, &matte](bool invert, const QString &suffix) {
-        drift::Clip clip = source;
-        clip.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        clip.linkId.clear();
-        clip.mask = matte;
-        clip.mask.invert = invert;
-        clip.name = (source.name.isEmpty() ? tr("Clip") : source.name) + suffix;
-        return clip;
-    };
-
-    // Prepended in reverse so the foreground ends up on top (index 0 is the topmost track).
-    const int bgTrack = drift::insertTrackAtTopForClipType(m_project, drift::ClipType::Video);
-    m_project.tracks()[bgTrack].clips.append(derive(true, QStringLiteral(" (background)")));
-
-    const int fgTrack = drift::insertTrackAtTopForClipType(m_project, drift::ClipType::Video);
-    m_project.tracks()[fgTrack].clips.append(derive(false, QStringLiteral(" (foreground)")));
+    // The original clip is deliberately left alone: the cutout is a mask pinned to it, visible on
+    // its own lane, and removing the lane restores the shot. Stacked, not replaced — a cutout is
+    // one more layer on whatever masks the clip already carries.
+    drift::addLinkedMask(m_project, trackIndex, clipIndex, matte);
 
     pushProjectEdit(before, tr("Cut out subject"));
     finishEdit(tr("Cut out subject"));
-    selectClip(fgTrack, m_project.tracks().at(fgTrack).clips.size() - 1);
+
+    // Minting a lane inserts a track, and normalization can reorder the list again, so the
+    // indices captured above are stale — re-resolve by id before selecting.
+    for (int t = 0; t < m_project.tracks().size(); ++t) {
+        const drift::Track &track = m_project.tracks().at(t);
+        for (int c = 0; c < track.clips.size(); ++c) {
+            if (track.clips.at(c).id == sourceId) {
+                selectClip(t, c);
+                return;
+            }
+        }
+    }
 }
 
 // ---- Noise removal ----------------------------------------------------------------------
@@ -8113,6 +9241,279 @@ void AppController::addShapeClipAt(const QString &shapeId, int trackIndex, doubl
     selectClip(target, track.clips.size() - 1);
 }
 
+int AppController::ensureAdjustmentLaneFor(int parentTrackIndex, drift::AdjustmentKind kind,
+                                           drift::TimeUs startUs, drift::TimeUs durationUs)
+{
+    return drift::ensureAdjustmentLane(m_project, parentTrackIndex, kind, startUs, durationUs);
+}
+
+drift::ClipRef AppController::createLinkedAdjustment(int trackIndex, int clipIndex,
+                                                     drift::AdjustmentKind kind)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return {};
+    if (clipIndex < 0 || clipIndex >= m_project.tracks().at(trackIndex).clips.size())
+        return {};
+
+    // Copied, not referenced: ensureAdjustmentLaneFor may insert a track and invalidate it.
+    const drift::Clip source = m_project.tracks().at(trackIndex).clips.at(clipIndex);
+
+    drift::Clip adjustment;
+    adjustment.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    adjustment.type = drift::ClipType::Adjustment;
+    adjustment.adjustmentKind = kind;
+    adjustment.linkedClipId = source.id;
+    adjustment.timelineStart = source.timelineStart;
+    adjustment.timelineDuration = source.timelineDuration;
+    adjustment.srcIn = 0;
+    adjustment.srcOut = source.timelineDuration;
+
+    const int laneIndex = ensureAdjustmentLaneFor(trackIndex, kind, adjustment.timelineStart,
+                                                  adjustment.timelineDuration);
+    if (laneIndex < 0)
+        return {};
+
+    drift::Track &lane = m_project.tracks()[laneIndex];
+    lane.clips.append(adjustment);
+    return {laneIndex, static_cast<int>(lane.clips.size()) - 1};
+}
+
+drift::ClipRef AppController::sourceClipRef(int trackIndex, int clipIndex) const
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return {};
+    const drift::Track &track = m_project.tracks().at(trackIndex);
+    if (clipIndex < 0 || clipIndex >= track.clips.size())
+        return {};
+
+    const drift::Clip &clip = track.clips.at(clipIndex);
+    if (clip.type != drift::ClipType::Adjustment || clip.linkedClipId.isEmpty())
+        return {trackIndex, clipIndex};
+
+    int foundTrack = -1;
+    int foundClip = -1;
+    if (findClipById(m_project, clip.linkedClipId, &foundTrack, &foundClip))
+        return {foundTrack, foundClip};
+    // A link whose clip is gone; syncLinkedAdjustments clears these, so this is a transient.
+    return {};
+}
+
+drift::ClipRef AppController::effectHostRef(int trackIndex, int clipIndex,
+                                            drift::AdjustmentKind kind, bool create)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return {};
+    const drift::Track &track = m_project.tracks().at(trackIndex);
+    if (clipIndex < 0 || clipIndex >= track.clips.size())
+        return {};
+
+    const drift::Clip &clip = track.clips.at(clipIndex);
+    if (clip.type == drift::ClipType::Adjustment) {
+        // An adjustment hosts its own stack, but only the one it is for — an audio stack must not
+        // land on a video adjustment.
+        return clip.adjustmentKind == kind ? drift::ClipRef{trackIndex, clipIndex} : drift::ClipRef{};
+    }
+
+    const QString clipId = clip.id;
+    for (const int laneIndex : drift::adjustmentLaneIndexes(m_project, trackIndex)) {
+        const drift::Track &lane = m_project.tracks().at(laneIndex);
+        for (int c = 0; c < lane.clips.size(); ++c) {
+            const drift::Clip &adjustment = lane.clips.at(c);
+            if (adjustment.adjustmentKind == kind && adjustment.linkedClipId == clipId)
+                return {laneIndex, c};
+        }
+    }
+
+    if (!create)
+        return {};
+    return createLinkedAdjustment(trackIndex, clipIndex, kind);
+}
+
+const drift::Clip *AppController::effectHostClip(int trackIndex, int clipIndex,
+                                                 drift::AdjustmentKind kind) const
+{
+    const drift::ClipRef ref =
+        const_cast<AppController *>(this)->effectHostRef(trackIndex, clipIndex, kind,
+                                                         /*create=*/false);
+    if (ref.trackIndex < 0)
+        return nullptr;
+    return &m_project.tracks().at(ref.trackIndex).clips.at(ref.clipIndex);
+}
+
+bool AppController::redirectToEffectHost(int *trackIndex, int *clipIndex,
+                                         drift::AdjustmentKind kind, bool create)
+{
+    if (!trackIndex || !clipIndex)
+        return false;
+    const drift::ClipRef ref = effectHostRef(*trackIndex, *clipIndex, kind, create);
+    if (ref.trackIndex < 0)
+        return false;
+    *trackIndex = ref.trackIndex;
+    *clipIndex = ref.clipIndex;
+    return true;
+}
+
+void AppController::redirectToKeyframeHost(int *trackIndex, int *clipIndex,
+                                           const QString &prop) const
+{
+    if (!trackIndex || !clipIndex)
+        return;
+    // Two kinds of payload live on an adjustment rather than on the clip the user selected: a
+    // video effect's params, and a mask's scalars. Audio params never gained tracks, so there is
+    // no third.
+    const bool isEffect = prop.startsWith(QLatin1String("fx."));
+    const bool isMask = prop.startsWith(QLatin1String("mask."));
+    if (!isEffect && !isMask)
+        return;
+    const drift::ClipRef ref =
+        const_cast<AppController *>(this)->effectHostRef(*trackIndex, *clipIndex,
+                                                         isMask ? drift::AdjustmentKind::Mask
+                                                                : drift::AdjustmentKind::VideoEffects,
+                                                         /*create=*/false);
+    if (ref.trackIndex < 0)
+        return;
+    *trackIndex = ref.trackIndex;
+    *clipIndex = ref.clipIndex;
+}
+
+void AppController::syncLinkedAdjustments(drift::Project &project) const
+{
+    // One pass over every clip to build the span table, then one over the adjustments. Scanning
+    // per adjustment instead would be quadratic on a timeline with many effects.
+    QHash<QString, QPair<drift::TimeUs, drift::TimeUs>> spans;
+    for (const drift::Track &track : project.tracks()) {
+        if (track.isAdjustment())
+            continue;
+        for (const drift::Clip &clip : track.clips)
+            spans.insert(clip.id, {clip.timelineStart, clip.timelineDuration});
+    }
+
+    for (drift::Track &track : project.tracks()) {
+        if (!track.isAdjustment())
+            continue;
+        for (drift::Clip &adjustment : track.clips) {
+            if (adjustment.linkedClipId.isEmpty())
+                continue;
+            const auto it = spans.constFind(adjustment.linkedClipId);
+            if (it == spans.constEnd()) {
+                // The clip it was pinned to is gone. Unlink rather than delete: the effects are
+                // the user's work, and a stranded adjustment is visible and recoverable.
+                adjustment.linkedClipId.clear();
+                continue;
+            }
+            adjustment.timelineStart = it->first;
+            adjustment.timelineDuration = it->second;
+            adjustment.srcIn = 0;
+            adjustment.srcOut = it->second;
+        }
+    }
+}
+
+void AppController::normalizeProjectStructure()
+{
+    m_project.ensureTrackIds();
+    const QList<QPair<QString, int>> selection = captureSelectionByTrackId();
+    // Belt and braces for anything that hands the editor a project built the old way — an
+    // importer, a tool, a test. Both passes are cheap no-ops once the shape is right.
+    drift::liftAdjustmentClipsToOwnTracks(m_project);
+    drift::hoistClipEffectsToAdjustmentLanes(m_project);
+    normalizeAdjustmentLanes(m_project);
+    restoreSelectionByTrackId(selection);
+}
+
+void AppController::normalizeAdjustmentLanes(drift::Project &project) const
+{
+    bool hasLane = false;
+    for (const drift::Track &track : project.tracks()) {
+        if (track.type == drift::TrackType::Adjustment
+            && track.adjustmentScope == drift::AdjustmentScope::ParentTrack) {
+            hasLane = true;
+            break;
+        }
+    }
+    if (!hasLane)
+        return;
+
+    project.ensureTrackIds();
+
+    // A lane whose parent became an adjustment track would have two scopes at once; demote it to
+    // standalone rather than leave it ambiguous.
+    for (drift::Track &track : project.tracks()) {
+        if (!track.isAdjustmentLane())
+            continue;
+        const int parentIndex = project.trackIndexById(track.parentTrackId);
+        if (parentIndex < 0 || project.tracks().at(parentIndex).isAdjustment()) {
+            track.parentTrackId.clear();
+            track.adjustmentScope = drift::AdjustmentScope::AllBelow;
+        }
+    }
+
+    // Re-gather each parent's lanes directly below it. Lanes keep their relative order, so the
+    // sequence their effects apply in survives a track move — and moving a track carries its
+    // lanes along, which is what makes reordering behave.
+    QList<drift::Track> ordered;
+    ordered.reserve(project.tracks().size());
+    QSet<QString> placed;
+    for (const drift::Track &track : project.tracks()) {
+        if (track.isAdjustmentLane())
+            continue;
+        ordered.append(track);
+        placed.insert(track.id);
+        for (const drift::Track &lane : project.tracks()) {
+            if (lane.isAdjustmentLane() && lane.parentTrackId == track.id
+                && !placed.contains(lane.id)) {
+                ordered.append(lane);
+                placed.insert(lane.id);
+            }
+        }
+    }
+    // Anything left is a lane whose parent vanished mid-pass; keep it rather than drop it.
+    for (const drift::Track &track : project.tracks()) {
+        if (!placed.contains(track.id))
+            ordered.append(track);
+    }
+    project.tracks() = ordered;
+}
+
+QString AppController::trackIdAt(int trackIndex) const
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return {};
+    return m_project.tracks().at(trackIndex).id;
+}
+
+QList<QPair<QString, int>> AppController::captureSelectionByTrackId() const
+{
+    QList<QPair<QString, int>> captured;
+    captured.reserve(m_selection.size());
+    for (const QPair<int, int> &pair : m_selection) {
+        const QString id = trackIdAt(pair.first);
+        if (!id.isEmpty())
+            captured.append({id, pair.second});
+    }
+    return captured;
+}
+
+void AppController::restoreSelectionByTrackId(const QList<QPair<QString, int>> &captured)
+{
+    m_selection.clear();
+    for (const QPair<QString, int> &pair : captured) {
+        const int trackIndex = m_project.trackIndexById(pair.first);
+        if (trackIndex < 0)
+            continue;
+        if (pair.second < 0 || pair.second >= m_project.tracks().at(trackIndex).clips.size())
+            continue;
+        m_selection.append(qMakePair(trackIndex, pair.second));
+    }
+    if (m_selection.isEmpty()) {
+        m_selectedTrack = -1;
+        m_selectedClip = -1;
+    } else {
+        m_selectedTrack = m_selection.constLast().first;
+        m_selectedClip = m_selection.constLast().second;
+    }
+}
+
 void AppController::addAdjustmentClip(double atSeconds, double durationSeconds)
 {
     addAdjustmentClipAt(-1, atSeconds, durationSeconds);
@@ -8133,23 +9534,31 @@ void AppController::addAdjustmentClipWithEffect(const QString &effectId, int tra
         : drift::kImageClipDurationUs;
     const drift::TimeUs startSeconds = atSeconds < 0.0 ? m_playheadUs : drift::secondsToUs(atSeconds);
 
-    if (target < 0 || target >= m_project.tracks().size()
-        || !m_project.tracks().at(target).allowsClipType(drift::ClipType::Adjustment)) {
+    // A free-standing adjustment goes on a standalone adjustment track — never into a nested
+    // lane, which is scoped to somebody else's track and would silently change what it applies to.
+    const auto usableTarget = [this](int index) {
+        if (index < 0 || index >= m_project.tracks().size())
+            return false;
+        const drift::Track &t = m_project.tracks().at(index);
+        return t.isAdjustment() && !t.isAdjustmentLane();
+    };
+
+    if (!usableTarget(target)) {
         int candidateTrack = -1;
         for (int i = 0; i < m_project.tracks().size(); ++i) {
+            if (!usableTarget(i))
+                continue;
             const drift::Track &t = m_project.tracks().at(i);
-            if (t.type == drift::TrackType::Video && t.allowsClipType(drift::ClipType::Adjustment)) {
-                bool hasOverlap = false;
-                for (const drift::Clip &c : t.clips) {
-                    if (startSeconds < c.timelineEnd() && startSeconds + durUs > c.timelineStart) {
-                        hasOverlap = true;
-                        break;
-                    }
-                }
-                if (!hasOverlap) {
-                    candidateTrack = i;
+            bool hasOverlap = false;
+            for (const drift::Clip &c : t.clips) {
+                if (startSeconds < c.timelineEnd() && startSeconds + durUs > c.timelineStart) {
+                    hasOverlap = true;
                     break;
                 }
+            }
+            if (!hasOverlap) {
+                candidateTrack = i;
+                break;
             }
         }
         if (candidateTrack >= 0) {
@@ -8192,6 +9601,211 @@ void AppController::addAdjustmentClipWithEffect(const QString &effectId, int tra
     pushProjectEdit(before, tr("Add adjustment layer"));
     finishEdit(tr("Adjustment layer added"));
     selectClip(target, track.clips.size() - 1);
+}
+
+namespace {
+
+drift::AdjustmentKind adjustmentKindFromArg(const QString &kind)
+{
+    return drift::adjustmentKindFromString(kind.trimmed());
+}
+
+} // namespace
+
+void AppController::addAdjustmentTrack(const QString &kind)
+{
+    const drift::Project before = m_project;
+
+    drift::Track track;
+    track.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    track.type = drift::TrackType::Adjustment;
+    track.adjustmentScope = drift::AdjustmentScope::AllBelow;
+    m_project.tracks().prepend(track);
+
+    // Every stored index just moved down one.
+    const QList<QPair<QString, int>> selection = captureSelectionByTrackId();
+    restoreSelectionByTrackId(selection);
+    if (m_selectedTransitionTrack >= 0)
+        ++m_selectedTransitionTrack;
+
+    Q_UNUSED(adjustmentKindFromArg(kind))
+    pushProjectEdit(before, tr("Add adjustment track"));
+    finishEdit(tr("Adjustment track added"));
+}
+
+int AppController::ensureAdjustmentLane(int parentTrackIndex, const QString &kind, double atSeconds,
+                                        double durationSeconds)
+{
+    const drift::TimeUs startUs =
+        atSeconds < 0.0 ? m_playheadUs : drift::secondsToUs(atSeconds);
+    const drift::TimeUs durUs = durationSeconds > 0.0 ? drift::secondsToUs(durationSeconds)
+                                                      : drift::kImageClipDurationUs;
+
+    const drift::Project before = m_project;
+    const int laneIndex =
+        ensureAdjustmentLaneFor(parentTrackIndex, adjustmentKindFromArg(kind), startUs, durUs);
+    if (laneIndex < 0)
+        return -1;
+
+    // Only a fresh lane changes the project; reusing one is a pure lookup and must not land on
+    // the undo stack as an empty edit.
+    if (m_project.tracks().size() != before.tracks().size()) {
+        const QList<QPair<QString, int>> selection = captureSelectionByTrackId();
+        restoreSelectionByTrackId(selection);
+        pushProjectEdit(before, tr("Add adjustment lane"));
+        finishEdit(tr("Adjustment lane added"));
+    }
+    return laneIndex;
+}
+
+void AppController::moveAdjustmentToLane(int fromTrack, int fromClip, int parentTrackIndex,
+                                         double atSeconds)
+{
+    if (fromTrack < 0 || fromTrack >= m_project.tracks().size())
+        return;
+    if (fromClip < 0 || fromClip >= m_project.tracks().at(fromTrack).clips.size())
+        return;
+    const drift::Clip &source = m_project.tracks().at(fromTrack).clips.at(fromClip);
+    if (source.type != drift::ClipType::Adjustment)
+        return;
+    if (parentTrackIndex < 0 || parentTrackIndex >= m_project.tracks().size())
+        return;
+    if (m_project.tracks().at(parentTrackIndex).isAdjustment())
+        return;
+
+    const drift::Project before = m_project;
+    m_project.ensureTrackIds();
+
+    // Copied before anything moves: creating the lane can insert a track and invalidate both the
+    // reference and the indices the caller passed.
+    drift::Clip adjustment = m_project.tracks().at(fromTrack).clips.at(fromClip);
+    // Re-scoping breaks the pin: a linked adjustment belongs to its clip's track, so carrying the
+    // link onto a different one would leave it following a clip it no longer applies to.
+    adjustment.linkedClipId.clear();
+    if (atSeconds >= 0.0)
+        adjustment.timelineStart = drift::secondsToUs(atSeconds);
+
+    const QString sourceTrackId = m_project.tracks().at(fromTrack).id;
+    const QString parentTrackId = m_project.tracks().at(parentTrackIndex).id;
+
+    const int laneIndex = ensureAdjustmentLaneFor(m_project.trackIndexById(parentTrackId),
+                                                  adjustment.adjustmentKind,
+                                                  adjustment.timelineStart,
+                                                  adjustment.timelineDuration);
+    if (laneIndex < 0)
+        return;
+
+    const int sourceIndex = m_project.trackIndexById(sourceTrackId);
+    if (sourceIndex < 0)
+        return;
+    m_project.tracks()[sourceIndex].clips.removeAt(fromClip);
+    m_project.tracks()[laneIndex].clips.append(adjustment);
+
+    // A track that existed only to hold this adjustment is left empty; dropping it keeps the
+    // timeline from accumulating dead rows every time one is dragged into a lane.
+    if (m_project.tracks().at(sourceIndex).isAdjustment()
+        && m_project.tracks().at(sourceIndex).clips.isEmpty()) {
+        m_project.tracks().removeAt(sourceIndex);
+    }
+
+    normalizeAdjustmentLanes(m_project);
+    clearSelection();
+    pushProjectEdit(before, tr("Nest adjustment in track"));
+    finishEdit(tr("Adjustment nested"));
+}
+
+void AppController::moveAdjustmentToOwnTrack(int fromTrack, int fromClip, double atSeconds)
+{
+    if (fromTrack < 0 || fromTrack >= m_project.tracks().size())
+        return;
+    if (fromClip < 0 || fromClip >= m_project.tracks().at(fromTrack).clips.size())
+        return;
+    if (m_project.tracks().at(fromTrack).clips.at(fromClip).type != drift::ClipType::Adjustment)
+        return;
+
+    const drift::Project before = m_project;
+    m_project.ensureTrackIds();
+
+    drift::Clip adjustment = m_project.tracks().at(fromTrack).clips.at(fromClip);
+    // Standalone means "everything composited below", which is not something a clip can be
+    // pinned to.
+    adjustment.linkedClipId.clear();
+    if (atSeconds >= 0.0)
+        adjustment.timelineStart = drift::secondsToUs(atSeconds);
+
+    const QString sourceTrackId = m_project.tracks().at(fromTrack).id;
+
+    // Above the track it was nested in, so it keeps affecting that track and gains the ones
+    // below it. A lane is stored *below* its parent, so the lane's own index is one slot too
+    // low — landing there would put the new track under the one it came from, where it no
+    // longer applies to it at all.
+    const int laneParent = drift::adjustmentLaneParentIndex(m_project, fromTrack);
+    const int insertAt = qMax(0, laneParent >= 0 ? laneParent : fromTrack);
+
+    drift::Track track;
+    track.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    track.type = drift::TrackType::Adjustment;
+    track.adjustmentScope = drift::AdjustmentScope::AllBelow;
+    track.clips.append(adjustment);
+    m_project.tracks().insert(insertAt, track);
+
+    const int sourceIndex = m_project.trackIndexById(sourceTrackId);
+    if (sourceIndex >= 0) {
+        m_project.tracks()[sourceIndex].clips.removeAt(fromClip);
+        if (m_project.tracks().at(sourceIndex).isAdjustment()
+            && m_project.tracks().at(sourceIndex).clips.isEmpty()) {
+            m_project.tracks().removeAt(sourceIndex);
+        }
+    }
+
+    normalizeAdjustmentLanes(m_project);
+    clearSelection();
+    pushProjectEdit(before, tr("Detach adjustment to its own track"));
+    finishEdit(tr("Adjustment detached"));
+}
+
+void AppController::unlinkAdjustment(int trackIndex, int clipIndex)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return;
+    if (clipIndex < 0 || clipIndex >= m_project.tracks().at(trackIndex).clips.size())
+        return;
+    const drift::Clip &clip = m_project.tracks().at(trackIndex).clips.at(clipIndex);
+    if (clip.type != drift::ClipType::Adjustment || clip.linkedClipId.isEmpty())
+        return;
+
+    const drift::Project before = m_project;
+    m_project.tracks()[trackIndex].clips[clipIndex].linkedClipId.clear();
+    pushProjectEdit(before, tr("Unlink adjustment"));
+    finishEdit(tr("Adjustment unlinked"));
+}
+
+void AppController::relinkAdjustment(int trackIndex, int clipIndex, int mediaTrack, int mediaClip)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return;
+    if (clipIndex < 0 || clipIndex >= m_project.tracks().at(trackIndex).clips.size())
+        return;
+    if (m_project.tracks().at(trackIndex).clips.at(clipIndex).type != drift::ClipType::Adjustment)
+        return;
+    if (mediaTrack < 0 || mediaTrack >= m_project.tracks().size())
+        return;
+    if (mediaClip < 0 || mediaClip >= m_project.tracks().at(mediaTrack).clips.size())
+        return;
+
+    const drift::Clip &target = m_project.tracks().at(mediaTrack).clips.at(mediaClip);
+    if (target.type == drift::ClipType::Adjustment)
+        return;
+    // Pinning only means something for a lane nested in the target's own track — anywhere else
+    // the adjustment would follow a clip it does not apply to.
+    if (drift::adjustmentLaneParentIndex(m_project, trackIndex) != mediaTrack)
+        return;
+
+    const drift::Project before = m_project;
+    m_project.tracks()[trackIndex].clips[clipIndex].linkedClipId = target.id;
+    // finishEdit's sync pass is what actually snaps the span onto the clip.
+    pushProjectEdit(before, tr("Link adjustment to clip"));
+    finishEdit(tr("Adjustment linked"));
 }
 
 void AppController::addStickerClip(const QString &stickerId, double atSeconds)
@@ -8407,7 +10021,40 @@ void AppController::setCanvasCropMode(bool active)
     if (m_canvasCropMode == active)
         return;
     m_canvasCropMode = active;
+    // Both modes claim the preview's grips and pointer, so entering one leaves the other.
+    if (active && m_maskEditMode) {
+        m_maskEditMode = false;
+        emit maskEditModeChanged();
+    }
     emit canvasCropModeChanged();
+}
+
+bool AppController::maskEditActive() const
+{
+    if (m_maskEditMode)
+        return true;
+    // Selecting a mask clip on a lane is itself the request to edit it — asking the user to then
+    // find a toolbar toggle would make the handles undiscoverable.
+    if (m_selectedTrack < 0 || m_selectedTrack >= m_project.tracks().size())
+        return false;
+    const drift::Track &track = m_project.tracks().at(m_selectedTrack);
+    if (m_selectedClip < 0 || m_selectedClip >= track.clips.size())
+        return false;
+    const drift::Clip &clip = track.clips.at(m_selectedClip);
+    return clip.type == drift::ClipType::Adjustment
+           && clip.adjustmentKind == drift::AdjustmentKind::Mask;
+}
+
+void AppController::setMaskEditMode(bool active)
+{
+    if (m_maskEditMode == active)
+        return;
+    m_maskEditMode = active;
+    if (active && m_canvasCropMode) {
+        m_canvasCropMode = false;
+        emit canvasCropModeChanged();
+    }
+    emit maskEditModeChanged();
 }
 
 QVariantMap AppController::background() const
@@ -8666,6 +10313,9 @@ void AppController::previewSetClipKeyframe(int trackIndex, int clipIndex, const 
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
+    // linked to this clip. Transform props are untouched by this.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -8689,6 +10339,11 @@ void AppController::previewSetEffectParam(int trackIndex, int clipIndex, int eff
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::VideoEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -8795,7 +10450,7 @@ void AppController::previewSetClipMask(int trackIndex, int clipIndex, const QVar
     if (!m_previewDragActive)
         beginPreviewDrag(tr("Mask changed"));
 
-    track.clips[clipIndex].mask = maskFromMap(maskMap);
+    writeClipMask(trackIndex, clipIndex, maskFromMap(maskMap));
     emitPreviewFrame();
 }
 
@@ -9736,6 +11391,43 @@ void AppController::setClipFlip(int trackIndex, int clipIndex, bool flipH, bool 
     finishEdit(tr("Clip flip updated"));
 }
 
+// Snapshot first, then index: Project's tracks deep-detach on copy (see drift::TrackList), so
+// aliasing a snapshot is no longer possible either way, but taking the reference after the copy
+// keeps that independent of the container's copy semantics.
+void AppController::previewSetClipPan(int trackIndex, int clipIndex, double pan)
+{
+    if (!isValidClipIndex(trackIndex, clipIndex))
+        return;
+    const drift::ClipType type = m_project.tracks().at(trackIndex).clips.at(clipIndex).type;
+    if (type != drift::ClipType::Video && type != drift::ClipType::Audio)
+        return;
+
+    if (!m_previewDragActive)
+        beginPreviewDrag(tr("Pan changed"));
+
+    m_project.tracks()[trackIndex].clips[clipIndex].pan = qBound(-1.0, pan, 1.0);
+    emitPreviewFrame();
+}
+
+void AppController::setClipPan(int trackIndex, int clipIndex, double pan)
+{
+    if (!isValidClipIndex(trackIndex, clipIndex))
+        return;
+
+    const drift::Clip &existing = m_project.tracks().at(trackIndex).clips.at(clipIndex);
+    if (existing.type != drift::ClipType::Video && existing.type != drift::ClipType::Audio)
+        return;
+
+    const double clamped = qBound(-1.0, pan, 1.0);
+    if (qFuzzyCompare(existing.pan + 2.0, clamped + 2.0))
+        return;
+
+    const drift::Project before = m_project;
+    m_project.tracks()[trackIndex].clips[clipIndex].pan = clamped;
+    pushProjectEdit(before, tr("Pan changed"));
+    finishEdit(tr("Clip pan updated"));
+}
+
 void AppController::setClipRotationSnap(int trackIndex, int clipIndex, double degrees)
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
@@ -9929,8 +11621,15 @@ void AppController::separateAudioFromSelection()
         drift::Clip &clip = m_project.tracks()[pair.first].clips[pair.second];
         if (clip.type != drift::ClipType::Video || detachedVideoIds.contains(clip.id))
             continue;
-        if (detachEmbeddedAudioFromVideo(m_project, m_assetLibrary, clip)) {
-            detachedVideoIds.insert(clip.id);
+
+        const QString videoId = clip.id;
+
+        if (detachEmbeddedAudioFromVideo(
+                m_project,
+                m_assetLibrary,
+                pair.first,
+                pair.second)) {
+            detachedVideoIds.insert(videoId);
             changed = true;
         }
     }
@@ -9955,7 +11654,11 @@ void AppController::separateAllAudioTracks(int trackIndex, int clipIndex)
     if (clip.type != drift::ClipType::Video)
         return;
 
-    if (!detachAllAudioTracksFromVideo(m_project, m_assetLibrary, clip))
+    if (!detachAllAudioTracksFromVideo(
+            m_project,
+            m_assetLibrary,
+            trackIndex,
+            clipIndex))
         return;
 
     m_selection = selectionWithLinkedPartners(m_project, trackIndex, clipIndex);
@@ -9981,8 +11684,15 @@ void AppController::separateAllAudioTracksFromSelection()
         drift::Clip &clip = m_project.tracks()[pair.first].clips[pair.second];
         if (clip.type != drift::ClipType::Video || detachedVideoIds.contains(clip.id))
             continue;
-        if (detachAllAudioTracksFromVideo(m_project, m_assetLibrary, clip)) {
-            detachedVideoIds.insert(clip.id);
+
+        const QString videoId = clip.id;
+
+        if (detachAllAudioTracksFromVideo(
+                m_project,
+                m_assetLibrary,
+                pair.first,
+                pair.second)) {
+            detachedVideoIds.insert(videoId);
             changed = true;
         }
     }
@@ -10006,7 +11716,7 @@ QVariantList AppController::clipAudioStreams(int trackIndex, int clipIndex) cons
     if (clip.path.isEmpty())
         return {};
 
-    const QList<StreamInfo> streams = MediaProbe::audioStreams(clip.path);
+    const QList<StreamInfo> streams = cachedAudioStreams(clip.path);
     QVariantList out;
     for (int i = 0; i < streams.size(); ++i) {
         const StreamInfo &s = streams.at(i);
@@ -10048,7 +11758,7 @@ int AppController::clipAudioStreamCount(int trackIndex, int clipIndex) const
     const drift::Clip &clip = m_project.tracks().at(trackIndex).clips.at(clipIndex);
     if (clip.path.isEmpty())
         return 0;
-    return MediaProbe::audioStreams(clip.path).size();
+    return cachedAudioStreams(clip.path).size();
 }
 
 void AppController::setClipAudioStreamIndex(int trackIndex, int clipIndex, int streamIndex)
@@ -10342,9 +12052,310 @@ void AppController::setClipMask(int trackIndex, int clipIndex, const QVariantMap
         return;
 
     const drift::Project before = m_project;
-    track.clips[clipIndex].mask = maskFromMap(maskMap);
+    writeClipMask(trackIndex, clipIndex, maskFromMap(maskMap));
     pushProjectEdit(before, tr("Mask changed"));
     finishEdit(tr("Clip mask updated"));
+}
+
+// Selecting a mask adjustment and selecting the clip it masks are both ways of reaching the same
+// mask, so both write here. On the adjustment the mask is the payload and is written in place; on
+// a media clip it is pinned through a lane, which is the only place a media clip's mask can live.
+void AppController::writeClipMask(int trackIndex, int clipIndex, const drift::Mask &mask)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return;
+    drift::Track &track = m_project.tracks()[trackIndex];
+    if (clipIndex < 0 || clipIndex >= track.clips.size())
+        return;
+
+    drift::Mask seeded = mask;
+    seedFreeformMask(seeded);
+
+    drift::Clip &clip = track.clips[clipIndex];
+    if (clip.type == drift::ClipType::Adjustment) {
+        // The kind is deliberately left alone. The Masks tab is also offered for a video-effects
+        // adjustment, where a mask scopes where the chain lands; flipping it to Mask there would
+        // stop its effect stack rendering.
+        clip.mask = seeded;
+        return;
+    }
+    drift::setLinkedMask(m_project, trackIndex, clipIndex, seeded);
+}
+
+drift::Mask AppController::maskFromCatalogId(const QString &shape) const
+{
+    drift::Mask mask;
+    mask.shape = drift::maskShapeFromString(shape);
+    // maskShapeFromString falls back to None for anything it does not know, and Media needs a
+    // path it cannot invent — either way the mask contributes nothing and the caller does nothing.
+    if (mask.shape == drift::MaskShape::Media)
+        mask.shape = drift::MaskShape::None;
+    seedFreeformMask(mask);
+    return mask;
+}
+
+void AppController::selectClipById(const QString &clipId)
+{
+    int foundTrack = -1;
+    int foundClip = -1;
+    if (!clipId.isEmpty() && findClipById(m_project, clipId, &foundTrack, &foundClip))
+        selectClip(foundTrack, foundClip);
+}
+
+QVariantList AppController::maskCatalog() const
+{
+    // Ordered as the inspector's shape combo lists them, so the two read alike.
+    const QList<QPair<QString, QString>> entries = {
+        {QStringLiteral("rectangle"), tr("Rectangle")}, {QStringLiteral("ellipse"), tr("Ellipse")},
+        {QStringLiteral("star"), tr("Star")},           {QStringLiteral("heart"), tr("Heart")},
+        {QStringLiteral("bars"), tr("Bars")},           {QStringLiteral("freeform"), tr("Freeform")},
+    };
+
+    QVariantList out;
+    for (const auto &entry : entries) {
+        out.append(QVariantMap{{QStringLiteral("id"), entry.first},
+                               {QStringLiteral("label"), entry.second}});
+    }
+    return out;
+}
+
+QString AppController::maskShapeSvgPath(const QString &shape) const
+{
+    drift::Mask mask = maskFromCatalogId(shape);
+    if (mask.shape == drift::MaskShape::None)
+        return {};
+
+    // Thumbnails are authored on the 0..100 grid ShapePreview.qml scales from. The mask rect is
+    // normalized, so widening it here is what fills the card rather than sitting at the 60% the
+    // timeline default would give. Bars spans the full width by construction and is left alone.
+    if (mask.shape != drift::MaskShape::Bars) {
+        mask.w = 0.94;
+        mask.h = 0.94;
+        mask.points.clear();
+        seedFreeformMask(mask);
+    }
+    return drift::painterPathToSvg(drift::maskPath(mask, 100, 100));
+}
+
+void AppController::addMaskToClip(int trackIndex, int clipIndex, const QString &shape)
+{
+    const drift::Mask mask = maskFromCatalogId(shape);
+    if (!mask.contributes())
+        return;
+
+    const drift::Project before = m_project;
+    const drift::ClipRef added = drift::addLinkedMask(m_project, trackIndex, clipIndex, mask);
+    if (added.trackIndex < 0)
+        return;
+    const QString addedId = m_project.tracks().at(added.trackIndex).clips.at(added.clipIndex).id;
+
+    pushProjectEdit(before, tr("Add mask"));
+    finishEdit(tr("Mask added"));
+    selectClipById(addedId);
+}
+
+void AppController::addMaskLaneClip(int trackIndex, const QString &shape, double atSeconds,
+                                    double durationSeconds)
+{
+    const drift::Mask mask = maskFromCatalogId(shape);
+    if (!mask.contributes())
+        return;
+
+    const drift::TimeUs startUs =
+        atSeconds < 0.0 ? m_playheadUs : drift::secondsToUs(atSeconds);
+    const drift::TimeUs durationUs = durationSeconds > 0.0
+                                         ? drift::secondsToUs(durationSeconds)
+                                         : drift::kImageClipDurationUs;
+
+    const drift::Project before = m_project;
+    const drift::ClipRef added =
+        drift::addLaneMask(m_project, trackIndex, mask, startUs, durationUs);
+    if (added.trackIndex < 0)
+        return;
+    const QString addedId = m_project.tracks().at(added.trackIndex).clips.at(added.clipIndex).id;
+
+    pushProjectEdit(before, tr("Add mask"));
+    finishEdit(tr("Mask added"));
+    selectClipById(addedId);
+}
+
+void AppController::addMediaMaskToClip(int trackIndex, int clipIndex, const QUrl &url)
+{
+    // The compositor decodes the coverage with FFmpeg, which cannot open a content:// URI, so the
+    // document is staged to a real file first on the platforms that hand one back.
+    const QString path = readTargetPath(url);
+    if (path.isEmpty())
+        return;
+
+    // Full-frame, for the same reason a segmentation matte is: the media's own pixels place the
+    // coverage, so the parametric default rect would crop it.
+    drift::Mask mask = drift::fullFrameMediaMask(path);
+    mask.name = QFileInfo(path).completeBaseName();
+
+    const drift::Project before = m_project;
+    const drift::ClipRef added = drift::addLinkedMask(m_project, trackIndex, clipIndex, mask);
+    if (added.trackIndex < 0)
+        return;
+    const QString addedId = m_project.tracks().at(added.trackIndex).clips.at(added.clipIndex).id;
+
+    pushProjectEdit(before, tr("Add mask"));
+    finishEdit(tr("Mask added"));
+    selectClipById(addedId);
+}
+
+void AppController::insertMaskPoint(int trackIndex, int clipIndex, int pointIndex, double x,
+                                    double y)
+{
+    const drift::Clip *host =
+        effectHostClip(trackIndex, clipIndex, drift::AdjustmentKind::Mask);
+    if (!host || host->mask.shape != drift::MaskShape::Freeform)
+        return;
+
+    drift::Mask mask = host->mask;
+    mask.points.insert(qBound(0, pointIndex, mask.points.size()), QPointF(x, y));
+
+    const drift::Project before = m_project;
+    writeClipMask(trackIndex, clipIndex, mask);
+    pushProjectEdit(before, tr("Add mask point"));
+    finishEdit(tr("Mask point added"));
+}
+
+void AppController::removeMaskPoint(int trackIndex, int clipIndex, int pointIndex)
+{
+    const drift::Clip *host =
+        effectHostClip(trackIndex, clipIndex, drift::AdjustmentKind::Mask);
+    if (!host || host->mask.shape != drift::MaskShape::Freeform)
+        return;
+    // A polygon needs three vertices to enclose anything; removing past that would silently
+    // blank the clip with no way back except deleting the mask.
+    if (host->mask.points.size() <= 3 || pointIndex < 0 || pointIndex >= host->mask.points.size())
+        return;
+
+    drift::Mask mask = host->mask;
+    mask.points.remove(pointIndex);
+    // The shape keys are vertex lists of their own, so they have to lose the same slot or the
+    // counts stop matching and pointsAt() falls back to holding the earlier key.
+    for (auto it = mask.pathKeys.begin(); it != mask.pathKeys.end(); ++it) {
+        if (pointIndex < it.value().size())
+            it.value().remove(pointIndex);
+    }
+
+    const drift::Project before = m_project;
+    writeClipMask(trackIndex, clipIndex, mask);
+    pushProjectEdit(before, tr("Remove mask point"));
+    finishEdit(tr("Mask point removed"));
+}
+
+QVariantMap AppController::maskEditorState() const
+{
+    QVariantMap out;
+    if (m_selectedTrack < 0 || m_selectedTrack >= m_project.tracks().size())
+        return out;
+    const drift::Track &selectedTrack = m_project.tracks().at(m_selectedTrack);
+    if (m_selectedClip < 0 || m_selectedClip >= selectedTrack.clips.size())
+        return out;
+    const drift::Clip &selectedClip = selectedTrack.clips.at(m_selectedClip);
+
+    // Three ways to arrive here, and they differ only in what frame the handles are placed
+    // against — mask coordinates are normalized to that frame, not to the canvas.
+    int hostTrack = -1;
+    QString selectedAdjustmentId;
+    QVariantList layers;
+
+    const auto appendLayer = [&](const drift::Clip &adjustment, int trackIndex, int clipIndex) {
+        // Resolved, so a handle sits where the animation actually puts the mask this frame rather
+        // than on its static value.
+        const drift::TimeUs maskTimeUs = m_playheadUs - adjustment.timelineStart;
+        const drift::Mask resolved = adjustment.mask.isAnimated()
+                                         ? adjustment.mask.resolvedAt(maskTimeUs)
+                                         : adjustment.mask;
+        layers.append(QVariantMap{
+            {QStringLiteral("track"), trackIndex},
+            {QStringLiteral("clip"), clipIndex},
+            {QStringLiteral("selected"), adjustment.id == selectedAdjustmentId},
+            {QStringLiteral("animated"), adjustment.mask.isAnimated()},
+            {QStringLiteral("mask"), maskToMap(resolved, adjustment.timelineStart)},
+        });
+    };
+
+    if (selectedClip.type == drift::ClipType::Adjustment) {
+        if (selectedClip.adjustmentKind != drift::AdjustmentKind::Mask)
+            return out;
+        selectedAdjustmentId = selectedClip.id;
+        // A nested lane borrows the frame of whichever clip of its parent track is under the
+        // playhead. A standalone adjustment masks the canvas composited so far, so it is its own
+        // frame — there is no clip underneath that its coordinates belong to.
+        hostTrack = selectedTrack.isAdjustmentLane()
+                        ? drift::adjustmentLaneParentIndex(m_project, m_selectedTrack)
+                        : -1;
+        if (hostTrack < 0)
+            appendLayer(selectedClip, m_selectedTrack, m_selectedClip);
+    } else {
+        hostTrack = m_selectedTrack;
+        if (const drift::Clip *host =
+                effectHostClip(m_selectedTrack, m_selectedClip, drift::AdjustmentKind::Mask)) {
+            selectedAdjustmentId = host->id;
+        }
+    }
+
+    // Default frame: the whole canvas, which is both the standalone case and the right fallback
+    // for an untransformed clip.
+    double frameX = 0.0;
+    double frameY = 0.0;
+    double frameW = m_project.width();
+    double frameH = m_project.height();
+    double frameRotation = 0.0;
+    bool hasFrame = hostTrack < 0;
+    int hostClip = -1;
+
+    if (hostTrack >= 0 && hostTrack < m_project.tracks().size()) {
+        const drift::Track &track = m_project.tracks().at(hostTrack);
+        for (int c = 0; c < track.clips.size(); ++c) {
+            if (track.clips.at(c).type != drift::ClipType::Adjustment
+                && track.clips.at(c).containsTime(m_playheadUs)) {
+                hostClip = c;
+                break;
+            }
+        }
+        if (hostClip >= 0) {
+            const drift::Clip &clip = track.clips.at(hostClip);
+            const drift::TimeUs relative = m_playheadUs - clip.timelineStart;
+            const auto value = [&](const drift::KeyframeTrack<double> &kt, double fallback) {
+                return kt.isEmpty() ? fallback : kt.evaluateAt(relative);
+            };
+            frameX = value(clip.transformX, 0.0);
+            frameY = value(clip.transformY, 0.0);
+            frameW = value(clip.transformW, m_project.width());
+            frameH = value(clip.transformH, m_project.height());
+            frameRotation = value(clip.rotation, 0.0);
+            hasFrame = true;
+        }
+
+        for (const int laneIndex : drift::adjustmentLaneIndexes(m_project, hostTrack)) {
+            const drift::Track &lane = m_project.tracks().at(laneIndex);
+            for (int c = 0; c < lane.clips.size(); ++c) {
+                const drift::Clip &adjustment = lane.clips.at(c);
+                if (adjustment.adjustmentKind != drift::AdjustmentKind::Mask)
+                    continue;
+                if (!adjustment.containsTime(m_playheadUs))
+                    continue;
+                appendLayer(adjustment, laneIndex, c);
+            }
+        }
+    }
+
+    out.insert(QStringLiteral("hostTrack"), hostTrack);
+    out.insert(QStringLiteral("hostClip"), hostClip);
+    out.insert(QStringLiteral("hasFrame"), hasFrame);
+    out.insert(QStringLiteral("canvasWidth"), m_project.width());
+    out.insert(QStringLiteral("canvasHeight"), m_project.height());
+    out.insert(QStringLiteral("layers"), layers);
+    out.insert(QStringLiteral("x"), frameX);
+    out.insert(QStringLiteral("y"), frameY);
+    out.insert(QStringLiteral("width"), frameW);
+    out.insert(QStringLiteral("height"), frameH);
+    out.insert(QStringLiteral("rotation"), frameRotation);
+    return out;
 }
 
 void AppController::addTransition(int trackIndex, int clipIndex, const QString &kind, double durationSeconds)
@@ -10653,6 +12664,9 @@ void AppController::setClipKeyframe(int trackIndex, int clipIndex, const QString
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
+    // linked to this clip. Transform props are untouched by this.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -10671,6 +12685,9 @@ void AppController::removeClipKeyframe(int trackIndex, int clipIndex, const QStr
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
+    // linked to this clip. Transform props are untouched by this.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -10696,6 +12713,9 @@ void AppController::previewMoveClipKeyframe(int trackIndex, int clipIndex, const
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
+    // linked to this clip. Transform props are untouched by this.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -10725,6 +12745,8 @@ drift::Keyframe<double> *AppController::keyframeAt(int trackIndex, int clipIndex
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return nullptr;
+    // Covers the tangent and hold entry points too — they all resolve their key through here.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -10765,6 +12787,9 @@ double AppController::propertyValueAt(int trackIndex, int clipIndex, const QStri
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return fallback;
+    // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
+    // linked to this clip. Transform props are untouched by this.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     const drift::Track &track = m_project.tracks().at(trackIndex);
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -10796,7 +12821,8 @@ double AppController::propertyBaseValue(int trackIndex, int clipIndex, const QSt
     }
 
     // Effect params fall back to the effect's own static value, which is what the compositor
-    // reads for an unkeyed param.
+    // reads for an unkeyed param — and that value now sits on the adjustment linked to the clip.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
     if (trackIndex >= 0 && trackIndex < m_project.tracks().size()) {
         const drift::Track &track = m_project.tracks().at(trackIndex);
         if (clipIndex >= 0 && clipIndex < track.clips.size()) {
@@ -10809,6 +12835,14 @@ double AppController::propertyBaseValue(int trackIndex, int clipIndex, const QSt
                 if (value.isValid())
                     return value.toDouble();
             }
+            // Same rule for a mask scalar: the static member is what the rasterizer reads when
+            // the track is empty, so it is the curve's baseline.
+            QString maskKey;
+            if (parseMaskProp(prop, &maskKey)) {
+                drift::Mask flat = clip.mask;
+                flat.keyframes.clear();
+                return flat.valueAt(maskKey, 0);
+            }
         }
     }
     return fallback;
@@ -10819,6 +12853,9 @@ QVariantList AppController::clipKeyframes(int trackIndex, int clipIndex, const Q
     QVariantList out;
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return out;
+    // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
+    // linked to this clip. Transform props are untouched by this.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     const drift::Track &track = m_project.tracks().at(trackIndex);
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -10837,6 +12874,9 @@ bool AppController::clipPropertyKeyframesEnabled(int trackIndex, int clipIndex,
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return true;
+    // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
+    // linked to this clip. Transform props are untouched by this.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     const drift::Track &track = m_project.tracks().at(trackIndex);
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -10852,6 +12892,9 @@ void AppController::setClipPropertyKeyframesEnabled(int trackIndex, int clipInde
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
+    // linked to this clip. Transform props are untouched by this.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     if (clipIndex < 0 || clipIndex >= m_project.tracks().at(trackIndex).clips.size())
         return;
@@ -10914,11 +12957,31 @@ QStringList AppController::clipAnimatedProperties(int trackIndex, int clipIndex)
         out.append(prop);
     }
 
-    for (int i = 0; i < clip.effects.size(); ++i) {
-        const QMap<QString, drift::KeyframeTrack<double>> &params = clip.effects.at(i).paramKeyframes;
-        for (auto it = params.constBegin(); it != params.constEnd(); ++it) {
-            if (!it.value().isEmpty())
-                out.append(QStringLiteral("fx.%1.%2").arg(i).arg(it.key()));
+    // Transform props stay on the clip, but its effect stack lives on the adjustment linked to
+    // it — so the fx half of the series list is enumerated from there.
+    const drift::Clip *host =
+        effectHostClip(trackIndex, clipIndex, drift::AdjustmentKind::VideoEffects);
+    if (host) {
+        for (int i = 0; i < host->effects.size(); ++i) {
+            const QMap<QString, drift::KeyframeTrack<double>> &params =
+                host->effects.at(i).paramKeyframes;
+            for (auto it = params.constBegin(); it != params.constEnd(); ++it) {
+                if (!it.value().isEmpty())
+                    out.append(QStringLiteral("fx.%1.%2").arg(i).arg(it.key()));
+            }
+        }
+    }
+
+    // A mask lives on its own adjustment for the same reason, so its scalars come from there.
+    // Listed in maskKeyframeProperties() order rather than the map's, so the strip's rows do not
+    // reshuffle as tracks are created.
+    const drift::Clip *maskHost =
+        effectHostClip(trackIndex, clipIndex, drift::AdjustmentKind::Mask);
+    if (maskHost) {
+        for (const QString &key : drift::maskKeyframeProperties()) {
+            const auto it = maskHost->mask.keyframes.constFind(key);
+            if (it != maskHost->mask.keyframes.constEnd() && !it->isEmpty())
+                out.append(QStringLiteral("mask.%1").arg(key));
         }
     }
     return out;
@@ -10929,6 +12992,9 @@ void AppController::setKeyframeInterpolation(int trackIndex, int clipIndex, cons
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
+    // linked to this clip. Transform props are untouched by this.
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11062,6 +13128,17 @@ QVariantList AppController::effectCategories() const
     return out;
 }
 
+namespace {
+
+// Every effect that follows baked face landmarks is named face_*. The catalog carries no other
+// marker for it, and the inspector's own beauty/mesh checks already key off the same prefix.
+bool isFaceEffectId(const QString &catalogId)
+{
+    return catalogId.startsWith(QLatin1String("face_"));
+}
+
+} // namespace
+
 void AppController::addEffect(int trackIndex, int clipIndex, const QString &effectId)
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
@@ -11083,13 +13160,52 @@ void AppController::addEffect(int trackIndex, int clipIndex, const QString &effe
     for (const drift::EffectParamSpec &p : def->meta.parameters)
         effect.parameters.insert(p.key, p.defaultVariant());
 
+    // The parent track is about to be addressed by id, so it needs one before the snapshot.
+    m_project.ensureTrackIds();
+
+    // A face effect follows baked landmarks and does nothing without them, so adding one starts
+    // the scan rather than leaving the user to discover why the effect looks inert. Captured by
+    // id before the edit, because minting a lane shifts every index after it.
+    QString faceSourceId;
+    if (isFaceEffectId(effectId)) {
+        const drift::ClipRef source = sourceClipRef(trackIndex, clipIndex);
+        if (source.trackIndex >= 0) {
+            const drift::Clip &sourceClip =
+                m_project.tracks().at(source.trackIndex).clips.at(source.clipIndex);
+            if (sourceClip.faceTrackPath.isEmpty())
+                faceSourceId = sourceClip.id;
+        }
+    }
+
+    // Snapshot first: creating the lane is part of the edit, so undo must take it back out
+    // along with the effect rather than leaving an empty row behind.
     const drift::Project before = m_project;
-    track.clips[clipIndex].effects.append(effect);
-    m_selectedTrack = trackIndex;
-    m_selectedClip = clipIndex;
-    m_selection = {qMakePair(trackIndex, clipIndex)};
+
+    int hostTrack = trackIndex;
+    int hostClip = clipIndex;
+    if (!redirectToEffectHost(&hostTrack, &hostClip, drift::AdjustmentKind::VideoEffects,
+                              /*create=*/true)) {
+        return;
+    }
+    m_project.tracks()[hostTrack].clips[hostClip].effects.append(effect);
+
+    // Selection moves to the adjustment carrying the stack, because that is the only thing whose
+    // inspector shows it: the Effects tab is no longer offered for the clip the effect was aimed
+    // at. redirectToEffectHost already returns post-insert indices, and normalizeProjectStructure
+    // carries the selection across any reorder by track id.
+    m_selectedTrack = hostTrack;
+    m_selectedClip = hostClip;
+    m_selection = {qMakePair(hostTrack, hostClip)};
+
     pushProjectEdit(before, tr("Add effect"));
     finishEdit(tr("Effect added"));
+
+    if (faceSourceId.isEmpty() || m_faceDetecting || !faceDetectionAvailable())
+        return;
+    int faceTrack = -1;
+    int faceClip = -1;
+    if (findClipById(m_project, faceSourceId, &faceTrack, &faceClip))
+        detectFacesForClip(faceTrack, faceClip);
 }
 
 namespace {
@@ -11136,21 +13252,33 @@ bool templateSyncNeedsBeats(const QString &sync)
            || sync == QLatin1String("bar");
 }
 
-bool clipHasMatte(const drift::Clip &clip)
+// The matte already pinned to a clip, or a default-constructed Mask when it has none. Masks live
+// on the adjustments linked to the clip, so this has to go through the project rather than reading
+// the clip on its own.
+drift::Mask clipMatte(const drift::Project &project, int trackIndex, int clipIndex)
 {
-    return clip.mask.shape == drift::MaskShape::Matte && !clip.mask.mattePath.isEmpty();
+    for (const drift::ClipRef &ref : drift::linkedMaskAdjustments(project, trackIndex, clipIndex)) {
+        const drift::Mask &mask = project.tracks().at(ref.trackIndex).clips.at(ref.clipIndex).mask;
+        if (mask.isMedia())
+            return mask;
+    }
+    return {};
 }
 
-drift::Clip deriveMaskedClip(const drift::Clip &source, const drift::Mask &matte, bool invert,
-                             const QString &suffix)
+bool clipHasMatte(const drift::Project &project, int trackIndex, int clipIndex)
+{
+    return clipMatte(project, trackIndex, clipIndex).isMedia();
+}
+
+// The clip half only; the caller pins the matte with setLinkedMask once it knows where the clip
+// landed, since that call needs a track index and inserts lanes of its own.
+drift::Clip deriveMaskedClip(const drift::Clip &source, const QString &suffix)
 {
     drift::Clip clip = source;
     clip.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     clip.linkId.clear();
     clip.effects.clear();
     clip.audioEffects.clear();
-    clip.mask = matte;
-    clip.mask.invert = invert;
     clip.name = (source.name.isEmpty()
                      ? QCoreApplication::translate("AppController", "Clip")
                      : source.name)
@@ -11422,17 +13550,13 @@ void AppController::applyEffectTemplateInternal(int trackIndex, int clipIndex,
     const drift::Clip sourceClip = track.clips[clipIndex];
     const drift::Project before = m_project;
 
-    drift::Mask matte;
-    if (!mattePath.isEmpty()) {
-        matte.shape = drift::MaskShape::Matte;
-        matte.mattePath = mattePath;
-        matte.matteSrcOffsetUs = matteSrcOffsetUs;
-    } else if (clipHasMatte(sourceClip)) {
-        matte = sourceClip.mask;
-    }
+    // Full-frame: the matte's own pixels place the subject, and the parametric defaults would
+    // crop it to 60% of the frame.
+    drift::Mask matte = mattePath.isEmpty() ? clipMatte(m_project, trackIndex, clipIndex)
+                                            : drift::fullFrameMediaMask(mattePath, matteSrcOffsetUs);
 
     const bool segmented = entry.requiresSegmentation || entry.usesMultiTrack();
-    const bool haveMatte = matte.shape == drift::MaskShape::Matte && !matte.mattePath.isEmpty();
+    const bool haveMatte = matte.isMedia();
 
     QList<drift::TimeUs> syncPoints;
     const drift::TimeUs clipStart = sourceClip.timelineStart;
@@ -11474,8 +13598,18 @@ void AppController::applyEffectTemplateInternal(int trackIndex, int clipIndex,
     int selectTrack = trackIndex;
     int selectClip = clipIndex;
 
+    // Pinning a mask mints a lane, which inserts a track and invalidates every reference and
+    // index this block holds. So the matte assignments are queued by clip id and applied once the
+    // structural work below is finished.
+    QList<QPair<QString, drift::Mask>> pendingMasks;
+    const auto pinMatte = [&pendingMasks, &matte](const drift::Clip &clip, bool invert) {
+        drift::Mask copy = matte;
+        copy.invert = invert;
+        pendingMasks.append(qMakePair(clip.id, copy));
+    };
+
     if (segmented && haveMatte) {
-        track.clips[clipIndex].mask = matte;
+        pinMatte(track.clips[clipIndex], false);
 
         const bool sourceHidden = sourceClip.opacity.evaluateAt(0) < 0.05;
         const TemplateStackRefs existingStack = findExistingTemplateStack(m_project, sourceClip);
@@ -11490,9 +13624,8 @@ void AppController::applyEffectTemplateInternal(int trackIndex, int clipIndex,
             drift::Clip &bgClip = m_project.tracks()[existingStack.bgTrack].clips[existingStack.bgClip];
             resetTemplateDerivedClip(fgClip, 1.0);
             resetTemplateDerivedClip(bgClip, 1.0);
-            fgClip.mask = matte;
-            bgClip.mask = matte;
-            bgClip.mask.invert = true;
+            pinMatte(fgClip, false);
+            pinMatte(bgClip, true);
 
             selectTrack = existingStack.fgTrack;
             selectClip = existingStack.fgClip;
@@ -11509,7 +13642,7 @@ void AppController::applyEffectTemplateInternal(int trackIndex, int clipIndex,
                                            ? entry.clones.opacities.at(i)
                                            : 0.25;
                 resetTemplateDerivedClip(clone, opacity);
-                clone.mask = matte;
+                pinMatte(clone, false);
                 if (i < entry.clones.scales.size()) {
                     const double scale = entry.clones.scales.at(i);
                     const double w = sourceClip.transformW.isEmpty()
@@ -11537,12 +13670,14 @@ void AppController::applyEffectTemplateInternal(int trackIndex, int clipIndex,
             const int fgTrack =
                 drift::insertTrackAboveForClipType(m_project, trackIndex, drift::ClipType::Video);
             m_project.tracks()[fgTrack].clips.append(
-                deriveMaskedClip(sourceClip, matte, false, QStringLiteral(" (fg)")));
+                deriveMaskedClip(sourceClip, QStringLiteral(" (fg)")));
+            pinMatte(m_project.tracks()[fgTrack].clips.constLast(), false);
 
             const int bgTrack =
                 drift::insertTrackAboveForClipType(m_project, fgTrack + 1, drift::ClipType::Video);
             m_project.tracks()[bgTrack].clips.append(
-                deriveMaskedClip(sourceClip, matte, true, QStringLiteral(" (bg)")));
+                deriveMaskedClip(sourceClip, QStringLiteral(" (bg)")));
+            pinMatte(m_project.tracks()[bgTrack].clips.constLast(), true);
 
             selectTrack = fgTrack;
             selectClip = 0;
@@ -11557,8 +13692,8 @@ void AppController::applyEffectTemplateInternal(int trackIndex, int clipIndex,
                 for (int i = 0; i < entry.clones.count; ++i) {
                     const int cloneTrack = drift::insertTrackAboveForClipType(
                         m_project, insertAbove, drift::ClipType::Video);
-                    drift::Clip clone =
-                        deriveMaskedClip(sourceClip, matte, false, QStringLiteral(" (clone)"));
+                    drift::Clip clone = deriveMaskedClip(sourceClip, QStringLiteral(" (clone)"));
+                    pinMatte(clone, false);
                     const double opacity = i < entry.clones.opacities.size()
                                                ? entry.clones.opacities.at(i)
                                                : 0.25;
@@ -11597,6 +13732,28 @@ void AppController::applyEffectTemplateInternal(int trackIndex, int clipIndex,
                                     syncPoints);
     }
 
+    // Now that no reference into the track list is live, pin the mattes. Each one can insert a
+    // lane, so every clip is re-resolved by id rather than trusting an index captured earlier.
+    const QString selectId = selectTrack >= 0 && selectTrack < m_project.tracks().size()
+                                     && selectClip >= 0
+                                     && selectClip < m_project.tracks().at(selectTrack).clips.size()
+                                 ? m_project.tracks().at(selectTrack).clips.at(selectClip).id
+                                 : QString();
+    for (const auto &pending : std::as_const(pendingMasks)) {
+        int maskTrack = -1;
+        int maskClip = -1;
+        if (findClipById(m_project, pending.first, &maskTrack, &maskClip))
+            drift::addLinkedMask(m_project, maskTrack, maskClip, pending.second);
+    }
+    if (!selectId.isEmpty()) {
+        int foundTrack = -1;
+        int foundClip = -1;
+        if (findClipById(m_project, selectId, &foundTrack, &foundClip)) {
+            selectTrack = foundTrack;
+            selectClip = foundClip;
+        }
+    }
+
     m_selectedTrack = selectTrack;
     m_selectedClip = selectClip;
     m_selection = {qMakePair(selectTrack, selectClip)};
@@ -11630,8 +13787,8 @@ void AppController::applyEffectTemplate(int trackIndex, int clipIndex, const QSt
         return;
     }
 
-    const bool needsSegment =
-        (entry->requiresSegmentation || entry->usesMultiTrack()) && !clipHasMatte(clip);
+    const bool needsSegment = (entry->requiresSegmentation || entry->usesMultiTrack())
+                              && !clipHasMatte(m_project, trackIndex, clipIndex);
     if (needsSegment) {
         if (!segmentationAvailable()) {
             setLastMessage(
@@ -11656,6 +13813,11 @@ void AppController::removeEffect(int trackIndex, int clipIndex, int effectIndex)
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::VideoEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11676,6 +13838,11 @@ void AppController::setEffectEnabled(int trackIndex, int clipIndex, int effectIn
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::VideoEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11698,6 +13865,11 @@ void AppController::moveEffect(int trackIndex, int clipIndex, int fromIndex, int
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::VideoEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11722,6 +13894,11 @@ void AppController::setEffectParam(int trackIndex, int clipIndex, int effectInde
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::VideoEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11758,6 +13935,11 @@ void AppController::setEffectColorParam(int trackIndex, int clipIndex, int effec
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::VideoEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11792,6 +13974,11 @@ void AppController::setEffectStringParam(int trackIndex, int clipIndex, int effe
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::VideoEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11896,11 +14083,28 @@ void AppController::addAudioEffect(int trackIndex, int clipIndex, const QString 
 
     const drift::Effect effect = audioEffectFromCatalogEntry(*def, {});
 
+    // The parent track is about to be addressed by id, so it needs one before the snapshot.
+    m_project.ensureTrackIds();
+    // Snapshot first: creating the lane is part of the edit, so undo must take it back out
+    // along with the effect rather than leaving an empty row behind.
     const drift::Project before = m_project;
-    track.clips[clipIndex].audioEffects.append(effect);
-    m_selectedTrack = trackIndex;
-    m_selectedClip = clipIndex;
-    m_selection = {qMakePair(trackIndex, clipIndex)};
+
+    int hostTrack = trackIndex;
+    int hostClip = clipIndex;
+    if (!redirectToEffectHost(&hostTrack, &hostClip, drift::AdjustmentKind::AudioEffects,
+                              /*create=*/true)) {
+        return;
+    }
+    m_project.tracks()[hostTrack].clips[hostClip].audioEffects.append(effect);
+
+    // Selection moves to the adjustment carrying the stack — the Audio FX tab is no longer
+    // offered for the clip the effect was aimed at, so nothing else would show it.
+    // redirectToEffectHost already returns post-insert indices, and normalizeProjectStructure
+    // carries the selection across any reorder by track id.
+    m_selectedTrack = hostTrack;
+    m_selectedClip = hostClip;
+    m_selection = {qMakePair(hostTrack, hostClip)};
+
     pushProjectEdit(before, tr("Add audio effect"));
     finishEdit(tr("Audio effect added"));
 }
@@ -11909,6 +14113,11 @@ void AppController::removeAudioEffect(int trackIndex, int clipIndex, int effectI
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::AudioEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11928,6 +14137,11 @@ void AppController::setAudioEffectEnabled(int trackIndex, int clipIndex, int eff
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::AudioEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11951,6 +14165,11 @@ void AppController::moveAudioEffect(int trackIndex, int clipIndex, int fromIndex
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::AudioEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11974,6 +14193,11 @@ void AppController::previewSetAudioEffectParam(int trackIndex, int clipIndex, in
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::AudioEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -11999,6 +14223,11 @@ void AppController::setAudioEffectParam(int trackIndex, int clipIndex, int effec
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return;
+    // The stack lives on the adjustment linked to this clip, not on the clip.
+    if (!redirectToEffectHost(&trackIndex, &clipIndex, drift::AdjustmentKind::AudioEffects,
+                              /*create=*/false)) {
+        return;
+    }
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
@@ -12033,17 +14262,27 @@ drift::EffectStackPreset AppController::effectStackFor(int trackIndex, int clipI
     // that is always present beats a reader that has to ask why it is missing.
     stack.sourceDurationUs = clip.timelineDuration;
 
+    // The stacks live on the adjustments linked to this clip. Indices match what the inspector
+    // shows, because a clip has at most one linked adjustment per kind.
+    const drift::Clip *videoHost =
+        effectHostClip(trackIndex, clipIndex, drift::AdjustmentKind::VideoEffects);
+    const drift::Clip *audioHost =
+        effectHostClip(trackIndex, clipIndex, drift::AdjustmentKind::AudioEffects);
+    const QList<drift::Effect> videoEffects = videoHost ? videoHost->effects : clip.effects;
+    const QList<drift::Effect> audioEffects = audioHost ? audioHost->audioEffects
+                                                        : clip.audioEffects;
+
     // Both indices unset means the whole clip; otherwise exactly one effect, on its own side.
     const bool wholeClip = effectIndex < 0 && audioEffectIndex < 0;
     if (wholeClip) {
-        stack.effects = clip.effects;
-        stack.audioEffects = clip.audioEffects;
+        stack.effects = videoEffects;
+        stack.audioEffects = audioEffects;
         return stack;
     }
-    if (effectIndex >= 0 && effectIndex < clip.effects.size())
-        stack.effects.append(clip.effects.at(effectIndex));
-    if (audioEffectIndex >= 0 && audioEffectIndex < clip.audioEffects.size())
-        stack.audioEffects.append(clip.audioEffects.at(audioEffectIndex));
+    if (effectIndex >= 0 && effectIndex < videoEffects.size())
+        stack.effects.append(videoEffects.at(effectIndex));
+    if (audioEffectIndex >= 0 && audioEffectIndex < audioEffects.size())
+        stack.audioEffects.append(audioEffects.at(audioEffectIndex));
     return stack;
 }
 
@@ -12109,17 +14348,82 @@ void AppController::applyEffectStack(int trackIndex, int clipIndex,
     // Audio params are not keyframable, so only the video half moves.
     drift::rescaleEffectKeyframes(video, stack.sourceDurationUs, targetDurationUs);
 
+    m_project.ensureTrackIds();
+    const QString targetTrackId = m_project.tracks().at(trackIndex).id;
+    const QString targetClipId = m_project.tracks().at(trackIndex).clips.at(clipIndex).id;
+
     const drift::Project before = m_project;
-    // Indexed after the snapshot, not before: the non-const operator[] detaches each container on
-    // the way down, which is what keeps the append out of `before`.
-    drift::Clip &clip = m_project.tracks()[trackIndex].clips[clipIndex];
+
     // Append, never replace. Appending is also what lets the keyframe graph's hidden-property set
-    // stand: every existing "fx.<n>.<key>" still addresses the effect it did before.
-    clip.effects.append(video);
-    clip.audioEffects.append(audio);
-    m_selectedTrack = trackIndex;
-    m_selectedClip = clipIndex;
-    m_selection = {qMakePair(trackIndex, clipIndex)};
+    // stand: every existing "fx.<n>.<key>" still addresses the effect it did before. Each half
+    // goes to the adjustment linked to this clip for that kind, minted here if there is none.
+    // Where the selection lands afterwards: the stack is only visible in the inspector of the
+    // adjustment holding it, and the video half is the one the user is usually after.
+    drift::ClipRef selectHost;
+    if (!video.isEmpty()) {
+        int hostTrack = trackIndex;
+        int hostClip = clipIndex;
+        if (redirectToEffectHost(&hostTrack, &hostClip, drift::AdjustmentKind::VideoEffects,
+                                 /*create=*/true)) {
+            m_project.tracks()[hostTrack].clips[hostClip].effects.append(video);
+            selectHost = {hostTrack, hostClip};
+        }
+    }
+    if (!audio.isEmpty()) {
+        // Re-resolved from ids: minting the video host above may have inserted a track.
+        const int audioTrackIndex = m_project.trackIndexById(targetTrackId);
+        int audioClipIndex = -1;
+        if (audioTrackIndex >= 0) {
+            const drift::Track &owner = m_project.tracks().at(audioTrackIndex);
+            for (int c = 0; c < owner.clips.size(); ++c) {
+                if (owner.clips.at(c).id == targetClipId) {
+                    audioClipIndex = c;
+                    break;
+                }
+            }
+        }
+        if (audioClipIndex >= 0) {
+            int hostTrack = audioTrackIndex;
+            int hostClip = audioClipIndex;
+            if (redirectToEffectHost(&hostTrack, &hostClip, drift::AdjustmentKind::AudioEffects,
+                                     /*create=*/true)) {
+                m_project.tracks()[hostTrack].clips[hostClip].audioEffects.append(audio);
+                // Minting the video host above can shift indices, so the video ref is re-resolved
+                // by id below rather than trusted here. An audio-only stack has nowhere else to go.
+                if (selectHost.trackIndex < 0)
+                    selectHost = {hostTrack, hostClip};
+            }
+        }
+    }
+
+    // Re-resolved by id: the audio host's lane insert may have moved the video host.
+    int selectedTrack = -1;
+    int selectedClip = -1;
+    if (selectHost.trackIndex >= 0) {
+        const QString hostId = m_project.tracks()
+                                   .at(selectHost.trackIndex)
+                                   .clips.at(selectHost.clipIndex)
+                                   .id;
+        findClipById(m_project, hostId, &selectedTrack, &selectedClip);
+    }
+    if (selectedClip < 0) {
+        // Nothing applied, or the host vanished: leave the selection on the target clip.
+        selectedTrack = m_project.trackIndexById(targetTrackId);
+        if (selectedTrack >= 0) {
+            const drift::Track &owner = m_project.tracks().at(selectedTrack);
+            for (int c = 0; c < owner.clips.size(); ++c) {
+                if (owner.clips.at(c).id == targetClipId) {
+                    selectedClip = c;
+                    break;
+                }
+            }
+        }
+    }
+    if (selectedClip >= 0) {
+        m_selectedTrack = selectedTrack;
+        m_selectedClip = selectedClip;
+        m_selection = {qMakePair(selectedTrack, selectedClip)};
+    }
     pushProjectEdit(before, undoLabel);
     finishEdit(undoLabel);
 
@@ -12197,6 +14501,317 @@ void AppController::pasteEffectsFromClipboard(int trackIndex, int clipIndex)
         return;
     }
     applyEffectStack(trackIndex, clipIndex, stack, tr("Paste effects"));
+}
+
+bool AppController::canPasteAttributes() const
+{
+    if (m_clipboard.isEmpty())
+        return false;
+    if (!m_selection.isEmpty())
+        return true;
+    return isValidClipIndex(m_selectedTrack, m_selectedClip);
+}
+
+QVariantMap AppController::clipboardAttributes() const
+{
+    QVariantMap out;
+    if (m_clipboard.isEmpty()) {
+        out.insert(QStringLiteral("hasClip"), false);
+        return out;
+    }
+
+    const ClipboardItem &item = m_clipboard.constFirst();
+    const drift::Clip &c = item.clip;
+    out.insert(QStringLiteral("hasClip"), true);
+    out.insert(QStringLiteral("clipName"), c.name.isEmpty() ? tr("Clip") : c.name);
+
+    const bool isVisual = (c.type != drift::ClipType::Audio);
+    out.insert(QStringLiteral("isVisual"), isVisual);
+
+    const bool hasTransform = isVisual && (!c.transformX.isEmpty() || !c.transformY.isEmpty()
+                                           || !c.transformW.isEmpty() || !c.transformH.isEmpty()
+                                           || !c.rotation.isEmpty() || !c.opacity.isEmpty()
+                                           || c.blendMode != drift::BlendMode::Normal
+                                           || c.flipH || c.flipV
+                                           || !item.masks.isEmpty()
+                                           || c.animIn.kind != drift::ClipAnimKind::None
+                                           || c.animOut.kind != drift::ClipAnimKind::None);
+    out.insert(QStringLiteral("hasTransform"), hasTransform);
+
+    const bool isAudioOrVideo = (c.type == drift::ClipType::Video || c.type == drift::ClipType::Audio);
+    const bool hasSpeed = isAudioOrVideo && ((std::abs(c.speed - 1.0) > 0.001) || c.hasSpeedCurve() || c.reverse);
+    out.insert(QStringLiteral("isAudioOrVideo"), isAudioOrVideo);
+    out.insert(QStringLiteral("hasSpeed"), hasSpeed);
+    out.insert(QStringLiteral("speed"), c.speed);
+    out.insert(QStringLiteral("hasSpeedCurve"), c.hasSpeedCurve());
+    out.insert(QStringLiteral("reverse"), c.reverse);
+
+    const bool hasVolume = isAudioOrVideo && (!c.volume.isEmpty() || c.fadeInUs > 0 || c.fadeOutUs > 0);
+    out.insert(QStringLiteral("hasVolume"), hasVolume);
+
+    out.insert(QStringLiteral("hasEffects"), !c.effects.isEmpty());
+    out.insert(QStringLiteral("effectCount"), c.effects.size());
+
+    out.insert(QStringLiteral("hasAudioEffects"), !c.audioEffects.isEmpty());
+    out.insert(QStringLiteral("audioEffectCount"), c.audioEffects.size());
+
+    out.insert(QStringLiteral("hasTransitions"), !item.transitions.isEmpty());
+    out.insert(QStringLiteral("transitionCount"), item.transitions.size());
+
+    int count = 0;
+    if (!m_selection.isEmpty()) {
+        for (const auto &pair : m_selection) {
+            if (isValidClipIndex(pair.first, pair.second))
+                ++count;
+        }
+    } else if (isValidClipIndex(m_selectedTrack, m_selectedClip)) {
+        count = 1;
+    }
+    out.insert(QStringLiteral("targetClipCount"), count);
+
+    return out;
+}
+
+void AppController::requestPasteAttributes()
+{
+    if (!canPasteAttributes()) {
+        setLastMessage(tr("Copy a clip and select target clips first"), QStringLiteral("warning"));
+        return;
+    }
+    emit openPasteAttributesRequested();
+}
+
+void AppController::pasteAttributes(const QVariantMap &options)
+{
+    if (m_clipboard.isEmpty())
+        return;
+
+    const bool pasteTransform = options.value(QStringLiteral("transform"), false).toBool();
+    const bool pasteSpeed = options.value(QStringLiteral("speed"), false).toBool();
+    const bool pasteVolume = options.value(QStringLiteral("volume"), false).toBool();
+    const bool pasteEffects = options.value(QStringLiteral("effects"), false).toBool();
+    const bool pasteAudioEffects = options.value(QStringLiteral("audioEffects"), false).toBool();
+    const bool pasteTransitions = options.value(QStringLiteral("transitions"), false).toBool();
+    const bool replaceEffects = options.value(QStringLiteral("replaceEffects"), false).toBool();
+
+    if (!pasteTransform && !pasteSpeed && !pasteVolume && !pasteEffects && !pasteAudioEffects && !pasteTransitions)
+        return;
+
+    QList<QPair<int, int>> pairs;
+    if (!m_selection.isEmpty()) {
+        for (const auto &pair : m_selection) {
+            if (isValidClipIndex(pair.first, pair.second))
+                pairs.append(pair);
+        }
+    } else if (isValidClipIndex(m_selectedTrack, m_selectedClip)) {
+        pairs.append(qMakePair(m_selectedTrack, m_selectedClip));
+    }
+    if (pairs.isEmpty())
+        return;
+
+    const ClipboardItem &sourceItem = m_clipboard.constFirst();
+    const drift::Clip &sourceClip = sourceItem.clip;
+    const drift::TimeUs srcDurationUs = sourceClip.timelineDuration;
+
+    const drift::Project before = m_project;
+    bool anyModified = false;
+    int modifiedCount = 0;
+    QStringList missingEffectPacks;
+    QList<QPair<QString, QList<drift::Mask>>> pendingMasks;
+
+    for (const auto &pair : pairs) {
+        const int trackIdx = pair.first;
+        const int clipIdx = pair.second;
+        if (!isValidClipIndex(trackIdx, clipIdx))
+            continue;
+
+        drift::Track &track = m_project.tracks()[trackIdx];
+        drift::Clip &targetClip = track.clips[clipIdx];
+        bool clipModified = false;
+
+        // 1. Speed / Retime (applied first so target duration adjusts before keyframe scaling)
+        if (pasteSpeed && (targetClip.type == drift::ClipType::Video || targetClip.type == drift::ClipType::Audio)) {
+            if (sourceClip.hasSpeedCurve()) {
+                targetClip.speedCurve = sourceClip.speedCurve;
+                targetClip.reverse = sourceClip.reverse;
+                targetClip.syncDurationFromSpeedCurve();
+            } else {
+                targetClip.speed = sourceClip.speed;
+                targetClip.reverse = sourceClip.reverse;
+                targetClip.speedCurve.clear();
+                targetClip.syncSrcOutFromSpeed(sourceDurationForClip(targetClip));
+            }
+            syncLinkedPartnersFrom(m_project, targetClip);
+            clipModified = true;
+        }
+
+        const drift::TimeUs targetDurationUs = targetClip.timelineDuration;
+        const bool targetIsVisual = (targetClip.type != drift::ClipType::Audio);
+        const bool targetHasAudio = (targetClip.type == drift::ClipType::Video || targetClip.type == drift::ClipType::Audio);
+
+        // 2. Transform / Motion
+        if (pasteTransform && targetIsVisual) {
+            targetClip.transformX = rescaleKeyframeTrackTimes(sourceClip.transformX, srcDurationUs, targetDurationUs);
+            targetClip.transformY = rescaleKeyframeTrackTimes(sourceClip.transformY, srcDurationUs, targetDurationUs);
+            targetClip.transformW = rescaleKeyframeTrackTimes(sourceClip.transformW, srcDurationUs, targetDurationUs);
+            targetClip.transformH = rescaleKeyframeTrackTimes(sourceClip.transformH, srcDurationUs, targetDurationUs);
+            targetClip.rotation = rescaleKeyframeTrackTimes(sourceClip.rotation, srcDurationUs, targetDurationUs);
+            targetClip.opacity = rescaleKeyframeTrackTimes(sourceClip.opacity, srcDurationUs, targetDurationUs);
+            targetClip.blendMode = sourceClip.blendMode;
+            targetClip.flipH = sourceClip.flipH;
+            targetClip.flipV = sourceClip.flipV;
+            // Pinning a mask mints a lane, which inserts a track and invalidates `track` and
+            // `targetClip`. Queued by id and applied once the loop is done.
+            pendingMasks.append(qMakePair(targetClip.id, sourceItem.masks));
+            targetClip.animIn = sourceClip.animIn;
+            targetClip.animOut = sourceClip.animOut;
+            if (targetClip.animIn.durationUs > targetDurationUs)
+                targetClip.animIn.durationUs = targetDurationUs;
+            if (targetClip.animOut.durationUs > targetDurationUs)
+                targetClip.animOut.durationUs = targetDurationUs;
+            clipModified = true;
+        }
+
+        // 3. Audio / Volume & Fades
+        if (pasteVolume && targetHasAudio) {
+            targetClip.volume = rescaleKeyframeTrackTimes(sourceClip.volume, srcDurationUs, targetDurationUs);
+            targetClip.fadeInUs = qMin(sourceClip.fadeInUs, targetDurationUs);
+            targetClip.fadeOutUs = qMin(sourceClip.fadeOutUs, targetDurationUs);
+            targetClip.fadeCurve = sourceClip.fadeCurve;
+            targetClip.fadeShape = sourceClip.fadeShape;
+            clipModified = true;
+        }
+
+        // 4. Video Effects
+        if (pasteEffects && targetIsVisual && !sourceClip.effects.isEmpty()) {
+            QList<drift::Effect> video;
+            video.reserve(sourceClip.effects.size());
+            for (const drift::Effect &incoming : sourceClip.effects) {
+                if (const EffectPresetEntry *def = effectDefForId(incoming.catalogId)) {
+                    drift::Effect effect = effectFromCatalogEntry(*def, incoming.parameters);
+                    effect.paramKeyframes = incoming.paramKeyframes;
+                    effect.enabled = incoming.enabled;
+                    video.append(effect);
+                } else {
+                    video.append(incoming);
+                    if (!incoming.catalogId.isEmpty())
+                        missingEffectPacks.append(incoming.catalogId);
+                }
+            }
+            drift::rescaleEffectKeyframes(video, srcDurationUs, targetDurationUs);
+            if (replaceEffects) {
+                targetClip.effects = video;
+            } else {
+                targetClip.effects.append(video);
+            }
+            clipModified = true;
+        } else if (pasteEffects && targetIsVisual && replaceEffects && sourceClip.effects.isEmpty()) {
+            if (!targetClip.effects.isEmpty()) {
+                targetClip.effects.clear();
+                clipModified = true;
+            }
+        }
+
+        // 5. Audio Effects
+        if (pasteAudioEffects && targetHasAudio && !sourceClip.audioEffects.isEmpty()) {
+            QList<drift::Effect> audio;
+            audio.reserve(sourceClip.audioEffects.size());
+            for (const drift::Effect &incoming : sourceClip.audioEffects) {
+                if (const AudioEffectEntry *def = audioEffectDefForId(incoming.catalogId)) {
+                    drift::Effect effect = audioEffectFromCatalogEntry(*def, incoming.parameters);
+                    effect.enabled = incoming.enabled;
+                    audio.append(effect);
+                } else {
+                    audio.append(incoming);
+                    if (!incoming.catalogId.isEmpty())
+                        missingEffectPacks.append(incoming.catalogId);
+                }
+            }
+            if (replaceEffects) {
+                targetClip.audioEffects = audio;
+            } else {
+                targetClip.audioEffects.append(audio);
+            }
+            clipModified = true;
+        } else if (pasteAudioEffects && targetHasAudio && replaceEffects && sourceClip.audioEffects.isEmpty()) {
+            if (!targetClip.audioEffects.isEmpty()) {
+                targetClip.audioEffects.clear();
+                clipModified = true;
+            }
+        }
+
+        // 6. Transitions
+        if (pasteTransitions && !sourceItem.transitions.isEmpty() && trackAllowsTransitions(track.type)) {
+            const int partnerIndex = findTransitionPartnerIndex(track, clipIdx);
+            if (partnerIndex >= 0) {
+                const drift::Clip &fromClip = track.clips.at(clipIdx);
+                const drift::Clip &toClip = track.clips.at(partnerIndex);
+                for (const drift::Transition &srcTrans : sourceItem.transitions) {
+                    bool found = false;
+                    for (drift::Transition &existing : track.transitions) {
+                        if (existing.fromClipId == fromClip.id && existing.toClipId == toClip.id) {
+                            existing.kindId = srcTrans.kindId;
+                            existing.durationUs = srcTrans.durationUs;
+                            existing.parameters = srcTrans.parameters;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        drift::Transition transition;
+                        transition.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                        transition.fromClipId = fromClip.id;
+                        transition.toClipId = toClip.id;
+                        transition.kindId = srcTrans.kindId;
+                        transition.durationUs = srcTrans.durationUs;
+                        transition.parameters = srcTrans.parameters;
+                        track.transitions.append(transition);
+                    }
+                    clipModified = true;
+                }
+            }
+        }
+
+        if (clipModified) {
+            anyModified = true;
+            ++modifiedCount;
+        }
+    }
+
+    if (!anyModified)
+        return;
+
+    // Paste replaces the target's whole stack with the source's, rather than merging the two:
+    // an empty list clears what the target had, which is what "paste transform from a clip with
+    // no mask" should mean.
+    for (const auto &pending : std::as_const(pendingMasks)) {
+        int maskTrack = -1;
+        int maskClip = -1;
+        if (!findClipById(m_project, pending.first, &maskTrack, &maskClip))
+            continue;
+        drift::clearLinkedMasks(m_project, maskTrack, maskClip);
+        for (const drift::Mask &mask : pending.second) {
+            // Each pin can insert a lane, which moves the clip; re-resolve before the next one.
+            if (findClipById(m_project, pending.first, &maskTrack, &maskClip))
+                drift::addLinkedMask(m_project, maskTrack, maskClip, mask);
+        }
+    }
+
+    pushProjectEdit(before, tr("Paste attributes"));
+    finishEdit(tr("Pasted attributes onto %n clip(s)", "", modifiedCount));
+
+    if (!missingEffectPacks.isEmpty()) {
+        missingEffectPacks.removeDuplicates();
+        missingEffectPacks.sort();
+        const QString sample = missingEffectPacks.mid(0, 3).join(QStringLiteral(", "));
+        setLastMessage(missingEffectPacks.size() == 1
+                           ? tr("Pasted effects use “%1”, which isn’t installed — it "
+                                "won’t show. Open Extras to install it.").arg(sample)
+                           : tr("Pasted effects use %1 packs that aren’t installed — they "
+                                "won’t show. Open Extras to install them.")
+                                 .arg(missingEffectPacks.size()),
+                       QStringLiteral("warning"));
+    }
 }
 
 QVariantList AppController::userEffectPresets() const
@@ -12437,6 +15052,25 @@ bool AppController::trackShowWaveform(int trackIndex) const
     return m_project.tracks().at(trackIndex).showWaveform;
 }
 
+void AppController::setTrackShowChannelWaveforms(int trackIndex, bool show)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return;
+    if (m_project.tracks()[trackIndex].showChannelWaveforms == show)
+        return;
+
+    // View-only preference: mutate and refresh without an undo entry.
+    m_project.tracks()[trackIndex].showChannelWaveforms = show;
+    emit tracksChanged();
+}
+
+bool AppController::trackShowChannelWaveforms(int trackIndex) const
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return false;
+    return m_project.tracks().at(trackIndex).showChannelWaveforms;
+}
+
 void AppController::setTrackHeightScale(int trackIndex, double scale)
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
@@ -12449,6 +15083,66 @@ void AppController::setTrackHeightScale(int trackIndex, double scale)
     // View-only preference, like showWaveform: no undo entry.
     m_project.tracks()[trackIndex].heightScale = clamped;
     emit tracksChanged();
+}
+
+int AppController::trackRowHeight(int trackIndex, const QVariantMap &metrics) const
+{
+    const auto metric = [&metrics](const char *key, double fallback) {
+        const QVariant value = metrics.value(QLatin1String(key));
+        return value.isValid() ? value.toDouble() : fallback;
+    };
+    const double baseVideo = metric("video", 65.0);
+
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return qRound(baseVideo);
+
+    const drift::Track &track = m_project.tracks().at(trackIndex);
+    // A lane is drawn inside its parent's row, so it takes no row of its own. Returning 0 rather
+    // than filtering lanes out of the model is what keeps the flat (trackIndex, clipIndex)
+    // addressing the rest of the app is built on.
+    if (track.isAdjustmentLane())
+        return 0;
+
+    double base = baseVideo;
+    switch (track.type) {
+    case drift::TrackType::Audio:
+        base = metric("audio", 50.0);
+        break;
+    case drift::TrackType::Text:
+        base = metric("text", 25.0);
+        break;
+    case drift::TrackType::Subtitle:
+        base = metric("subtitle", 25.0);
+        break;
+    case drift::TrackType::Shape:
+        base = metric("shape", 50.0);
+        break;
+    case drift::TrackType::Adjustment:
+        // Nothing to show but the effects it carries, so it gets a label's worth of height
+        // rather than a video track's.
+        base = metric("adjustment", 28.0);
+        break;
+    case drift::TrackType::Video:
+        break;
+    }
+
+    const double scale = track.heightScale > 0 ? track.heightScale : 1.0;
+    const double lanes =
+        drift::adjustmentLaneIndexes(m_project, trackIndex).size() * metric("lane", 20.0);
+    return qRound(qMax(20.0, base * scale + lanes));
+}
+
+int AppController::adjustmentLaneCount(int trackIndex) const
+{
+    return drift::adjustmentLaneIndexes(m_project, trackIndex).size();
+}
+
+QVariantList AppController::adjustmentLanes(int trackIndex) const
+{
+    QVariantList out;
+    for (const int laneIndex : drift::adjustmentLaneIndexes(m_project, trackIndex))
+        out.append(laneIndex);
+    return out;
 }
 
 double AppController::trackHeightScale(int trackIndex) const
@@ -12520,26 +15214,19 @@ void AppController::moveTrack(int fromIndex, int toIndex)
         return;
 
     const drift::Project before = m_project;
+    m_project.ensureTrackIds();
+
+    // Captured by id, not remapped by index: normalizeAdjustmentLanes re-gathers each track's
+    // nested lanes around it afterwards, so the destination index no longer describes where any
+    // particular track ended up. Moving a track takes its lanes with it, which is the point.
+    const QList<QPair<QString, int>> selection = captureSelectionByTrackId();
+    const QString transitionTrackId = trackIdAt(m_selectedTransitionTrack);
+
     m_project.tracks().move(fromIndex, toIndex);
+    normalizeAdjustmentLanes(m_project);
 
-    auto remap = [fromIndex, toIndex](int index) -> int {
-        if (index < 0)
-            return index;
-        if (index == fromIndex)
-            return toIndex;
-        if (fromIndex < toIndex) {
-            if (index > fromIndex && index <= toIndex)
-                return index - 1;
-        } else if (index >= toIndex && index < fromIndex) {
-            return index + 1;
-        }
-        return index;
-    };
-
-    m_selectedTrack = remap(m_selectedTrack);
-    m_selectedTransitionTrack = remap(m_selectedTransitionTrack);
-    for (QPair<int, int> &pair : m_selection)
-        pair.first = remap(pair.first);
+    restoreSelectionByTrackId(selection);
+    m_selectedTransitionTrack = m_project.trackIndexById(transitionTrackId);
 
     pushProjectEdit(before, tr("Move track"));
     finishEdit(tr("Track moved"));
@@ -12551,35 +15238,26 @@ void AppController::removeTrack(int trackIndex)
         return;
 
     const drift::Project before = m_project;
-    m_project.tracks().removeAt(trackIndex);
+    m_project.ensureTrackIds();
 
-    // Indices at or after the removed track shift down by one; anything that
-    // pointed at the removed track itself is now dangling and gets cleared.
-    auto remap = [trackIndex](int index) -> int {
-        if (index < 0)
-            return index;
-        if (index == trackIndex)
-            return -1;
-        if (index > trackIndex)
-            return index - 1;
-        return index;
-    };
+    const QList<QPair<QString, int>> selection = captureSelectionByTrackId();
+    const QString transitionTrackId = trackIdAt(m_selectedTransitionTrack);
 
-    m_selectedTransitionTrack = remap(m_selectedTransitionTrack);
-    for (int i = m_selection.size() - 1; i >= 0; --i) {
-        const int mapped = remap(m_selection.at(i).first);
-        if (mapped < 0)
-            m_selection.removeAt(i);
-        else
-            m_selection[i].first = mapped;
+    // Nested lanes go with the track. They exist only to modify it, so leaving them behind would
+    // strand effects with nothing to apply to — and ensureTrackIds() would then quietly promote
+    // them to standalone adjustments affecting the whole canvas.
+    const QString removedId = m_project.tracks().at(trackIndex).id;
+    for (int i = m_project.tracks().size() - 1; i >= 0; --i) {
+        const drift::Track &track = m_project.tracks().at(i);
+        if (track.id == removedId
+            || (track.isAdjustmentLane() && track.parentTrackId == removedId)) {
+            m_project.tracks().removeAt(i);
+        }
     }
-    if (m_selection.isEmpty()) {
-        m_selectedTrack = -1;
-        m_selectedClip = -1;
-    } else {
-        m_selectedTrack = m_selection.constLast().first;
-        m_selectedClip = m_selection.constLast().second;
-    }
+    normalizeAdjustmentLanes(m_project);
+
+    restoreSelectionByTrackId(selection);
+    m_selectedTransitionTrack = m_project.trackIndexById(transitionTrackId);
 
     pushProjectEdit(before, tr("Delete track"));
     finishEdit(tr("Track deleted"));
@@ -12798,6 +15476,36 @@ int previousBookmarkIndex(const QList<drift::Bookmark> &bookmarks, drift::TimeUs
     return bestIndex >= 0 ? bestIndex : latestIndex;
 }
 
+// Nearest cut point strictly after (direction > 0) or strictly before (direction < 0)
+// `fromUs`, or `fromUs` itself when there is none. The candidates are every clip edge on
+// every track plus both ends of the timeline — the same set snapTime() collects, so
+// walking the cuts by keyboard stops exactly where a dragged clip would snap. Clips are
+// not stored in time order, so this compares values rather than trusting indices.
+drift::TimeUs adjacentEditPoint(const drift::Project &project, drift::TimeUs fromUs, int direction)
+{
+    drift::TimeUs best = fromUs;
+    bool found = false;
+
+    auto consider = [&](drift::TimeUs candidate) {
+        if (direction > 0 ? candidate <= fromUs : candidate >= fromUs)
+            return;
+        if (!found || (direction > 0 ? candidate < best : candidate > best)) {
+            best = candidate;
+            found = true;
+        }
+    };
+
+    consider(0);
+    consider(project.durationUs());
+    for (const drift::Track &track : project.tracks()) {
+        for (const drift::Clip &clip : track.clips) {
+            consider(clip.timelineStart);
+            consider(clip.timelineEnd());
+        }
+    }
+    return found ? best : fromUs;
+}
+
 } // namespace
 
 void AppController::goToNextBookmark()
@@ -12812,6 +15520,16 @@ void AppController::goToPreviousBookmark()
     const int index = previousBookmarkIndex(m_project.bookmarks(), m_playheadUs);
     if (index >= 0)
         goToBookmark(index);
+}
+
+void AppController::goToNextEdit()
+{
+    setPlayheadUs(adjacentEditPoint(m_project, m_playheadUs, 1));
+}
+
+void AppController::goToPreviousEdit()
+{
+    setPlayheadUs(adjacentEditPoint(m_project, m_playheadUs, -1));
 }
 
 void AppController::toggleBookmarkAtPlayhead()
@@ -12962,6 +15680,14 @@ void AppController::copySelection()
         ClipboardItem item;
         item.clip = m_project.tracks().at(pair.first).clips.at(pair.second);
         item.trackType = m_project.tracks().at(pair.first).type;
+        for (const drift::Transition &tr : m_project.tracks().at(pair.first).transitions) {
+            if (tr.fromClipId == item.clip.id || tr.toClipId == item.clip.id)
+                item.transitions.append(tr);
+        }
+        for (const drift::ClipRef &ref :
+             drift::linkedMaskAdjustments(m_project, pair.first, pair.second)) {
+            item.masks.append(m_project.tracks().at(ref.trackIndex).clips.at(ref.clipIndex).mask);
+        }
         m_clipboard.append(item);
     }
 }
@@ -13024,22 +15750,50 @@ void AppController::nudgeSelection(double deltaSeconds)
         return;
     const drift::Project before = m_project;
     const drift::TimeUs deltaUs = drift::secondsToUs(deltaSeconds);
+
+    drift::TimeUs minGroupStartUs = -1;
+    for (const QPair<int, int> &pair : pairs) {
+        if (isValidClipIndex(pair.first, pair.second)) {
+            const drift::TimeUs s = m_project.tracks().at(pair.first).clips.at(pair.second).timelineStart;
+            if (minGroupStartUs < 0 || s < minGroupStartUs)
+                minGroupStartUs = s;
+        }
+    }
+    drift::TimeUs clampedDeltaUs = deltaUs;
+    if (clampedDeltaUs < 0 && minGroupStartUs >= 0 && -clampedDeltaUs > minGroupStartUs) {
+        clampedDeltaUs = -minGroupStartUs;
+    }
+
     QSet<QString> movedIds;
     for (const QPair<int, int> &pair : pairs) {
         if (!isValidClipIndex(pair.first, pair.second))
             continue;
         drift::Clip &clip = m_project.tracks()[pair.first].clips[pair.second];
-        clip.timelineStart = qMax<drift::TimeUs>(0, clip.timelineStart + deltaUs);
+        clip.timelineStart = qMax<drift::TimeUs>(0, clip.timelineStart + clampedDeltaUs);
         movedIds.insert(clip.id);
     }
     if (!m_allowClipOverlap) {
+        drift::TimeUs maxPushRight = 0;
         for (const QPair<int, int> &pair : pairs) {
             if (!isValidClipIndex(pair.first, pair.second))
                 continue;
-            drift::Track &track = m_project.tracks()[pair.first];
-            drift::Clip &clip = track.clips[pair.second];
-            clip.timelineStart = drift::clampClipStartNoOverlap(track, movedIds, clip.timelineStart,
-                                                                clip.timelineDuration);
+            const drift::Track &track = m_project.tracks().at(pair.first);
+            const drift::Clip &clip = track.clips.at(pair.second);
+            const drift::TimeUs clampedStart = drift::clampClipStartNoOverlap(track, movedIds, clip.timelineStart,
+                                                                              clip.timelineDuration);
+            if (clampedStart > clip.timelineStart) {
+                const drift::TimeUs push = clampedStart - clip.timelineStart;
+                if (push > maxPushRight)
+                    maxPushRight = push;
+            }
+        }
+        if (maxPushRight > 0) {
+            for (const QPair<int, int> &pair : pairs) {
+                if (!isValidClipIndex(pair.first, pair.second))
+                    continue;
+                drift::Clip &clip = m_project.tracks()[pair.first].clips[pair.second];
+                clip.timelineStart += maxPushRight;
+            }
         }
     }
     pushProjectEdit(before, tr("Nudge selection"));
@@ -13049,6 +15803,19 @@ void AppController::nudgeSelection(double deltaSeconds)
 bool AppController::selectionContains(int trackIndex, int clipIndex) const
 {
     return m_selection.contains(qMakePair(trackIndex, clipIndex));
+}
+
+double AppController::selectionEarliestStartSeconds() const
+{
+    drift::TimeUs minStart = -1;
+    for (const QPair<int, int> &pair : m_selection) {
+        if (!isValidClipIndex(pair.first, pair.second))
+            continue;
+        const drift::TimeUs s = m_project.tracks().at(pair.first).clips.at(pair.second).timelineStart;
+        if (minStart < 0 || s < minStart)
+            minStart = s;
+    }
+    return minStart >= 0 ? drift::usToSeconds(minStart) : 0.0;
 }
 
 void AppController::setTimelineTrimCursor(int side, int heightPx)
@@ -13190,6 +15957,8 @@ void AppController::triggerAction(const QString &actionId)
         copyClipEffectsToClipboard(m_selectedTrack, m_selectedClip);
     else if (actionId == QStringLiteral("pasteEffects"))
         pasteEffectsFromClipboard(m_selectedTrack, m_selectedClip);
+    else if (actionId == QStringLiteral("pasteAttributes"))
+        requestPasteAttributes();
     else if (actionId == QStringLiteral("split"))
         splitAtPlayhead();
     else if (actionId == QStringLiteral("merge"))
@@ -13228,6 +15997,25 @@ void AppController::triggerAction(const QString &actionId)
         clearWorkArea();
     else if (actionId == QStringLiteral("toggleLoop"))
         toggleLoopWorkArea();
+    else if (actionId == QStringLiteral("previousEdit"))
+        goToPreviousEdit();
+    else if (actionId == QStringLiteral("nextEdit"))
+        goToNextEdit();
+    else if (actionId == QStringLiteral("goToStart"))
+        setPlayheadUs(0);
+    else if (actionId == QStringLiteral("deleteLeft"))
+        splitSelectedClipLeft();
+    else if (actionId == QStringLiteral("deleteRight"))
+        splitSelectedClipRight();
+    else if (actionId == QStringLiteral("speedUp")) {
+        m_playback.stepPlaybackRate(1);
+        // Reviewing long footage is the whole point of the key, so from a stopped transport
+        // the first press starts rolling rather than only arming a rate for later. This has
+        // to follow the step: setPlaybackRate restarts the transport itself when it was
+        // already playing, and would otherwise undo the resume.
+        setPlaying(true);
+    } else if (actionId == QStringLiteral("speedDown"))
+        m_playback.stepPlaybackRate(-1);
 }
 
 void AppController::undo()
@@ -13402,6 +16190,83 @@ QVariantList AppController::waveformPeaksRange(const QString &path, double start
     return reduceDensePeaks(span, 0, span.size(), span.size());
 }
 
+QVariantMap AppController::waveformChannelPeaksRange(const QString &path, double startSeconds,
+                                                     double durSeconds, int buckets,
+                                                     int audioStreamIndex) const
+{
+    QVariantMap result;
+    result.insert(QStringLiteral("channels"), 0);
+    result.insert(QStringLiteral("buckets"), 0);
+    if (path.isEmpty() || durSeconds <= 0.0 || buckets <= 0)
+        return result;
+
+    const int channels = m_waveformBlocks.channelCount(path, audioStreamIndex);
+    if (channels <= 0) {
+        // Nothing decoded yet. Ask for the merged envelope anyway so the block gets queued and
+        // rangeReady() brings the caller back once the layout is known.
+        m_waveformBlocks.range(path, startSeconds, durSeconds, qBound(1, buckets, 4096),
+                               audioStreamIndex);
+        return result;
+    }
+
+    const int outCount = qBound(1, buckets, 4096);
+    QVariantList peaks;
+    peaks.reserve(channels * outCount);
+    int decodedBuckets = -1;
+    for (int c = 0; c < channels; ++c) {
+        const QVector<float> span =
+            m_waveformBlocks.range(path, startSeconds, durSeconds, outCount, audioStreamIndex, c);
+        // Same 48 dB display curve and visibility floor as the merged lane, deliberately not
+        // renormalized per channel: a silent surround has to read as quieter than the dialogue
+        // rather than being stretched to look like it.
+        const QVariantList reduced = reduceDensePeaks(span, 0, span.size(), span.size());
+        // The caller indexes this as peaks[c * buckets + b], which is only meaningful if every
+        // channel came back the same length. They always do — range() returns exactly outCount
+        // or nothing — but a ragged result would be read as garbage rather than as missing data.
+        if (decodedBuckets >= 0 && reduced.size() != decodedBuckets)
+            return result;
+        decodedBuckets = reduced.size();
+        peaks.append(reduced);
+    }
+
+    if (decodedBuckets <= 0)
+        return result;
+
+    result.insert(QStringLiteral("channels"), channels);
+    result.insert(QStringLiteral("buckets"), decodedBuckets);
+    result.insert(QStringLiteral("names"), m_waveformBlocks.channelNames(path, audioStreamIndex));
+    result.insert(QStringLiteral("peaks"), peaks);
+    return result;
+}
+
+int AppController::waveformChannelCount(const QString &path, int audioStreamIndex) const
+{
+    if (path.isEmpty())
+        return 0;
+    return m_waveformBlocks.channelCount(path, audioStreamIndex);
+}
+
+int AppController::trackMaxChannelCount(int trackIndex) const
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return 0;
+
+    int widest = 0;
+    for (const drift::Clip &clip : m_project.tracks().at(trackIndex).clips) {
+        if (clip.path.isEmpty())
+            continue;
+        // From the container's own metadata, not from the block cache: the cache only learns the
+        // layout once a block has decoded, which is after the header has already been built and
+        // is signalled by waveformRangeReady rather than tracksChanged — so a control bound to
+        // this would stay hidden until some unrelated edit happened to re-evaluate it. The probe
+        // is memoized, so asking per clip costs one container open per distinct file.
+        const QList<StreamInfo> streams = cachedAudioStreams(clip.path);
+        if (clip.audioStreamIndex >= 0 && clip.audioStreamIndex < streams.size())
+            widest = qMax(widest, streams.at(clip.audioStreamIndex).channels);
+    }
+    return widest;
+}
+
 QVariantList AppController::subtitleWaveformPeaks(double startSeconds, double durSeconds,
                                                   int sampleCount) const
 {
@@ -13472,7 +16337,7 @@ QByteArray AppController::audioLayoutFingerprint() const
             continue;
         hash.addData(track.muted ? "m" : "-");
         for (const drift::Clip &clip : track.clips) {
-            const QString row = QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9")
+            const QString row = QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10")
                                     .arg(clip.assetId)
                                     .arg(clip.timelineStart)
                                     .arg(clip.timelineDuration)
@@ -13481,7 +16346,8 @@ QByteArray AppController::audioLayoutFingerprint() const
                                     .arg(clip.speed)
                                     .arg(clip.reverse ? 1 : 0)
                                     .arg(clip.suppressEmbeddedAudio ? 1 : 0)
-                                    .arg(clip.audioEffects.size());
+                                    .arg(clip.audioEffects.size())
+                                    .arg(clip.pan);
             hash.addData(row.toUtf8());
             // Tangents shape the volume ramp, so they belong in the digest alongside the values.
             for (const auto &kv : clip.volume.keyframes().asKeyValueRange()) {
@@ -13581,9 +16447,9 @@ void AppController::applyBeatAnalysis(const AudioBeatAnalysis &analysis, double 
             const drift::Track &track = m_project.tracks()[pending.trackIndex];
             if (pending.clipIndex >= 0 && pending.clipIndex < track.clips.size()
                 && beatAnalysisReadyForClip(track.clips[pending.clipIndex], entry->sync)) {
-                const drift::Clip &clip = track.clips[pending.clipIndex];
                 const bool needsSegment =
-                    (entry->requiresSegmentation || entry->usesMultiTrack()) && !clipHasMatte(clip);
+                    (entry->requiresSegmentation || entry->usesMultiTrack())
+                    && !clipHasMatte(m_project, pending.trackIndex, pending.clipIndex);
                 if (needsSegment) {
                     if (segmentationAvailable() && !m_segmenting)
                         openSegmentationForTemplate(pending.trackIndex, pending.clipIndex);
@@ -13735,7 +16601,10 @@ QByteArray AppController::serializeProjectJson() const
     root.insert(QStringLiteral("snapEnabled"), m_snapEnabled);
     root.insert(QStringLiteral("rippleEnabled"), m_rippleEnabled);
     root.insert(QStringLiteral("allowClipOverlap"), m_allowClipOverlap);
-    root.insert(QStringLiteral("mediaGridMode"), m_mediaGridMode);
+    root.insert(QStringLiteral("mediaViewMode"), m_mediaViewMode);
+    // Still written so a project saved here opens with the right view in builds that
+    // predate the tree mode.
+    root.insert(QStringLiteral("mediaGridMode"), mediaGridMode());
     root.insert(QStringLiteral("loopWorkArea"), m_loopWorkAreaEnabled);
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
@@ -13758,6 +16627,10 @@ void AppController::resetSessionState()
     clearBeatAnalysis();
     // Also drops the failed-source blacklist, so media that was missing gets another chance.
     m_filmstripTiles.clear();
+    // Blocks are keyed by source path, so they would not go stale across documents — this is
+    // about memory. Nothing else evicts them beyond the size budget, so a session that opens
+    // several projects in turn would otherwise hold the peaks of every source in all of them.
+    m_waveformBlocks.clear();
 
     m_replacingAssetId.clear();
     m_pendingEffectTemplate.reset();
@@ -13841,9 +16714,10 @@ bool AppController::applyProjectJson(const QByteArray &data, QString *error)
     m_rippleEnabled = root.value(QStringLiteral("rippleEnabled")).toBool(false);
     m_allowClipOverlap = root.value(QStringLiteral("allowClipOverlap")).toBool(false);
 
-    if (root.contains(QStringLiteral("mediaGridMode"))) {
-        m_mediaGridMode = root.value(QStringLiteral("mediaGridMode")).toBool(true);
-        emit mediaGridModeChanged();
+    if (root.contains(QStringLiteral("mediaViewMode"))) {
+        setMediaViewMode(root.value(QStringLiteral("mediaViewMode")).toString());
+    } else if (root.contains(QStringLiteral("mediaGridMode"))) {
+        setMediaGridMode(root.value(QStringLiteral("mediaGridMode")).toBool(true));
     }
 
     if (root.contains(QStringLiteral("loopWorkArea"))) {
@@ -14137,6 +17011,42 @@ void AppController::loadProjectJson(const QUrl &url)
     setLastMessage(tr("Project JSON loaded"), QStringLiteral("success"));
 }
 
+void AppController::loadPremiereProject(const QUrl &url)
+{
+    const QString path = readTargetPath(url);
+    if (path.isEmpty()) {
+        setLastMessage(tr("That project location isn’t valid"), QStringLiteral("error"));
+        return;
+    }
+
+    QString readError;
+    const std::optional<drift::Project> proj = drift::prproj::readProject(path, &readError);
+    if (!proj) {
+        setLastMessage(readError.isEmpty() ? tr("Failed to open Premiere Pro project") : readError,
+                       QStringLiteral("error"));
+        return;
+    }
+
+    // Drop an in-flight bundle extract so it cannot land on top of this document.
+    ++m_loadGeneration;
+
+    const QByteArray data = QJsonDocument(proj->toJson()).toJson(QJsonDocument::Compact);
+
+    QString error;
+    if (!applyProjectJson(data, &error)) {
+        setLastMessage(error, QStringLiteral("error"));
+        return;
+    }
+
+    m_embeddedSources.clear();
+    // Untitled: Save must not write a .drift bundle over this .prproj, and recents stay .drift.
+    setCurrentProjectPath(QString());
+    setDirty(true);
+    deleteRecoveryFile();
+    setProjectLayoutChosen(true);
+    setLastMessage(tr("Premiere Pro project imported: %1").arg(proj->name()), QStringLiteral("success"));
+}
+
 void AppController::packageProject(const QUrl &url)
 {
     // The bundle writer needs a real file to seek in, so on Android this stages into app storage
@@ -14232,6 +17142,13 @@ void AppController::loadProject(const QUrl &url)
     const QString path = readTargetPath(url);
     if (path.isEmpty()) {
         setLastMessage(tr("That project location isn’t valid"), QStringLiteral("error"));
+        return;
+    }
+
+    if (path.endsWith(QLatin1String(".prproj"), Qt::CaseInsensitive)
+        || path.endsWith(QLatin1String(".xml"), Qt::CaseInsensitive)
+        || drift::prproj::isPremiereProject(path)) {
+        loadPremiereProject(url);
         return;
     }
 
@@ -14357,7 +17274,9 @@ void AppController::remapProjectPaths(const QHash<QString, QString> &remap)
 
     for (drift::Track &track : m_project.tracks()) {
         for (drift::Clip &clip : track.clips) {
-            repoint(clip.mask.mattePath);
+            // Masks live on adjustment clips, which this flat walk already covers.
+            repoint(clip.mask.mediaPath);
+            repoint(clip.mask.mediaFgrPath);
             repoint(clip.faceTrackPath);
             for (drift::Effect &effect : clip.effects) {
                 const EffectPresetEntry *def = effectDefForId(effect.catalogId);
@@ -15240,6 +18159,65 @@ void AppController::copyMcpAgentGuide()
 QVariantMap AppController::debugInfo() const
 {
     return DebugReport::collect();
+}
+
+QVariantMap AppController::playbackDiagnostics() const
+{
+    return PlaybackDiagnostics::collect(*m_playback.stats(), &m_project,
+                                        m_playback.displayRefreshRate());
+}
+
+void AppController::startPlaybackBenchmark()
+{
+    if (m_benchmarkRunning.exchange(true))
+        return;
+    emit playbackBenchmarkRunningChanged();
+
+    // The reference clip is what makes two bug reports comparable; the timeline's own first
+    // video clip is what reproduces the reporter's actual codec and frame rate. Measure both,
+    // because either one alone leaves a question the other answers.
+    QString timelineClip;
+    for (const drift::Track &track : m_project.tracks()) {
+        for (const drift::Clip &clip : track.clips) {
+            if (clip.type == drift::ClipType::Video && !clip.path.isEmpty()) {
+                timelineClip = clip.path;
+                break;
+            }
+        }
+        if (!timelineClip.isEmpty())
+            break;
+    }
+    const QSize canvas(m_project.width(), m_project.height());
+
+    // Off the GUI thread: the sweep decodes for a couple of seconds. Everything it touches —
+    // the reader pool and the GL runtime — is already called from the compositor's own worker
+    // threads, so this adds no new threading assumption.
+    QThreadPool::globalInstance()->start([this, timelineClip, canvas] {
+        QVariantMap out;
+        out.insert(QStringLiteral("reference"), PlaybackDiagnostics::benchmarkClip({}, canvas));
+        if (!timelineClip.isEmpty()) {
+            out.insert(QStringLiteral("timeline"),
+                       PlaybackDiagnostics::benchmarkClip(timelineClip, canvas));
+        }
+        QMetaObject::invokeMethod(
+            this,
+            [this, out] {
+                m_benchmarkRunning.store(false);
+                emit playbackBenchmarkRunningChanged();
+                emit playbackBenchmarkFinished(out);
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void AppController::copyDiagnosticsReport(const QVariantMap &playbackInfo)
+{
+    QString report = DebugReport::formatPlainText(DebugReport::collect());
+    if (!playbackInfo.isEmpty()) {
+        report += QLatin1Char('\n');
+        report += PlaybackDiagnostics::formatPlainText(playbackInfo);
+    }
+    copyToClipboard(report);
 }
 
 QString AppController::debugInfoText() const
@@ -16383,7 +19361,9 @@ QJsonObject AppController::mcpAiCapabilities() const
         {"whisper-model", drift::WhisperTranscriber::modelPresent(),
          "generate_subtitles — speech to timed captions"},
         {"sam2-model", drift::Sam2Segmenter::modelPresent(),
-         "subject cutout and mask generation"},
+         "subject cutout and mask generation — click to pick any subject"},
+        {"rvm-model", drift::RvmMatter::modelPresent(),
+         "people cutout — no prompt, soft alpha, decontaminated foreground"},
         {"face-model", drift::FaceLandmarker::modelPresent(),
          "face tracking and the face warp effects"},
         {"denoise-model", drift::DeepFilterDenoiser::modelPresent(),

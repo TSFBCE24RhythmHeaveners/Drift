@@ -5,6 +5,7 @@
 #include "core/Mask.h"
 #include "core/Time.h"
 #include "engine/FaceLandmarker.h"
+#include "engine/GpuStatus.h"
 #include "engine/PreviewVideoFrame.h"
 
 #include <QColor>
@@ -31,8 +32,14 @@ struct GpuLayer
     QImage source; // null => fully transparent layer (unless video is set)
     PreviewVideoFrame video;
     QList<drift::Effect> effects;
-    drift::Mask mask;
-    QImage matte; // MaskShape::Matte only: this frame's coverage map, decoded by FrameCompositor
+    QList<drift::Mask> masks;
+    // Index-parallel with `masks`: this frame's decoded coverage map for each Media entry, null
+    // for parametric ones. Decoded by FrameCompositor, which is the only place that knows the time.
+    QList<QImage> maskMedia;
+    // The decontaminated foreground, when a lone media mask carries one. Single rather than
+    // index-parallel: it replaces the layer's colour outright, which only makes sense when one
+    // media mask owns the coverage — see soleMediaIndex.
+    QImage fgr;
     QRectF rect;             // destination rect on the canvas, in canvas pixels
     double rotation = 0.0;   // degrees, clockwise, about the rect centre
     bool flipH = false;
@@ -113,5 +120,22 @@ bool finishExportNv12(int slot, uint8_t *y, int yStride, uint8_t *uv, int uvStri
                       int height);
 
 bool isAvailable();
+
+// Why the compositor is unusable, for the preview's error state and the debug
+// report. A snapshot: unlike isAvailable() it never forces a bring-up attempt,
+// so call that first when you want one made.
+drift::gl::GlStatusInfo status();
+
+// How the last preview video frame reached the GPU: "cuda-interop", "vaapi-dmabuf",
+// "cpu-roundtrip", or "none". A stable untranslated id, like drift::gl::statusId() — each
+// presentation site maps it to its own catalogue. Exposed here rather than from GlRuntime so
+// the playback layer can read it without pulling in the engine-private runtime header.
+QString previewUploadPathId();
+
+// How many preview composites may be in flight at once. The presentation ring holds one
+// target per in-flight frame plus the one the scene graph is still sampling, so this is the
+// ring depth less one — going past it would have a worker draw into the target on screen.
+// GpuCompositor.cpp static_asserts the ring against this so the two cannot drift apart.
+inline constexpr int kMaxPreviewComposites = 2;
 
 } // namespace GpuCompositor

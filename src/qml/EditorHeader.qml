@@ -13,8 +13,17 @@ Rectangle {
 
     property string projectName: EditorState.projectName
 
-    readonly property var projectFilter: [qsTr("Drift project (*.drift)")]
-    readonly property var projectMimeTypes: ["application/x-drift-project"]
+    readonly property var projectFilter: [
+        qsTr("All Supported Projects (*.drift *.prproj *.xml)"),
+        qsTr("Drift project (*.drift)"),
+        qsTr("Premiere Pro project (*.prproj)"),
+        qsTr("Final Cut Pro XML (*.xml)")
+    ]
+    readonly property var projectMimeTypes: [
+        "application/x-drift-project",
+        "application/xml",
+        "text/xml"
+    ]
 
     // Action to run after Save or Don't Save resolves. Null when idle.
     property var _pendingAfterUnsaved: null
@@ -87,6 +96,18 @@ Rectangle {
                                            ["application/json"])
             if (url != "")
                 EditorState.loadProjectJson(url)
+        })
+    }
+
+    function openPremiereProject() {
+        root.confirmIfDirty(function () {
+            var url = FileDialogs.openFile(qsTr("Import Premiere Pro Project"),
+                                           [qsTr("Premiere Pro project (*.prproj *.xml)"),
+                                            qsTr("Premiere Pro project (*.prproj)"),
+                                            qsTr("Final Cut Pro XML (*.xml)")],
+                                           ["application/xml", "text/xml"])
+            if (url != "")
+                EditorState.loadPremiereProject(url)
         })
     }
 
@@ -283,6 +304,7 @@ Rectangle {
                     onPackageRequested: root.packageProject()
                     onSaveJsonRequested: root.saveProjectJson()
                     onOpenJsonRequested: root.openProjectJson()
+                    onImportPremiereRequested: root.openPremiereProject()
                     onPropertiesRequested: projectPropertiesDialog.openDialog()
                 }
             }
@@ -335,40 +357,42 @@ Rectangle {
                 }
             }
 
-            // Workspace switcher. Portrait projects default to the portrait
-            // arrangement, but the choice stays the user's: a tall canvas on an
-            // ultrawide display is still comfortable in the landscape workspace, and
-            // a portrait *display* suits the portrait one whatever the canvas is.
-            // Picking either explicitly stops the canvas from driving it; "Auto"
-            // hands it back.
+            // Workspace, theme and language were three header buttons of their own.
+            // They share one menu now, with the rest of the preferences a step further
+            // in behind "More settings…".
+            //
+            // Workspace: portrait projects default to the portrait arrangement, but the
+            // choice stays the user's — a tall canvas on an ultrawide display is still
+            // comfortable in the landscape workspace, and a portrait *display* suits the
+            // portrait one whatever the canvas is. Picking either explicitly stops the
+            // canvas from driving it; "Auto" hands it back.
             Item {
-                id: workspaceButton
-                implicitWidth: workspaceBtn.implicitWidth
-                implicitHeight: workspaceBtn.implicitHeight
+                id: settingsButton
+                implicitWidth: settingsBtn.implicitWidth
+                implicitHeight: settingsBtn.implicitHeight
                 width: implicitWidth
                 height: implicitHeight
                 anchors.verticalCenter: parent.verticalCenter
 
-                readonly property bool portrait: {
-                    const win = root.Window.window
-                    return win ? win.portraitWorkspace : false
-                }
-
                 IconButton {
-                    id: workspaceBtn
+                    id: settingsBtn
                     anchors.fill: parent
-                    glyph: workspaceButton.portrait ? Theme.icons.smartphone : Theme.icons.monitor
+                    glyph: Theme.icons.settings
                     variant: "ghost"
-                    text: qsTr("Workspace")
-                    active: workspaceMenu.opened
-                    tooltip: workspaceButton.portrait ? qsTr("Workspace: portrait")
-                                                      : qsTr("Workspace: landscape")
-                    onClicked: workspaceMenu.popup(0, workspaceButton.height + Theme.spacingMd)
+                    text: qsTr("Settings")
+                    active: settingsMenu.opened
+                    tooltip: qsTr("Workspace, theme, language and more")
+                    onClicked: settingsMenu.popup(0, settingsButton.height + Theme.spacingMd)
                 }
 
                 ThemedContextMenu {
-                    id: workspaceMenu
-                    implicitWidth: 236
+                    id: settingsMenu
+                    implicitWidth: 248
+
+                    ThemedMenuItem {
+                        sectionHeader: true
+                        text: qsTr("Workspace")
+                    }
 
                     // The active entry swaps its own icon for a tick rather than
                     // adding a trailing column — every row keeps a glyph, so the
@@ -395,25 +419,58 @@ Rectangle {
                                    ? Theme.icons.check : Theme.icons.smartphone
                         onTriggered: EditorState.setWorkspaceLayoutPreference("portrait")
                     }
+
+                    ThemedMenuSeparator { }
+
+                    ThemedMenuItem {
+                        sectionHeader: true
+                        text: qsTr("Theme")
+                    }
+
+                    ThemedMenuItem {
+                        text: qsTr("Light")
+                        icon.name: Theme.darkMode ? Theme.icons.sun : Theme.icons.check
+                        onTriggered: Theme.setDarkMode(false)
+                    }
+
+                    ThemedMenuItem {
+                        text: qsTr("Dark")
+                        icon.name: Theme.darkMode ? Theme.icons.check : Theme.icons.moon
+                        onTriggered: Theme.setDarkMode(true)
+                    }
+
+                    ThemedMenuSeparator { }
+
+                    ThemedMenuItem {
+                        text: qsTr("Language…")
+                        icon.name: Theme.icons.languages
+                        onTriggered: languageChooserDialog.openFromHeader()
+                    }
+
+                    ThemedMenuSeparator { }
+
+                    // Infrequent tools. They were icon-only header buttons of their own,
+                    // unlabelled and easy to hit by accident next to Export.
+                    ThemedMenuItem {
+                        text: qsTr("Multicam")
+                        icon.name: Theme.icons.shuffle
+                        onTriggered: root.Window.window.openMulticam()
+                    }
+
+                    ThemedMenuItem {
+                        text: qsTr("Debug info…")
+                        icon.name: Theme.icons.bug
+                        onTriggered: root.Window.window.openDebugInfo()
+                    }
+
+                    ThemedMenuSeparator { }
+
+                    ThemedMenuItem {
+                        text: qsTr("More settings…")
+                        icon.name: Theme.icons.sliders
+                        onTriggered: root.Window.window.openSettings()
+                    }
                 }
-            }
-
-            IconButton {
-                glyph: Theme.darkMode ? Theme.icons.sun : Theme.icons.moon
-                variant: "ghost"
-                text: qsTr("Theme")
-                tooltip: Theme.darkMode ? qsTr("Switch to light mode") : qsTr("Switch to dark mode")
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: Theme.toggleDarkMode()
-            }
-
-            IconButton {
-                glyph: Theme.icons.languages
-                variant: "ghost"
-                text: qsTr("Language")
-                tooltip: qsTr("Language for menus and labels")
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: languageChooserDialog.openFromHeader()
             }
 
             HeaderSeparator {}
@@ -543,33 +600,6 @@ Rectangle {
                          : qsTr("Agent access")
                 anchors.verticalCenter: parent.verticalCenter
                 onClicked: agentAccessDialog.openDialog()
-            }
-
-            HeaderSeparator {}
-
-            // Infrequent tools, icon-only, kept off the main labeled cluster.
-            IconButton {
-                glyph: Theme.icons.shuffle
-                variant: "ghost"
-                tooltip: qsTr("Multicam")
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: {
-                    const win = root.Window.window
-                    if (win)
-                        win.openMulticam()
-                }
-            }
-
-            IconButton {
-                glyph: Theme.icons.bug
-                variant: "ghost"
-                tooltip: qsTr("Debug info")
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: {
-                    const win = root.Window.window
-                    if (win)
-                        win.openDebugInfo()
-                }
             }
 
             HeaderSeparator {}

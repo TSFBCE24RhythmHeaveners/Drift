@@ -90,8 +90,9 @@ PanelFrame {
         }
     }
 
-    // True while an import is running, so the panel can show progress.
-    readonly property bool importing: AssetLibrary.importing
+    // True while an import is running, so the panel can show progress. The folder walk counts:
+    // it is the half that can take a while on a deep tree or a sandboxed (portal) mount.
+    readonly property bool importing: AssetLibrary.importing || EditorState.importingFolder
 
     // A single id goes through the existing single-asset add so that case is byte-for-byte the
     // behavior it always was; only an actual multi-selection goes through the batch add, which
@@ -131,6 +132,7 @@ PanelFrame {
     // the rows are gone by the time the toast reports on them.
     property var pendingRemovalIds: []
     property string pendingRemovalLabel: ""
+    property int pendingRemovalClipCount: 0
 
     // Removing an asset a clip still points at would leave that clip playing but unable to
     // trim past its cut or merge, so refuse rather than confirm — for a bulk removal, refusing
@@ -138,27 +140,24 @@ PanelFrame {
     // with a smaller removal than they asked for.
     function requestRemoveAsset(assetIds) {
         const names = []
-        const inUseNames = []
+        let clipCount = 0
+
         for (const id of assetIds) {
             const index = AssetLibrary.indexOfId(id)
             if (index < 0)
                 continue
-            const name = AssetLibrary.assetAt(index).name
-            names.push(name)
-            if (EditorState.clipCountForAsset(index) > 0)
-                inUseNames.push(name)
+
+            names.push(AssetLibrary.assetAt(index).name)
+            clipCount += EditorState.clipCountForAsset(index)
         }
-        if (inUseNames.length > 0) {
-            Toasts.warning(inUseNames.length === 1
-                ? qsTr("“%1” is still used by clips on the timeline.").arg(inUseNames[0])
-                : qsTr("%n of the selected items are still used by clips on the timeline.",
-                       "", inUseNames.length))
-            return
-        }
+
         if (names.length === 0)
             return
+
         root.pendingRemovalIds = assetIds
-        root.pendingRemovalLabel = names.length === 1 ? names[0] : qsTr("%n items", "", names.length)
+        root.pendingRemovalLabel =
+            names.length === 1 ? names[0] : qsTr("%n items", "", names.length)
+        root.pendingRemovalClipCount = clipCount
         confirmAssetRemoval.open()
     }
 
@@ -175,12 +174,21 @@ PanelFrame {
             width: parent ? parent.width : Theme.dialogWidthSm
             wrapMode: Text.WordWrap
             size: "sm"
-            text: qsTr("“%1” will be removed from this project. The file on disk is not deleted.")
-                  .arg(root.pendingRemovalLabel)
+            text: root.pendingRemovalClipCount > 0
+                ? (root.pendingRemovalClipCount === 1
+                    ? qsTr("“%1” is used by 1 clip on the timeline. Removing this media will also remove that clip and any transitions connected to it. The file on disk is not deleted.")
+                        .arg(root.pendingRemovalLabel)
+                    : qsTr("“%1” is used by %2 clips on the timeline. Removing this media will also remove those clips and any transitions connected to them. The files on disk are not deleted.")
+                        .arg(root.pendingRemovalLabel)
+                        .arg(root.pendingRemovalClipCount))
+                : qsTr("“%1” will be removed from this project. The file on disk is not deleted.")
+                    .arg(root.pendingRemovalLabel)
         }
 
         onAccepted: {
-            const removed = EditorState.removeAssets(root.pendingRemovalIds)
+            const removed = root.pendingRemovalClipCount > 0
+                ? EditorState.removeAssetsAndClips(root.pendingRemovalIds)
+                : EditorState.removeAssets(root.pendingRemovalIds)
             if (removed > 0) {
                 Toasts.success(removed === 1
                     ? qsTr("Removed “%1”.").arg(root.pendingRemovalLabel)
@@ -510,9 +518,7 @@ PanelFrame {
     // Points a bin row at a different file while every clip using it stays put, so a project set
     // up once — music, outro, CTA — can be re-pointed at the next video instead of rebuilt.
     function requestReplaceAsset(assetIndex) {
-        var url = FileDialogs.openFile(qsTr("Replace Media"), [
-            qsTr("Media files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.png *.jpg *.jpeg *.gif *.webp *.bmp)")
-        ])
+        var url = FileDialogs.openFile(qsTr("Replace Media"), [AssetLibrary.mediaNameFilter()])
         if (!url || url.toString() === "")
             return
         EditorState.replaceAssetSource(assetIndex, url)
@@ -539,6 +545,20 @@ PanelFrame {
     Connections {
         target: EditorState
 
+        // Hitting the limit outranks the skipped count: the walk stopped early, so what it passed
+        // over is only part of the story and saying both would suggest otherwise.
+        function onFolderImportFinished(folders, files, skipped, truncated) {
+            if (folders === 0) {
+                Toasts.error(qsTr("Couldn’t import that folder."))
+            } else if (truncated) {
+                Toasts.warning(qsTr("Imported %n files into %1 folders — as many as one folder import takes. Import the remaining subfolders separately.", "", files).arg(folders))
+            } else if (skipped > 0) {
+                Toasts.warning(qsTr("Imported %n files into %1 folders. %2 files were skipped — Drift does not recognize their format. Drag them onto the bin to try anyway.", "", files).arg(folders).arg(skipped))
+            } else {
+                Toasts.success(qsTr("Imported %n files into %1 folders.", "", files).arg(folders))
+            }
+        }
+
         // The probe runs off-thread, so the outcome comes back here rather than from the call.
         function onAssetReplaceFinished(ok, message, adjustedClips) {
             if (!ok) {
@@ -561,10 +581,21 @@ PanelFrame {
     }
 
     function importMedia() {
-        var urls = FileDialogs.openFiles(qsTr("Import Media"), [
-            qsTr("Media files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mp3 *.wav *.aac *.flac *.ogg *.m4a *.png *.jpg *.jpeg *.gif *.webp *.bmp)")
-        ])
+        var urls = FileDialogs.openFiles(qsTr("Import Media"), [AssetLibrary.mediaNameFilter()])
         root.importUrlsReporting(urls)
+    }
+
+    // Imports a whole directory: a new bin folder mirrors the picked folder (and everything
+    // nested under it), and every media file lands in the bin folder matching its containing
+    // directory. EditorState.importFolder does the walk synchronously — probing and
+    // thumbnailing each file still happens in the background the same as any other import.
+    function importFolder() {
+        var url = FileDialogs.openDirectory(qsTr("Import Folder"))
+        if (!url || url.toString() === "")
+            return
+        // The walk runs off-thread, so the outcome arrives as onFolderImportFinished below.
+        if (!EditorState.importFolder(url))
+            Toasts.error(qsTr("Couldn’t import that folder."))
     }
 
     // Selects a tab by id. Used by cross-panel jumps such as the properties
@@ -591,7 +622,7 @@ PanelFrame {
         const tabId = tabsModel.get(activeTab).tabId
         if (tabId === "text" || tabId === "subtitles" || tabId === "stickers" || tabId === "shapes"
                 || tabId === "effects" || tabId === "templates" || tabId === "adjustment"
-                || tabId === "settings" || tabId === "sounds" || tabId === "transitions"
+                || tabId === "sounds" || tabId === "transitions" || tabId === "masks"
                 || tabId === "shortcuts" || tabId === "scenes")
             return false
         const kinds = kindsForTab(tabId)
@@ -607,11 +638,11 @@ PanelFrame {
         "stickers": qsTr("Stickers"),
         "shapes": qsTr("Shapes"),
         "scenes": qsTr("Scenes"),
+        "masks": qsTr("Masks"),
         "effects": qsTr("Effects"),
         "templates": qsTr("Templates"),
         "transitions": qsTr("Transitions"),
         "sounds": qsTr("Audio FX"),
-        "settings": qsTr("Settings"),
         "shortcuts": qsTr("Shortcuts")
     })
 
@@ -624,14 +655,14 @@ PanelFrame {
         ListElement { tabId: "text"; icon: 1; separatorAfter: false }
         ListElement { tabId: "subtitles"; icon: 2; separatorAfter: false }
         ListElement { tabId: "stickers"; icon: 3; separatorAfter: false }
-        ListElement { tabId: "shapes"; icon: 4; separatorAfter: true }
-        ListElement { tabId: "scenes"; icon: 11; separatorAfter: true }
+        ListElement { tabId: "shapes"; icon: 4; separatorAfter: false }
+        ListElement { tabId: "masks"; icon: 11; separatorAfter: true }
+        ListElement { tabId: "scenes"; icon: 10; separatorAfter: true }
         ListElement { tabId: "effects"; icon: 5; separatorAfter: false }
         ListElement { tabId: "templates"; icon: 6; separatorAfter: false }
         ListElement { tabId: "transitions"; icon: 7; separatorAfter: false }
         ListElement { tabId: "sounds"; icon: 8; separatorAfter: true }
-        ListElement { tabId: "settings"; icon: 9; separatorAfter: false }
-        ListElement { tabId: "shortcuts"; icon: 10; separatorAfter: false }
+        ListElement { tabId: "shortcuts"; icon: 9; separatorAfter: false }
     }
     property var tabIcons: [
         Theme.icons.film,
@@ -643,12 +674,11 @@ PanelFrame {
         Theme.icons.layers,
         Theme.icons.chevronsRight,
         Theme.icons.audioLines,
-        Theme.icons.settings,
         Theme.icons.keyboard,
-        Theme.icons.listVideo
+        Theme.icons.listVideo,
+        Theme.icons.mask
     ]
     property int activeTab: 0
-    property bool sortByKind: false
 
     // Fades the tab body in on a tab change instead of hard-cutting to it. Driven
     // as one property the bodies share, rather than fading the whole content
@@ -822,7 +852,6 @@ PanelFrame {
             id: assetsContent
             width: parent.width - (root.sheetMode ? 0 : (Theme.tabRailWidth + Theme.borderWidth))
             height: parent.height
-            property bool gridMode: EditorState.mediaGridMode
 
             Rectangle {
                 width: parent.width
@@ -873,33 +902,6 @@ PanelFrame {
                     spacing: 6
                     visible: kindsForTab(tabsModel.get(root.activeTab).tabId).length > 0
 
-                    IconButton {
-                        glyph: Theme.icons.grid
-                        variant: "ghost"
-                        tooltip: qsTr("Grid view")
-                        active: assetsContent.gridMode
-                        onClicked: EditorState.mediaGridMode = true
-                    }
-                    IconButton {
-                        glyph: Theme.icons.list
-                        variant: "ghost"
-                        tooltip: qsTr("List view")
-                        active: !assetsContent.gridMode
-                        onClicked: EditorState.mediaGridMode = false
-                    }
-                    IconButton {
-                        glyph: root.sortByKind ? Theme.icons.sortByKind : Theme.icons.sortByName
-                        variant: "ghost"
-                        tooltip: root.sortByKind ? qsTr("Sort by name") : qsTr("Sort by type")
-                        onClicked: {
-                            if (root.sortByKind)
-                                AssetLibrary.sortByName()
-                            else
-                                AssetLibrary.sortByKind()
-                            root.sortByKind = !root.sortByKind
-                        }
-                    }
-
                     ThemedButton {
                         text: qsTr("New Folder")
                         variant: "ghost"
@@ -909,14 +911,82 @@ PanelFrame {
                         onClicked: newFolderDialog.open()
                     }
 
-                    ThemedButton {
-                        text: qsTr("Import")
-                        variant: "ghost"
-                        glyph: Theme.icons.upload
-                        tooltip: qsTr("Import video, audio or image files")
-                        enabled: !root.importing
+                    // Split button: the left half imports files, the chevron opens the
+                    // folder variant. Both halves share one bordered box so the header
+                    // reads as two actions, not three competing buttons.
+                    Rectangle {
+                        id: importSplit
                         anchors.verticalCenter: parent.verticalCenter
-                        onClicked: root.importMedia()
+                        width: importFilesHalf.width
+                               + (importMenuHalf.visible ? importSplitDivider.width + importMenuHalf.width : 0)
+                        height: Theme.controlHeight
+                        radius: Theme.radiusSm
+                        color: "transparent"
+                        border.width: Theme.borderWidth
+                        border.color: Theme.panelBorder
+                        opacity: root.importing ? 0.6 : 1
+
+                        Row {
+                            anchors.fill: parent
+                            spacing: 0
+
+                            ThemedButton {
+                                id: importFilesHalf
+                                text: qsTr("Import")
+                                variant: "ghost"
+                                flat: true
+                                radius: Theme.radiusXs
+                                glyph: Theme.icons.upload
+                                tooltip: qsTr("Import video, audio or image files")
+                                enabled: !root.importing
+                                height: parent.height - Theme.borderWidth * 2
+                                anchors.verticalCenter: parent.verticalCenter
+                                onClicked: root.importMedia()
+                            }
+
+                            Rectangle {
+                                id: importSplitDivider
+                                width: Theme.borderWidth
+                                height: parent.height - Theme.spacingLg
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: Theme.panelBorder
+                                visible: importMenuHalf.visible
+                            }
+
+                            ThemedButton {
+                                id: importMenuHalf
+                                variant: "ghost"
+                                flat: true
+                                radius: Theme.radiusXs
+                                glyph: Theme.icons.chevronDown
+                                glyphSize: Theme.iconSizeSm
+                                leftPadding: Theme.spacingLg
+                                rightPadding: Theme.spacingLg
+                                tooltip: qsTr("More import options")
+                                enabled: !root.importing
+                                visible: !Theme.touchUi
+                                height: parent.height - Theme.borderWidth * 2
+                                anchors.verticalCenter: parent.verticalCenter
+                                onClicked: importMenu.popup(0, importSplit.height + Theme.spacingSm)
+                            }
+                        }
+
+                        ThemedContextMenu {
+                            id: importMenu
+                            implicitWidth: 220
+
+                            ThemedMenuItem {
+                                text: qsTr("Import Files…")
+                                icon.name: Theme.icons.upload
+                                onTriggered: root.importMedia()
+                            }
+
+                            ThemedMenuItem {
+                                text: qsTr("Import Folder…")
+                                icon.name: Theme.icons.folderInput
+                                onTriggered: root.importFolder()
+                            }
+                        }
                     }
                 }
             }
@@ -977,18 +1047,19 @@ PanelFrame {
                 height: parent.height - Theme.panelHeaderHeight
             }
 
-            SettingsTab {
-                visible: tabsModel.get(activeTab).tabId === "settings"
-                width: parent.width
-                opacity: root.tabOpacity
-                height: parent.height - Theme.panelHeaderHeight
-            }
-
             ShortcutsTab {
                 visible: tabsModel.get(activeTab).tabId === "shortcuts"
                 width: parent.width
                 opacity: root.tabOpacity
                 height: parent.height - Theme.panelHeaderHeight
+            }
+
+            MasksTab {
+                visible: tabsModel.get(activeTab).tabId === "masks"
+                width: parent.width
+                opacity: root.tabOpacity
+                height: parent.height - Theme.panelHeaderHeight
+                onAdded: root.addCompleted()
             }
 
             // Effects browser
@@ -1315,7 +1386,6 @@ PanelFrame {
                 width: parent.width
                 opacity: root.tabOpacity
                 height: parent.height - Theme.panelHeaderHeight
-                gridMode: assetsContent.gridMode
                 importing: root.importing
                 assetVisibleFn: function(kind) { return root.assetVisible(kind) }
                 onPreviewRequested: (assetIndex) => {
