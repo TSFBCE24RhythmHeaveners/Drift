@@ -90,6 +90,19 @@ Item {
         return qsTr("Adjustment")
     }
 
+    // Named so tooling (and a screen reader) can address a clip by what the user sees on it
+    // rather than by pixel position. The timeline is the app's main interaction surface and had
+    // no accessible identity at all.
+    Accessible.role: Accessible.Button
+    Accessible.name: {
+        const label = clipItem.clipData.name && clipItem.clipData.name.length > 0
+                    ? clipItem.clipData.name
+                    : clipItem.adjustmentLabelText
+        return qsTr("%1, track %2").arg(label).arg(clipItem.trackIndex + 1)
+    }
+    Accessible.selected: clipItem.selected
+    Accessible.onPressAction: EditorState.selectClip(clipItem.trackIndex, clipItem.clipIndex)
+
     property bool effectDropTarget: panel.effectDropTrackIndex === trackIndex
                                     && panel.effectDropClipIndex === clipIndex
     // Subtitles keep cue-owned timing; text clips use the same edge fades as video.
@@ -103,6 +116,20 @@ Item {
             return t
         if (curve === "equalPower")
             return Math.sin(t * Math.PI * 0.5)
+        if (curve === "bezier") {
+            // Mirrors FadeShape::bezierAt — anchors pinned at (0,0)/(1,1), solve x for t.
+            const h = clipItem.clipData.fadeHandles || [0.42, 0.0, 0.58, 1.0]
+            let lo = 0, hi = 1
+            for (let i = 0; i < 24; ++i) {
+                const mid = (lo + hi) / 2
+                const mt = 1 - mid
+                const x = 3 * mt * mt * mid * h[0] + 3 * mt * mid * mid * h[2] + mid * mid * mid
+                if (x < t) lo = mid; else hi = mid
+            }
+            const u = (lo + hi) / 2
+            const mu = 1 - u
+            return 3 * mu * mu * u * h[1] + 3 * mu * u * u * h[3] + u * u * u
+        }
         if (curve === "custom") {
             const pts = clipItem.clipData.fadeShape || []
             if (pts.length < 2)

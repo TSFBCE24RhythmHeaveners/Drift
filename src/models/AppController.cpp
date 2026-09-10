@@ -2,12 +2,18 @@
 
 #include "AddonManager.h"
 #include "AssetLibrary.h"
+#include "MarketClient.h"
 #include "FileDialogs.h"
 #include "core/Clip.h"
 #include "core/Mask.h"
 #include "core/SpeedCurve.h"
 #include "core/Stabilize.h"
 #include "core/PrprojReader.h"
+#include "core/MogrtReader.h"
+#include "core/KdenliveReader.h"
+#include "core/ResolveReader.h"
+#include "core/EdlReader.h"
+#include "core/OtioReader.h"
 #include "core/ShapePath.h"
 #include "core/SubtitleCue.h"
 #include "core/SrtIO.h"
@@ -57,14 +63,14 @@
 #include "engine/StickerCatalog.h"
 #include "MulticamImageStore.h"
 #include "SegmentImageStore.h"
+#include "engine/FrameSheet.h"
 #include "engine/TextRaster.h"
 #include "engine/TransitionCatalog.h"
+#include "engine/WaveformSheet.h"
 #include "engine/WhisperTranscriber.h"
-#ifndef Q_OS_ANDROID
 #include "mcp/McpCatalog.h"
-#include "mcp/McpServer.h"
-#endif
 #include "mcp/McpJson.h"
+#include "mcp/McpServer.h"
 
 #include <QBuffer>
 #include <QClipboard>
@@ -77,6 +83,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QMimeDatabase>
 #include <QMutex>
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -495,6 +502,17 @@ QString projectLocation(const QUrl &url)
     return url.toLocalFile();
 }
 
+// The chosen document's name without its extension. Save As gives the copy this as its title, so
+// the header names the file you are now editing rather than the one it was copied from.
+QString projectNameForUrl(const QUrl &url)
+{
+#ifdef Q_OS_ANDROID
+    if (AndroidUri::isContentUri(url))
+        return QFileInfo(AndroidUri::displayName(url)).completeBaseName();
+#endif
+    return QFileInfo(url.toLocalFile()).completeBaseName();
+}
+
 // Whether a remembered project location still resolves. QFileInfo knows nothing about a document
 // id, so a SAF location has to be probed through the provider — the grant can also have lapsed
 // since it was stored, which is indistinguishable from the file being gone and is treated the same.
@@ -650,10 +668,8 @@ AppController::~AppController()
     if (hadMulticamSession)
         m_playback.setProject(&m_project);
 
-#ifndef Q_OS_ANDROID
     if (m_mcp)
         m_mcp->stop();
-#endif
     // ~QUndoStack clears the stack, which emits indexChanged into the lambda
     // below — but by then the members it touches (m_selection, the models) are
     // already gone. Cut the signals before any member is destroyed.
@@ -709,12 +725,10 @@ AppController::AppController(AssetLibrary *assetLibrary, QObject *parent)
 
     m_undoStack.setUndoLimit(kMaxUndoSteps);
 
-#ifndef Q_OS_ANDROID
     m_mcp = std::make_unique<drift::mcp::McpServer>(this);
     connect(m_mcp.get(), &drift::mcp::McpServer::runningChanged, this,
             &AppController::mcpRunningChanged);
     connect(m_mcp.get(), &drift::mcp::McpServer::errorChanged, this, &AppController::mcpErrorChanged);
-#endif
     connect(&m_undoStack, &QUndoStack::indexChanged, this, &AppController::undoStackChanged);
     connect(&m_undoStack, &QUndoStack::indexChanged, this, [this] {
         m_timelineModel.refresh();
@@ -933,6 +947,8 @@ AppController::AppController(AssetLibrary *assetLibrary, QObject *parent)
     // unchecked would contradict what the preview is actually doing. Unchecking writes an
     // explicit false, which turns it off everywhere.
     m_vaapiZeroCopy = drift::vaapiZeroCopyMode() != drift::VaapiZeroCopyMode::Off;
+    m_mediaCodecZeroCopy =
+        settings.value(QStringLiteral("preview/mediaCodecZeroCopy"), false).toBool();
     m_invertTimelineScroll = settings.value(QStringLiteral("timeline/invertScroll"), false).toBool();
     m_uiLanguage = storedUiLanguage();
     m_needsUiLanguagePrompt = needsFirstLaunchLanguagePrompt();
@@ -1009,6 +1025,23 @@ void AppController::sweepExtractionDirs()
 #ifdef Q_OS_ANDROID
     QSet<QString> liveFiles; // files outside any bundle that a known project still points at
 #endif
+
+    // A project's own id is not the only directory it depends on: a Save As copy gets a fresh id
+    // but inherits the original's freeze frames, captures and media edits, which stay where they
+    // were written. Liveness therefore follows the references as well, or the first sweep after
+    // the original left the recents list would take the copy's media with it.
+    const QString projectsRoot = QDir::cleanPath(QDir(base).filePath(QStringLiteral("projects")));
+    const auto keepOwnerOf = [&](const QString &path) {
+        if (path.isEmpty())
+            return;
+        const QString clean = QDir::cleanPath(path);
+        if (!clean.startsWith(projectsRoot + QLatin1Char('/')))
+            return;
+        const QString rest = clean.mid(projectsRoot.size() + 1);
+        const int slash = rest.indexOf(QLatin1Char('/'));
+        live.insert(slash < 0 ? rest : rest.left(slash));
+    };
+
     for (const QVariant &entry : recentProjects()) {
         const QString path = entry.toMap().value(QStringLiteral("path")).toString();
         QString error;
@@ -1016,6 +1049,12 @@ void AppController::sweepExtractionDirs()
         if (!info)
             continue;
         live.insert(info->projectId);
+        for (const drift::bundle::MediaEntry &media : info->media) {
+            // Only referencing entries name a path on this machine; an embedded one records where
+            // the file was on whatever machine packed it, and keepOwnerOf simply will not match.
+            if (!media.embedded)
+                keepOwnerOf(media.originalPath);
+        }
 #ifdef Q_OS_ANDROID
         for (const drift::bundle::MediaEntry &media : info->media)
             liveFiles.insert(media.originalPath);
@@ -1121,6 +1160,15 @@ bool faceTrackHasMesh(const QString &path)
 QVariantMap transitionToMap(const drift::Track &track, const drift::Transition &t);
 QVariantMap maskToMap(const drift::Mask &m);
 drift::Mask maskFromMap(const QVariantMap &m);
+
+drift::Transition *findTransition(drift::Track &track, const QString &transitionId)
+{
+    for (drift::Transition &transition : track.transitions) {
+        if (transition.id == transitionId)
+            return &transition;
+    }
+    return nullptr;
+}
 
 int findTransitionPartnerIndex(const drift::Track &track, int fromIndex)
 {
@@ -1613,6 +1661,7 @@ QVariantMap transitionToMap(const drift::Track &track, const drift::Transition &
         {QStringLiteral("overlapping"), overlapping},
         {QStringLiteral("label"), def ? def->meta.displayName : t.kindId},
         {QStringLiteral("params"), params},
+        {QStringLiteral("easingCurve"), drift::fadeCurveToString(t.easingCurve)},
     };
 }
 
@@ -2667,6 +2716,9 @@ QHash<QString, QString> defaultShortcuts()
         {QStringLiteral("newProject"), QStringLiteral("Ctrl+N")},
         {QStringLiteral("open"), QStringLiteral("Ctrl+O")},
         {QStringLiteral("save"), QStringLiteral("Ctrl+S")},
+        // Not the usual Ctrl+Shift+S — separateAudio has held that since before Save As existed,
+        // and moving a binding people already have in their fingers is the worse trade.
+        {QStringLiteral("saveAs"), QStringLiteral("Ctrl+Alt+S")},
         {QStringLiteral("playPause"), QStringLiteral("Space")},
         {QStringLiteral("delete"), QStringLiteral("Delete")},
         {QStringLiteral("undo"), QStringLiteral("Ctrl+Z")},
@@ -2821,6 +2873,9 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip, const drift::Clip 
         {QStringLiteral("fadeOut"), drift::usToSeconds(clip.fadeOutUs)},
         {QStringLiteral("fadeCurve"), drift::fadeCurveToString(clip.fadeCurve)},
         {QStringLiteral("fadeShape"), fadeShape},
+        {QStringLiteral("fadeHandles"),
+         QVariantList{clip.fadeShape.handle1().x(), clip.fadeShape.handle1().y(),
+                      clip.fadeShape.handle2().x(), clip.fadeShape.handle2().y()}},
         {QStringLiteral("animIn"), QVariantMap{
              {QStringLiteral("kind"), drift::clipAnimKindToString(clip.animIn.kind)},
              {QStringLiteral("duration"), drift::usToSeconds(clip.animIn.durationUs)},
@@ -3713,6 +3768,7 @@ QVariantList AppController::actions() const
         action(QStringLiteral("newProject"), tr("New project")),
         action(QStringLiteral("open"), tr("Open project")),
         action(QStringLiteral("save"), tr("Save project")),
+        action(QStringLiteral("saveAs"), tr("Save project as…")),
         action(QStringLiteral("playPause"), tr("Play/Pause")),
         action(QStringLiteral("delete"), tr("Delete selection")),
         action(QStringLiteral("undo"), tr("Undo")),
@@ -3948,6 +4004,29 @@ void AppController::setVaapiZeroCopy(bool enabled)
     emit vaapiZeroCopyChanged();
     setLastMessage(tr("Faster preview takes effect after you restart Drift."),
                    QStringLiteral("info"));
+}
+
+void AppController::setMediaCodecZeroCopy(bool enabled)
+{
+    if (m_mediaCodecZeroCopy == enabled)
+        return;
+    m_mediaCodecZeroCopy = enabled;
+    QSettings settings;
+    settings.setValue(QStringLiteral("preview/mediaCodecZeroCopy"), m_mediaCodecZeroCopy);
+    emit mediaCodecZeroCopyChanged();
+    // ClipReader reads the setting once and latches it, so a restart is not just conservative
+    // advice here — the running process really will not change behaviour.
+    setLastMessage(tr("Faster preview takes effect after you restart Drift."),
+                   QStringLiteral("info"));
+}
+
+bool AppController::mediaCodecZeroCopySupported() const
+{
+#if defined(Q_OS_ANDROID)
+    return drift::hwaccel::availableDecodeBackends().contains(drift::hwaccel::Backend::MediaCodec);
+#else
+    return false;
+#endif
 }
 
 bool AppController::vaapiZeroCopySupported() const
@@ -4536,9 +4615,14 @@ void AppController::addClipFromAsset(int assetIndex)
     applyAssetLayout(clip, asset, m_project.width(), m_project.height());
 
     track.clips.append(clip);
+    // Read the index out before the edit is pushed. ProjectSnapshotCommand::redo() assigns over
+    // m_project, and TrackList::operator= releases the buffer `track` points into before it
+    // detaches, so the reference dangles from there on. Every add-clip path below does the same,
+    // and addClipsFromAssets has always captured its indices this way.
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, tr("Clip added"));
     finishEdit(tr("Clip added"));
-    selectClip(trackIndex, track.clips.size() - 1);
+    selectClip(trackIndex, newClipIndex);
 }
 
 void AppController::addClipsFromAssets(const QStringList &assetIds)
@@ -4678,9 +4762,10 @@ void AppController::addClipFromAssetOnNewTrackAt(int assetIndex, int insertIndex
     applyAssetLayout(clip, asset, m_project.width(), m_project.height());
 
     track.clips.append(clip);
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, tr("Clip added on new track"));
     finishEdit(tr("Clip added on new track"));
-    selectClip(trackIndex, track.clips.size() - 1);
+    selectClip(trackIndex, newClipIndex);
 }
 
 void AppController::addClipFromAssetAt(int assetIndex, int trackIndex, double atSeconds)
@@ -4724,9 +4809,10 @@ void AppController::addClipFromAssetAt(int assetIndex, int trackIndex, double at
     applyAssetLayout(clip, asset, m_project.width(), m_project.height());
 
     track.clips.append(clip);
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, tr("Clip added"));
     finishEdit(tr("Clip added"));
-    selectClip(trackIndex, track.clips.size() - 1);
+    selectClip(trackIndex, newClipIndex);
 }
 
 void AppController::selectClip(int trackIndex, int clipIndex)
@@ -5310,9 +5396,10 @@ void AppController::duplicateSelectedClip()
         m_project, track, -1, original.timelineEnd(), original.timelineDuration, m_snapEnabled, m_playheadUs);
 
     track.clips.append(copy);
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, tr("Clip duplicated"));
     finishEdit(tr("Clip duplicated"));
-    selectClip(m_selectedTrack, track.clips.size() - 1);
+    selectClip(m_selectedTrack, newClipIndex);
 }
 
 void AppController::alignSelectedClipLeft()
@@ -5584,9 +5671,10 @@ void AppController::addSubtitleClip(double atSeconds)
     applyDefaultVisualLayout(clip, m_project.width(), m_project.height());
 
     track.clips.append(clip);
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, tr("Subtitle clip added"));
     finishEdit(tr("Subtitle clip added"));
-    selectClip(trackIndex, track.clips.size() - 1);
+    selectClip(trackIndex, newClipIndex);
 }
 
 namespace {
@@ -5643,9 +5731,10 @@ bool AppController::importSubtitleFile(const QUrl &url, double atSeconds)
     applyDefaultVisualLayout(clip, m_project.width(), m_project.height());
 
     track.clips.append(clip);
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, tr("Subtitles imported"));
     finishEdit(tr("Subtitles imported"));
-    selectClip(trackIndex, track.clips.size() - 1);
+    selectClip(trackIndex, newClipIndex);
     setLastMessage(tr("Imported %n subtitles", "", int(cues.size())));
     return true;
 }
@@ -6972,7 +7061,12 @@ void AppController::beginFadeCurveSession(int trackIndex, int clipIndex)
     m_fadeShapeBefore = clip.fadeShape;
     m_fadeCurveApplied = false;
 
-    if (clip.fadeCurve == drift::FadeCurve::Custom && !clip.fadeShape.isEmpty())
+    m_fadeCurveMode = clip.fadeCurve == drift::FadeCurve::Bezier ? drift::FadeCurve::Bezier
+                                                                 : drift::FadeCurve::Custom;
+    if (clip.fadeCurve == drift::FadeCurve::Bezier)
+        m_fadeShape = clip.fadeShape.hasHandles() ? clip.fadeShape
+                                                  : drift::FadeShape::bezierPreset(QString());
+    else if (clip.fadeCurve == drift::FadeCurve::Custom && !clip.fadeShape.isEmpty())
         m_fadeShape = clip.fadeShape;
     else if (clip.fadeCurve == drift::FadeCurve::Linear)
         m_fadeShape = drift::FadeShape::linearPreset();
@@ -6981,7 +7075,7 @@ void AppController::beginFadeCurveSession(int trackIndex, int clipIndex)
     else
         m_fadeShape = drift::FadeShape::smoothPreset();
 
-    clip.fadeCurve = drift::FadeCurve::Custom;
+    clip.fadeCurve = m_fadeCurveMode;
     clip.fadeShape = m_fadeShape;
     syncLinkedPartnersFrom(m_project, clip);
     m_fadeCurveActive = true;
@@ -7053,6 +7147,7 @@ void AppController::setFadeCurvePoints(const QVariantList &points)
                               map.value(QStringLiteral("g")).toDouble()));
     }
     m_fadeShape.setPoints(parsed);
+    m_fadeCurveMode = drift::FadeCurve::Custom;
     clip.fadeCurve = drift::FadeCurve::Custom;
     clip.fadeShape = m_fadeShape;
     if (clip.animIn.kind == drift::ClipAnimKind::Fade || clip.animIn.curve == drift::FadeCurve::Custom) {
@@ -7068,10 +7163,293 @@ void AppController::setFadeCurvePoints(const QVariantList &points)
     emitPreviewFrame();
 }
 
+// --- transition progress curve -------------------------------------------------------------
+//
+// Mirrors the clip fade-curve session: the candidate shape is auditioned on the live transition
+// so the preview updates as the curve is dragged, and either applyTransitionCurve() commits it
+// or endTransitionCurveSession() puts the previous curve back.
+
+void AppController::setTransitionEasing(int trackIndex, const QString &transitionId,
+                                        const QString &curve)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return;
+    drift::Transition *transition = findTransition(m_project.tracks()[trackIndex], transitionId);
+    if (!transition)
+        return;
+
+    const drift::FadeCurve next = drift::fadeCurveFromString(curve);
+    if (next == transition->easingCurve)
+        return;
+
+    const drift::Project before = m_project;
+    transition->easingCurve = next;
+    if (next != drift::FadeCurve::Custom)
+        transition->easingShape.clear();
+    pushProjectEdit(before, tr("Transition curve"));
+    finishEdit(tr("Transition curve updated"));
+    emit selectedTransitionDataChanged();
+    emitPreviewFrame();
+}
+
+void AppController::beginTransitionCurveSession(int trackIndex, const QString &transitionId)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return;
+    drift::Transition *transition = findTransition(m_project.tracks()[trackIndex], transitionId);
+    if (!transition)
+        return;
+
+    if (m_transitionCurveActive)
+        endTransitionCurveSession();
+
+    m_transitionCurveTrack = trackIndex;
+    m_transitionCurveId = transitionId;
+    const TransitionPresetEntry *def = transitionDefForId(transition->kindId);
+    m_transitionCurveName = def ? def->meta.displayName : transition->kindId;
+    m_transitionCurveBefore = transition->easingCurve;
+    m_transitionShapeBefore = transition->easingShape;
+    m_transitionCurveApplied = false;
+
+    // Seed the editor from whatever the transition is using now, so opening Custom on a Smooth
+    // transition starts from that shape rather than snapping to a straight line.
+    m_transitionCurveMode = transition->easingCurve == drift::FadeCurve::Bezier
+        ? drift::FadeCurve::Bezier
+        : drift::FadeCurve::Custom;
+    if (transition->easingCurve == drift::FadeCurve::Bezier)
+        m_transitionShape = transition->easingShape.hasHandles()
+            ? transition->easingShape
+            : drift::FadeShape::bezierPreset(QString());
+    else if (transition->easingCurve == drift::FadeCurve::Custom && !transition->easingShape.isEmpty())
+        m_transitionShape = transition->easingShape;
+    else if (transition->easingCurve == drift::FadeCurve::Smooth)
+        m_transitionShape = drift::FadeShape::smoothPreset();
+    else if (transition->easingCurve == drift::FadeCurve::EqualPower)
+        m_transitionShape = drift::FadeShape::equalPowerPreset();
+    else
+        m_transitionShape = drift::FadeShape::linearPreset();
+
+    transition->easingCurve = m_transitionCurveMode;
+    transition->easingShape = m_transitionShape;
+    m_transitionCurveActive = true;
+    emit transitionCurveSessionChanged();
+    emit transitionCurveChanged();
+    emitPreviewFrame();
+}
+
+void AppController::endTransitionCurveSession()
+{
+    if (!m_transitionCurveActive)
+        return;
+
+    if (!m_transitionCurveApplied && m_transitionCurveTrack >= 0
+        && m_transitionCurveTrack < m_project.tracks().size()) {
+        drift::Transition *transition =
+            findTransition(m_project.tracks()[m_transitionCurveTrack], m_transitionCurveId);
+        if (transition) {
+            transition->easingCurve = m_transitionCurveBefore;
+            transition->easingShape = m_transitionShapeBefore;
+            emitPreviewFrame();
+        }
+    }
+
+    m_transitionCurveActive = false;
+    m_transitionCurveTrack = -1;
+    m_transitionCurveId.clear();
+    m_transitionCurveName.clear();
+    m_transitionShape.clear();
+    m_transitionShapeBefore.clear();
+    m_transitionCurveApplied = false;
+    emit transitionCurveSessionChanged();
+    emit transitionCurveChanged();
+}
+
+QVariantList AppController::transitionCurvePoints() const
+{
+    QVariantList out;
+    for (const QPointF &pt : m_transitionShape.points()) {
+        out.append(QVariantMap{
+            {QStringLiteral("t"), pt.x()},
+            {QStringLiteral("g"), pt.y()},
+        });
+    }
+    return out;
+}
+
+void AppController::setTransitionCurvePoints(const QVariantList &points)
+{
+    if (!m_transitionCurveActive)
+        return;
+    if (m_transitionCurveTrack < 0 || m_transitionCurveTrack >= m_project.tracks().size())
+        return;
+    drift::Transition *transition =
+        findTransition(m_project.tracks()[m_transitionCurveTrack], m_transitionCurveId);
+    if (!transition)
+        return;
+
+    QList<QPointF> parsed;
+    parsed.reserve(points.size());
+    for (const QVariant &entry : points) {
+        const QVariantMap map = entry.toMap();
+        parsed.append(QPointF(map.value(QStringLiteral("t")).toDouble(),
+                              map.value(QStringLiteral("g")).toDouble()));
+    }
+    m_transitionShape.setPoints(parsed);
+    m_transitionCurveMode = drift::FadeCurve::Custom;
+    transition->easingCurve = drift::FadeCurve::Custom;
+    transition->easingShape = m_transitionShape;
+    emit transitionCurveChanged();
+    emitPreviewFrame();
+}
+
+QString AppController::transitionCurveMode() const
+{
+    return m_transitionCurveMode == drift::FadeCurve::Bezier ? QStringLiteral("bezier")
+                                                             : QStringLiteral("points");
+}
+
+QVariantList AppController::transitionCurveHandles() const
+{
+    return {m_transitionShape.handle1().x(), m_transitionShape.handle1().y(),
+            m_transitionShape.handle2().x(), m_transitionShape.handle2().y()};
+}
+
+void AppController::setTransitionCurveHandles(double c1x, double c1y, double c2x, double c2y)
+{
+    if (!m_transitionCurveActive)
+        return;
+    if (m_transitionCurveTrack < 0 || m_transitionCurveTrack >= m_project.tracks().size())
+        return;
+    drift::Transition *transition =
+        findTransition(m_project.tracks()[m_transitionCurveTrack], m_transitionCurveId);
+    if (!transition)
+        return;
+
+    m_transitionShape.setHandles(QPointF(c1x, c1y), QPointF(c2x, c2y));
+    m_transitionCurveMode = drift::FadeCurve::Bezier;
+    transition->easingCurve = drift::FadeCurve::Bezier;
+    transition->easingShape = m_transitionShape;
+    emit transitionCurveChanged();
+    emitPreviewFrame();
+}
+
+void AppController::resetTransitionCurvePreset(const QString &preset)
+{
+    if (!m_transitionCurveActive)
+        return;
+    if (preset.startsWith(QLatin1String("bezier:"))) {
+        const drift::FadeShape seed = drift::FadeShape::bezierPreset(preset.mid(7));
+        setTransitionCurveHandles(seed.handle1().x(), seed.handle1().y(),
+                                  seed.handle2().x(), seed.handle2().y());
+        return;
+    }
+    if (preset == QLatin1String("linear"))
+        m_transitionShape = drift::FadeShape::linearPreset();
+    else if (preset == QLatin1String("equalPower") || preset == QLatin1String("natural"))
+        m_transitionShape = drift::FadeShape::equalPowerPreset();
+    else
+        m_transitionShape = drift::FadeShape::smoothPreset();
+
+    QVariantList points;
+    for (const QPointF &pt : m_transitionShape.points()) {
+        points.append(QVariantMap{
+            {QStringLiteral("t"), pt.x()},
+            {QStringLiteral("g"), pt.y()},
+        });
+    }
+    setTransitionCurvePoints(points);
+}
+
+void AppController::applyTransitionCurve()
+{
+    if (!m_transitionCurveActive)
+        return;
+    if (m_transitionCurveTrack < 0 || m_transitionCurveTrack >= m_project.tracks().size())
+        return;
+    drift::Transition *transition =
+        findTransition(m_project.tracks()[m_transitionCurveTrack], m_transitionCurveId);
+    if (!transition) {
+        setLastMessage(tr("That transition is gone — open the custom curve again"),
+                       QStringLiteral("warning"));
+        endTransitionCurveSession();
+        return;
+    }
+
+    // Rebuild the "before" snapshot so undo restores the curve the session started from, not the
+    // audition state the live project is currently holding.
+    drift::Project before = m_project;
+    if (m_transitionCurveTrack < before.tracks().size()) {
+        if (drift::Transition *beforeTransition =
+                findTransition(before.tracks()[m_transitionCurveTrack], m_transitionCurveId)) {
+            beforeTransition->easingCurve = m_transitionCurveBefore;
+            beforeTransition->easingShape = m_transitionShapeBefore;
+        }
+    }
+
+    transition->easingCurve = m_transitionCurveMode;
+    transition->easingShape = m_transitionShape;
+    pushProjectEdit(before, tr("Custom transition curve"));
+    m_transitionCurveApplied = true;
+    finishEdit(tr("Custom transition curve applied"));
+    emit selectedTransitionDataChanged();
+    emit transitionCurveApplied();
+    endTransitionCurveSession();
+}
+
+QString AppController::fadeCurveMode() const
+{
+    return m_fadeCurveMode == drift::FadeCurve::Bezier ? QStringLiteral("bezier")
+                                                       : QStringLiteral("points");
+}
+
+QVariantList AppController::fadeCurveHandles() const
+{
+    return {m_fadeShape.handle1().x(), m_fadeShape.handle1().y(),
+            m_fadeShape.handle2().x(), m_fadeShape.handle2().y()};
+}
+
+void AppController::setFadeCurveHandles(double c1x, double c1y, double c2x, double c2y)
+{
+    if (!m_fadeCurveActive)
+        return;
+    if (m_fadeCurveTrack < 0 || m_fadeCurveTrack >= m_project.tracks().size())
+        return;
+    drift::Track &track = m_project.tracks()[m_fadeCurveTrack];
+    if (m_fadeCurveClipIndex < 0 || m_fadeCurveClipIndex >= track.clips.size())
+        return;
+    drift::Clip &clip = track.clips[m_fadeCurveClipIndex];
+    if (clip.id != m_fadeCurveClipId)
+        return;
+
+    m_fadeShape.setHandles(QPointF(c1x, c1y), QPointF(c2x, c2y));
+    m_fadeCurveMode = drift::FadeCurve::Bezier;
+    clip.fadeCurve = drift::FadeCurve::Bezier;
+    clip.fadeShape = m_fadeShape;
+    if (clip.animIn.kind == drift::ClipAnimKind::Fade
+        || clip.animIn.curve == drift::FadeCurve::Bezier) {
+        clip.animIn.curve = drift::FadeCurve::Bezier;
+        clip.animIn.shape = m_fadeShape;
+    }
+    if (clip.animOut.kind == drift::ClipAnimKind::Fade
+        || clip.animOut.curve == drift::FadeCurve::Bezier) {
+        clip.animOut.curve = drift::FadeCurve::Bezier;
+        clip.animOut.shape = m_fadeShape;
+    }
+    syncLinkedPartnersFrom(m_project, clip);
+    emit fadeCurveChanged();
+    emitPreviewFrame();
+}
+
 void AppController::resetFadeCurvePreset(const QString &preset)
 {
     if (!m_fadeCurveActive)
         return;
+    if (preset.startsWith(QLatin1String("bezier:"))) {
+        const drift::FadeShape seed = drift::FadeShape::bezierPreset(preset.mid(7));
+        setFadeCurveHandles(seed.handle1().x(), seed.handle1().y(),
+                            seed.handle2().x(), seed.handle2().y());
+        return;
+    }
     if (preset == QLatin1String("linear"))
         m_fadeShape = drift::FadeShape::linearPreset();
     else if (preset == QLatin1String("equalPower") || preset == QLatin1String("natural"))
@@ -7114,22 +7492,22 @@ void AppController::applyFadeCurve()
         syncLinkedPartnersFrom(before, beforeClip);
     }
 
-    clip.fadeCurve = drift::FadeCurve::Custom;
+    clip.fadeCurve = m_fadeCurveMode;
     clip.fadeShape = m_fadeShape;
     if (clip.animIn.kind == drift::ClipAnimKind::Fade) {
-        clip.animIn.curve = drift::FadeCurve::Custom;
+        clip.animIn.curve = m_fadeCurveMode;
         clip.animIn.shape = m_fadeShape;
-        clip.animIn.ease = drift::clipAnimCurveToEase(drift::FadeCurve::Custom);
+        clip.animIn.ease = drift::clipAnimCurveToEase(m_fadeCurveMode);
     }
     if (clip.animOut.kind == drift::ClipAnimKind::Fade) {
-        clip.animOut.curve = drift::FadeCurve::Custom;
+        clip.animOut.curve = m_fadeCurveMode;
         clip.animOut.shape = m_fadeShape;
-        clip.animOut.ease = drift::clipAnimCurveToEase(drift::FadeCurve::Custom);
+        clip.animOut.ease = drift::clipAnimCurveToEase(m_fadeCurveMode);
     }
-    // Motion Custom styles also share this curve editor session.
-    if (clip.animIn.curve == drift::FadeCurve::Custom)
+    // Motion styles that share this editor session track whichever shape it is editing.
+    if (clip.animIn.curve == drift::FadeCurve::Custom || clip.animIn.curve == drift::FadeCurve::Bezier)
         clip.animIn.shape = m_fadeShape;
-    if (clip.animOut.curve == drift::FadeCurve::Custom)
+    if (clip.animOut.curve == drift::FadeCurve::Custom || clip.animOut.curve == drift::FadeCurve::Bezier)
         clip.animOut.shape = m_fadeShape;
     syncLinkedPartnersFrom(m_project, clip);
     pushProjectEdit(before, tr("Custom fade applied"));
@@ -8497,8 +8875,9 @@ void AppController::seekToScene(int sceneIndex)
     }
 }
 
-void AppController::applySceneAnalysis(const drift::SceneAnalysis &analysis, const QString &clipId,
-                                      const QString &clipPath)
+namespace {
+
+QVariantList sceneRowsFromAnalysis(const drift::SceneAnalysis &analysis)
 {
     QVariantList rows;
     rows.reserve(analysis.scenes.size());
@@ -8517,7 +8896,15 @@ void AppController::applySceneAnalysis(const drift::SceneAnalysis &analysis, con
             {QStringLiteral("labels"), scene.labels},
         });
     }
+    return rows;
+}
 
+} // namespace
+
+void AppController::applySceneAnalysis(const drift::SceneAnalysis &analysis, const QString &clipId,
+                                      const QString &clipPath)
+{
+    const QVariantList rows = sceneRowsFromAnalysis(analysis);
     m_scenes = rows;
     m_sceneClipId = clipId;
     m_sceneClipPath = clipPath;
@@ -9082,9 +9469,10 @@ void AppController::finalizeGeneratedSubtitles(drift::TimeUs timelineStart,
     clip.name = drift::subtitleClipName(cues);
 
     track.clips.append(clip);
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, tr("Subtitles generated"));
     finishEdit(tr("Subtitles generated"));
-    selectClip(trackIndex, track.clips.size() - 1);
+    selectClip(trackIndex, newClipIndex);
     setLastMessage(tr("Subtitles generated"), QStringLiteral("success"));
     emit subtitleGenerationFinished(true, QStringLiteral("Subtitles generated"));
 }
@@ -9236,9 +9624,10 @@ void AppController::addShapeClipAt(const QString &shapeId, int trackIndex, doubl
                              entry ? entry->aspect : 1.6);
 
     track.clips.append(clip);
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, tr("Shape added"));
     finishEdit(tr("Shape added"));
-    selectClip(target, track.clips.size() - 1);
+    selectClip(target, newClipIndex);
 }
 
 int AppController::ensureAdjustmentLaneFor(int parentTrackIndex, drift::AdjustmentKind kind,
@@ -9598,9 +9987,10 @@ void AppController::addAdjustmentClipWithEffect(const QString &effectId, int tra
     }
 
     track.clips.append(clip);
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, tr("Add adjustment layer"));
     finishEdit(tr("Adjustment layer added"));
-    selectClip(target, track.clips.size() - 1);
+    selectClip(target, newClipIndex);
 }
 
 namespace {
@@ -9891,9 +10281,10 @@ void AppController::addImageOverlayClip(const QString &path, const QString &name
     applyDefaultVisualLayout(clip, m_project.width(), m_project.height());
 
     track.clips.append(clip);
+    const int newClipIndex = track.clips.size() - 1;
     pushProjectEdit(before, undoText);
     finishEdit(undoText);
-    selectClip(trackIndex, track.clips.size() - 1);
+    selectClip(trackIndex, newClipIndex);
 }
 
 QVariantList AppController::previewClipsAtPlayhead() const
@@ -12516,15 +12907,6 @@ QVariant coerceTransitionParam(const TransitionPresetEntry *def, const QString &
         }
     }
     return value;
-}
-
-drift::Transition *findTransition(drift::Track &track, const QString &transitionId)
-{
-    for (drift::Transition &transition : track.transitions) {
-        if (transition.id == transitionId)
-            return &transition;
-    }
-    return nullptr;
 }
 
 } // namespace
@@ -15660,9 +16042,10 @@ void AppController::freezeFrameAtPlayhead()
                                       m_project.height());
 
                 track.clips.append(freezeClip);
+                const int newClipIndex = track.clips.size() - 1;
                 pushProjectEdit(before, tr("Freeze frame added"));
                 finishEdit(tr("Freeze frame added"));
-                selectClip(trackIndex, track.clips.size() - 1);
+                selectClip(trackIndex, newClipIndex);
             },
             Qt::QueuedConnection);
     });
@@ -15937,6 +16320,8 @@ void AppController::triggerAction(const QString &actionId)
         emit openRequested();
     else if (actionId == QStringLiteral("save"))
         emit saveRequested();
+    else if (actionId == QStringLiteral("saveAs"))
+        emit saveAsRequested();
     else if (actionId == QStringLiteral("playPause"))
         togglePlayback();
     else if (actionId == QStringLiteral("multicam"))
@@ -16788,6 +17173,39 @@ void AppController::rememberEmbeddedSources(const QList<drift::bundle::MediaEntr
 
 void AppController::saveProject(const QUrl &url)
 {
+    writeProjectBundle(url, std::nullopt);
+}
+
+void AppController::saveProjectAs(const QUrl &url)
+{
+    ProjectIdentity copy;
+    // A new id, because the extraction directory and the per-project derived-media directory are
+    // both named by it: leaving the two documents sharing one would have an edit to the duplicate
+    // write freeze frames and media edits into the original's folder, and a packaged copy unpack
+    // over the original's media. sweepExtractionDirs follows references rather than ids, so the
+    // derived files the duplicate inherits at the old id survive the original leaving recents.
+    copy.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    // The header shows the project title, not the file name. Carrying the original's title into a
+    // copy made specifically to be a different version is how you end up editing the wrong one.
+    copy.name = projectNameForUrl(url);
+    if (copy.name.isEmpty())
+        copy.name = m_project.name();
+    writeProjectBundle(url, copy);
+}
+
+void AppController::adoptProjectIdentity(const std::optional<ProjectIdentity> &adopt)
+{
+    if (!adopt)
+        return;
+    m_project.setId(adopt->id);
+    if (m_project.name() != adopt->name) {
+        m_project.setName(adopt->name);
+        emit projectNameChanged();
+    }
+}
+
+void AppController::writeProjectBundle(const QUrl &url, const std::optional<ProjectIdentity> &adopt)
+{
     const QString path = writeTargetPath(url);
     if (path.isEmpty()) {
         setLastMessage(tr("That save location isn’t valid"), QStringLiteral("error"));
@@ -16802,7 +17220,14 @@ void AppController::saveProject(const QUrl &url)
 
     // Built up front on both paths: the worker the Android branch may hand this to must not be
     // reading the project while the timeline is free to change under it.
-    const drift::bundle::WriteRequest request = buildWriteRequest(/*embedSource=*/false);
+    drift::bundle::WriteRequest request = buildWriteRequest(/*embedSource=*/false);
+    // Save As writes the copy's identity into the file but leaves the open document alone until
+    // the write lands, so a failed one cannot strand the session under a name and an id that
+    // belong to a file that does not exist — with the original still one Ctrl+S away.
+    if (adopt) {
+        request.projectId = adopt->id;
+        request.title = adopt->name;
+    }
 
 #ifdef Q_OS_ANDROID
     // A project that arrived as a package keeps its media inside it (see buildWriteRequest), so a
@@ -16825,7 +17250,9 @@ void AppController::saveProject(const QUrl &url)
         emit packagingChanged();
         emit packageProgressChanged();
 
-        (void)QtConcurrent::run([this, path, url, request]() {
+        // `adopt` is captured by value on both hops: it is a reference parameter, and the identity
+        // has to outlive this call to reach the completion that applies it.
+        (void)QtConcurrent::run([this, path, url, request, adopt]() {
             Exporter::BackgroundHold hold(QStringLiteral("Saving project"));
             QString error;
             const auto progress = [this](qint64 done, qint64 total) {
@@ -16862,21 +17289,24 @@ void AppController::saveProject(const QUrl &url)
                 discardWriteTarget(path, url);
             QMetaObject::invokeMethod(
                 this,
-                [this, ok, written, error, url, request]() {
+                [this, ok, written, error, url, request, adopt]() {
                     m_packaging = false;
                     emit packagingChanged();
                     if (!ok) {
                         // Only a failed commit says anything about the document: a bundle
                         // writer failure is about the staging file. A commit most likely lost
                         // its write grant across a restart, so drop the association and let
-                        // the next Save ask for a location.
-                        if (written)
+                        // the next Save ask for a location. Not on Save As: the document that
+                        // failed is the copy, and the grant on it came from the picker moments
+                        // ago — the remembered path still names the original, which is fine.
+                        if (written && !adopt)
                             setCurrentProjectPath(QString());
                         setLastMessage(error, QStringLiteral("error"));
                         emit projectSaved(false);
                         return;
                     }
                     rememberEmbeddedSources(request.media);
+                    adoptProjectIdentity(adopt);
                     m_packageProgress = 1.0;
                     emit packageProgressChanged();
                     const QString location = projectLocation(url);
@@ -16885,7 +17315,8 @@ void AppController::saveProject(const QUrl &url)
                     setDirty(false);
                     deleteRecoveryFile();
                     emit projectMetadataChanged();
-                    setLastMessage(tr("Project saved"), QStringLiteral("success"));
+                    setLastMessage(adopt ? tr("Saved a copy") : tr("Project saved"),
+                                   QStringLiteral("success"));
                     emit projectSaved(true);
                 },
                 Qt::QueuedConnection);
@@ -16905,12 +17336,15 @@ void AppController::saveProject(const QUrl &url)
         discardWriteTarget(path, url);
         // Saving over the remembered document failed — most likely its write grant did not
         // survive the restart — so drop the association and let the next Save ask for a location.
-        setCurrentProjectPath(QString());
+        // A failed Save As says nothing about the original, so it keeps its path (see above).
+        if (!adopt)
+            setCurrentProjectPath(QString());
         setLastMessage(error, QStringLiteral("error"));
         emit projectSaved(false);
         return;
     }
     rememberEmbeddedSources(request.media);
+    adoptProjectIdentity(adopt);
 
     const QString location = projectLocation(url);
     setCurrentProjectPath(location);
@@ -16918,7 +17352,7 @@ void AppController::saveProject(const QUrl &url)
     setDirty(false);
     deleteRecoveryFile();
     emit projectMetadataChanged();
-    setLastMessage(tr("Project saved"), QStringLiteral("success"));
+    setLastMessage(adopt ? tr("Saved a copy") : tr("Project saved"), QStringLiteral("success"));
     emit projectSaved(true);
 }
 
@@ -17047,6 +17481,199 @@ void AppController::loadPremiereProject(const QUrl &url)
     setLastMessage(tr("Premiere Pro project imported: %1").arg(proj->name()), QStringLiteral("success"));
 }
 
+void AppController::importMogrt(const QUrl &url)
+{
+    const QString path = readTargetPath(url);
+    if (path.isEmpty()) {
+        setLastMessage(tr("That template location isn’t valid"), QStringLiteral("error"));
+        return;
+    }
+
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString destDir =
+        QDir(base).filePath(QStringLiteral("templates/%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    QDir().mkpath(destDir);
+
+    QString readError;
+    const std::optional<drift::mogrt::MogrtTemplate> tmpl = drift::mogrt::readTemplate(path, destDir, &readError);
+    if (!tmpl) {
+        setLastMessage(readError.isEmpty() ? tr("Failed to unpack Motion Graphics Template") : readError,
+                       QStringLiteral("error"));
+        return;
+    }
+
+    const drift::Project before = m_project;
+
+    // Insert at current playhead if project already has clips; otherwise at start (0).
+    drift::TimeUs insertTime = 0;
+    bool hasClips = false;
+    for (const drift::Track &t : m_project.tracks()) {
+        if (!t.clips.isEmpty()) {
+            hasClips = true;
+            break;
+        }
+    }
+    if (hasClips) {
+        insertTime = m_playheadUs;
+    }
+
+    QString applyError;
+    if (!drift::mogrt::applyTemplateToProject(*tmpl, m_project, insertTime, &applyError)) {
+        setLastMessage(applyError.isEmpty() ? tr("Failed to apply template to project") : applyError,
+                       QStringLiteral("error"));
+        return;
+    }
+
+    pushProjectEdit(before, tr("Import template: %1").arg(tmpl->title));
+
+    if (m_assetLibrary)
+        m_assetLibrary->setProject(&m_project);
+    m_binFolderModel.setProject(&m_project);
+
+    setDirty(true);
+    finishEdit(tr("Template imported: %1").arg(tmpl->title));
+    setLastMessage(tr("Template imported: %1").arg(tmpl->title), QStringLiteral("success"));
+}
+
+void AppController::loadKdenliveProject(const QUrl &url)
+{
+    const QString path = readTargetPath(url);
+    if (path.isEmpty()) {
+        setLastMessage(tr("That project location isn’t valid"), QStringLiteral("error"));
+        return;
+    }
+
+    QString readError;
+    const std::optional<drift::Project> proj = drift::kdenlive::readProject(path, &readError);
+    if (!proj) {
+        setLastMessage(readError.isEmpty() ? tr("Failed to open Kdenlive / MLT project") : readError,
+                       QStringLiteral("error"));
+        return;
+    }
+
+    // Drop an in-flight bundle extract so it cannot land on top of this document.
+    ++m_loadGeneration;
+
+    const QByteArray data = QJsonDocument(proj->toJson()).toJson(QJsonDocument::Compact);
+
+    QString error;
+    if (!applyProjectJson(data, &error)) {
+        setLastMessage(error, QStringLiteral("error"));
+        return;
+    }
+
+    m_embeddedSources.clear();
+    // Untitled: Save must not write a .drift bundle over this project, and recents stay .drift.
+    setCurrentProjectPath(QString());
+    setDirty(true);
+    deleteRecoveryFile();
+    setProjectLayoutChosen(true);
+    setLastMessage(tr("Kdenlive project imported: %1").arg(proj->name()), QStringLiteral("success"));
+}
+
+void AppController::loadResolveProject(const QUrl &url)
+{
+    const QString path = readTargetPath(url);
+    if (path.isEmpty()) {
+        setLastMessage(tr("That project location isn’t valid"), QStringLiteral("error"));
+        return;
+    }
+
+    QString readError;
+    const std::optional<drift::Project> proj = drift::resolve::readProject(path, &readError);
+    if (!proj) {
+        setLastMessage(readError.isEmpty() ? tr("Failed to open DaVinci Resolve project / timeline") : readError,
+                       QStringLiteral("error"));
+        return;
+    }
+
+    // Drop an in-flight bundle extract so it cannot land on top of this document.
+    ++m_loadGeneration;
+
+    const QByteArray data = QJsonDocument(proj->toJson()).toJson(QJsonDocument::Compact);
+
+    QString error;
+    if (!applyProjectJson(data, &error)) {
+        setLastMessage(error, QStringLiteral("error"));
+        return;
+    }
+
+    m_embeddedSources.clear();
+    setCurrentProjectPath(QString());
+    setDirty(true);
+    deleteRecoveryFile();
+    setProjectLayoutChosen(true);
+    setLastMessage(tr("DaVinci Resolve project imported: %1").arg(proj->name()), QStringLiteral("success"));
+}
+
+void AppController::loadEdlTimeline(const QUrl &url)
+{
+    const QString path = readTargetPath(url);
+    if (path.isEmpty()) {
+        setLastMessage(tr("That project location isn’t valid"), QStringLiteral("error"));
+        return;
+    }
+
+    QString readError;
+    const std::optional<drift::Project> proj = drift::edl::readProject(path, &readError);
+    if (!proj) {
+        setLastMessage(readError.isEmpty() ? tr("Failed to open Edit Decision List (.edl)") : readError,
+                       QStringLiteral("error"));
+        return;
+    }
+
+    ++m_loadGeneration;
+
+    const QByteArray data = QJsonDocument(proj->toJson()).toJson(QJsonDocument::Compact);
+
+    QString error;
+    if (!applyProjectJson(data, &error)) {
+        setLastMessage(error, QStringLiteral("error"));
+        return;
+    }
+
+    m_embeddedSources.clear();
+    setCurrentProjectPath(QString());
+    setDirty(true);
+    deleteRecoveryFile();
+    setProjectLayoutChosen(true);
+    setLastMessage(tr("EDL imported: %1").arg(proj->name()), QStringLiteral("success"));
+}
+
+void AppController::loadOtioTimeline(const QUrl &url)
+{
+    const QString path = readTargetPath(url);
+    if (path.isEmpty()) {
+        setLastMessage(tr("That project location isn’t valid"), QStringLiteral("error"));
+        return;
+    }
+
+    QString readError;
+    const std::optional<drift::Project> proj = drift::otio::readProject(path, &readError);
+    if (!proj) {
+        setLastMessage(readError.isEmpty() ? tr("Failed to open OpenTimelineIO (.otio) sequence") : readError,
+                       QStringLiteral("error"));
+        return;
+    }
+
+    ++m_loadGeneration;
+
+    const QByteArray data = QJsonDocument(proj->toJson()).toJson(QJsonDocument::Compact);
+
+    QString error;
+    if (!applyProjectJson(data, &error)) {
+        setLastMessage(error, QStringLiteral("error"));
+        return;
+    }
+
+    m_embeddedSources.clear();
+    setCurrentProjectPath(QString());
+    setDirty(true);
+    deleteRecoveryFile();
+    setProjectLayoutChosen(true);
+    setLastMessage(tr("OpenTimelineIO imported: %1").arg(proj->name()), QStringLiteral("success"));
+}
+
 void AppController::packageProject(const QUrl &url)
 {
     // The bundle writer needs a real file to seek in, so on Android this stages into app storage
@@ -17145,12 +17772,47 @@ void AppController::loadProject(const QUrl &url)
         return;
     }
 
-    if (path.endsWith(QLatin1String(".prproj"), Qt::CaseInsensitive)
-        || path.endsWith(QLatin1String(".xml"), Qt::CaseInsensitive)
-        || drift::prproj::isPremiereProject(path)) {
-        loadPremiereProject(url);
-        return;
-    }
+    // Disabled: external project imports (Premiere Pro, DaVinci Resolve/FCPXML, Kdenlive/Shotcut,
+    // .mogrt, EDL, OTIO) landed in the last two weeks but need more fixing before they ship. Leave
+    // the branches commented out; uncomment to re-enable once the readers are stable.
+    // if (path.endsWith(QLatin1String(".prproj"), Qt::CaseInsensitive)
+    //     || path.endsWith(QLatin1String(".xml"), Qt::CaseInsensitive)
+    //     || drift::prproj::isPremiereProject(path)) {
+    //     loadPremiereProject(url);
+    //     return;
+    // }
+    //
+    // if (path.endsWith(QLatin1String(".drp"), Qt::CaseInsensitive)
+    //     || path.endsWith(QLatin1String(".fcpxml"), Qt::CaseInsensitive)
+    //     || drift::resolve::isResolveProject(path)) {
+    //     loadResolveProject(url);
+    //     return;
+    // }
+    //
+    // if (path.endsWith(QLatin1String(".mogrt"), Qt::CaseInsensitive)
+    //     || drift::mogrt::isMogrtFile(path)) {
+    //     importMogrt(url);
+    //     return;
+    // }
+    //
+    // if (path.endsWith(QLatin1String(".kdenlive"), Qt::CaseInsensitive)
+    //     || path.endsWith(QLatin1String(".mlt"), Qt::CaseInsensitive)
+    //     || drift::kdenlive::isKdenliveProject(path)) {
+    //     loadKdenliveProject(url);
+    //     return;
+    // }
+    //
+    // if (path.endsWith(QLatin1String(".edl"), Qt::CaseInsensitive)
+    //     || drift::edl::isEdlTimeline(path)) {
+    //     loadEdlTimeline(url);
+    //     return;
+    // }
+    //
+    // if (path.endsWith(QLatin1String(".otio"), Qt::CaseInsensitive)
+    //     || drift::otio::isOtioTimeline(path)) {
+    //     loadOtioTimeline(url);
+    //     return;
+    // }
 
     if (fileStartsWithJsonObject(path)) {
         loadProjectJson(url);
@@ -17983,6 +18645,72 @@ bool AppController::canShareExport() const
 #endif
 }
 
+void AppController::saveToGallery(const QString &filePath, const QString &displayName)
+{
+#ifdef Q_OS_ANDROID
+    if (filePath.isEmpty())
+        return;
+
+    const QString name = displayName.isEmpty() ? QFileInfo(filePath).fileName() : displayName;
+    const QUrl source = QUrl::fromLocalFile(filePath);
+    const QString mime = QMimeDatabase().mimeTypeForFile(name, QMimeDatabase::MatchExtension).name();
+    const QString location = mime.startsWith(QLatin1String("audio/")) ? QStringLiteral("Music/Drift")
+                             : mime.startsWith(QLatin1String("image/"))
+                                 ? QStringLiteral("Pictures/Drift")
+                                 : QStringLiteral("Movies/Drift");
+
+    (void)QtConcurrent::run([this, source, name, location]() {
+        Exporter::BackgroundHold hold(QStringLiteral("Saving to gallery"));
+        QString error;
+        const QUrl published = Exporter::publishToGallery(source, name, &error);
+        const bool ok = !published.isEmpty();
+        QMetaObject::invokeMethod(
+            this,
+            [this, name, ok, location, error]() {
+                emit savedToGallery(name, ok, ok ? location : QString(), error);
+            },
+            Qt::QueuedConnection);
+    });
+#else
+    Q_UNUSED(filePath);
+    Q_UNUSED(displayName);
+#endif
+}
+
+void AppController::playLastExport()
+{
+#ifdef Q_OS_ANDROID
+    if (m_lastExportUrl.isEmpty() || m_sharingExport)
+        return;
+
+    m_sharingExport = true;
+    emit canShareExportChanged();
+    setLastMessage(tr("Opening your video…"));
+
+    const QUrl source = m_lastExportUrl;
+    const QString name = m_lastExportName;
+    (void)QtConcurrent::run([this, source, name]() {
+        Exporter::BackgroundHold hold(QStringLiteral("Preparing to play"));
+        QString error;
+        const QUrl published = Exporter::publishToGallery(source, name, &error);
+        QMetaObject::invokeMethod(
+            this,
+            [this, published, error]() {
+                m_sharingExport = false;
+                emit canShareExportChanged();
+                if (published.isEmpty()) {
+                    setLastMessage(error, QStringLiteral("error"));
+                    return;
+                }
+                if (!FileDialogs().viewFile(published))
+                    setLastMessage(tr("Nothing on this device can play that file"),
+                                   QStringLiteral("error"));
+            },
+            Qt::QueuedConnection);
+    });
+#endif
+}
+
 void AppController::shareLastExport()
 {
 #ifdef Q_OS_ANDROID
@@ -18023,65 +18751,37 @@ void AppController::shareLastExport()
 
 bool AppController::mcpRunning() const
 {
-#ifndef Q_OS_ANDROID
     return m_mcp && m_mcp->running();
-#else
-    return false;
-#endif
 }
 
 QString AppController::mcpUrl() const
 {
-#ifndef Q_OS_ANDROID
     return m_mcp ? m_mcp->url() : QString();
-#else
-    return {};
-#endif
 }
 
 QString AppController::mcpToken() const
 {
-#ifndef Q_OS_ANDROID
     return m_mcp ? m_mcp->token() : QString();
-#else
-    return {};
-#endif
 }
 
 int AppController::mcpPort() const
 {
-#ifndef Q_OS_ANDROID
     return m_mcp ? int(m_mcp->port()) : 0;
-#else
-    return 0;
-#endif
 }
 
 QString AppController::mcpError() const
 {
-#ifndef Q_OS_ANDROID
     return m_mcp ? m_mcp->error() : QString();
-#else
-    return {};
-#endif
 }
 
 QString AppController::mcpCursorSnippet() const
 {
-#ifndef Q_OS_ANDROID
     return m_mcp ? m_mcp->cursorSnippet() : QString();
-#else
-    return {};
-#endif
 }
 
 QString AppController::mcpClaudeCommand() const
 {
-#ifndef Q_OS_ANDROID
     return m_mcp ? m_mcp->claudeCommand() : QString();
-#else
-    return {};
-#endif
 }
 
 QString AppController::mcpStdioSnippet() const
@@ -18098,16 +18798,12 @@ QString AppController::mcpStdioSnippet() const
 
 void AppController::setMcpEnabled(bool enabled)
 {
-#ifndef Q_OS_ANDROID
     if (!m_mcp)
         return;
     if (enabled)
         m_mcp->start();
     else
         m_mcp->stop();
-#else
-    Q_UNUSED(enabled);
-#endif
 }
 
 namespace {
@@ -18259,6 +18955,114 @@ QString AppController::mcpClipId(int trackIndex, int clipIndex) const
     return m_project.tracks().at(trackIndex).clips.at(clipIndex).id;
 }
 
+namespace {
+
+// Detail rows come from the QML clip map, which spells out every field for the inspector's
+// bindings. Agents pay per token, so drop what a clip of this kind cannot use and what still
+// sits at its default; an absent boolean reads as false. `verbose` returns the map untouched.
+QJsonObject mcpDetailRow(const QVariantMap &clipMap, const QVariantMap &transform, bool verbose)
+{
+    if (verbose)
+        return QJsonObject::fromVariantMap(clipMap);
+    QVariantMap m = clipMap;
+    const QString kind = m.value(QStringLiteral("kind")).toString();
+    if (kind != QLatin1String("text") && kind != QLatin1String("subtitle")) {
+        m.remove(QStringLiteral("textStyle"));
+        m.remove(QStringLiteral("textContent"));
+    }
+    if (kind != QLatin1String("shape"))
+        m.remove(QStringLiteral("shapeStyle"));
+    if (kind != QLatin1String("adjustment"))
+        m.remove(QStringLiteral("adjustmentKind"));
+
+    QVariantMap mask = m.value(QStringLiteral("mask")).toMap();
+    if (mask.value(QStringLiteral("shape")).toString() == QLatin1String("none")) {
+        m.remove(QStringLiteral("mask"));
+    } else {
+        if (mask.value(QStringLiteral("mediaPath")).toString().isEmpty()) {
+            for (const char *key : {"mediaPath", "mediaFgrPath", "mediaSrcOffsetUs", "mediaFit",
+                                    "mediaChannel", "mediaLoop"})
+                mask.remove(QLatin1String(key));
+        }
+        if (!mask.value(QStringLiteral("animated")).toBool())
+            mask.remove(QStringLiteral("keyframes"));
+        m.insert(QStringLiteral("mask"), mask);
+    }
+
+    const QVariantMap keyframes = m.value(QStringLiteral("keyframes")).toMap();
+    QVariantMap animatedTracks;
+    QStringList animated;
+    for (auto it = keyframes.constBegin(); it != keyframes.constEnd(); ++it) {
+        if (it.value().toMap().value(QStringLiteral("points")).toList().size() > 1) {
+            animatedTracks.insert(it.key(), it.value());
+            animated.append(it.key());
+        }
+    }
+    m.remove(QStringLiteral("keyframes"));
+    if (!animatedTracks.isEmpty()) {
+        m.insert(QStringLiteral("keyframes"), animatedTracks);
+        m.insert(QStringLiteral("animated"), animated);
+    }
+    m.insert(QStringLiteral("transform"), transform);
+
+    if (!m.value(QStringLiteral("stabilized")).toBool() && !m.value(QStringLiteral("stabilizing")).toBool()) {
+        for (const char *key : {"stabilizeMode", "stabilizeSmoothing", "stabilizeTripod", "stabilizeStale",
+                                "stabilizeProgress", "stabilizeStatus"})
+            m.remove(QLatin1String(key));
+    }
+    for (const char *which : {"animIn", "animOut"}) {
+        if (m.value(QLatin1String(which)).toMap().value(QStringLiteral("kind")).toString() == QLatin1String("none"))
+            m.remove(QLatin1String(which));
+    }
+    for (const char *key : {"filmstripPath", "thumbnailPath", "canFaceTrack"})
+        m.remove(QLatin1String(key));
+    if (!m.value(QStringLiteral("hasFaceTrack")).toBool()) {
+        m.remove(QStringLiteral("faceTrackHasContours"));
+        m.remove(QStringLiteral("faceTrackHasMesh"));
+    }
+    if (m.value(QStringLiteral("fadeCurve")).toString() != QLatin1String("custom")) {
+        m.remove(QStringLiteral("fadeShape"));
+        m.remove(QStringLiteral("fadeHandles"));
+    }
+    if (m.value(QStringLiteral("audioStreamIndex")).toInt() == 0)
+        m.remove(QStringLiteral("audioStreamIndex"));
+    if (m.value(QStringLiteral("pan")).toDouble() == 0.0)
+        m.remove(QStringLiteral("pan"));
+    if (m.value(QStringLiteral("assetIndex")).toInt() < 0)
+        m.remove(QStringLiteral("assetIndex"));
+    if (m.value(QStringLiteral("sourceDuration")).toDouble() <= 0.0)
+        m.remove(QStringLiteral("sourceDuration"));
+    if (m.value(QStringLiteral("fadeIn")).toDouble() == 0.0
+        && m.value(QStringLiteral("fadeOut")).toDouble() == 0.0) {
+        m.remove(QStringLiteral("fadeIn"));
+        m.remove(QStringLiteral("fadeOut"));
+        m.remove(QStringLiteral("fadeCurve"));
+    }
+
+    for (auto it = m.begin(); it != m.end();) {
+        const QVariant &v = it.value();
+        bool drop = false;
+        switch (v.typeId()) {
+        case QMetaType::Bool:
+            drop = !v.toBool();
+            break;
+        case QMetaType::QString:
+            drop = v.toString().isEmpty();
+            break;
+        case QMetaType::QVariantList:
+        case QMetaType::QStringList:
+            drop = v.toList().isEmpty();
+            break;
+        default:
+            break;
+        }
+        it = drop ? m.erase(it) : it + 1;
+    }
+    return QJsonObject::fromVariantMap(m);
+}
+
+} // namespace
+
 QVariantMap AppController::mcpCompactClip(int trackIndex, int clipIndex, bool includeCanvas) const
 {
     if (!isValidClipIndex(trackIndex, clipIndex))
@@ -18289,20 +19093,38 @@ QVariantMap AppController::mcpCompactClip(int trackIndex, int clipIndex, bool in
     return out;
 }
 
-QJsonObject AppController::mcpInspect(bool includeClips, int sinceRevision, bool detail,
-                                      bool includeCues) const
+QJsonObject AppController::mcpInspect(const McpInspectOptions &options) const
 {
     using namespace drift::mcp;
-    if (sinceRevision >= 0 && sinceRevision == m_mcpEditRevision)
+    if (options.since >= 0 && options.since == m_mcpEditRevision)
         return ok({{QStringLiteral("unchanged"), true}, {QStringLiteral("revision"), m_mcpEditRevision}});
+
+    const QList<drift::Track> &projectTracks = m_project.tracks();
+    QPair<int, int> only{-1, -1};
+    if (!options.clip.isEmpty()) {
+        only = mcpLocateClip(options.clip);
+        if (only.first < 0)
+            return err("bad_args", QStringLiteral("clip %1 not found — re-read inspect({clips:true}); "
+                                                  "ids change after set_speed_curve/undo")
+                                       .arg(options.clip));
+    } else if (options.track >= 0 && options.track >= projectTracks.size()) {
+        return err("bad_args", QStringLiteral("track %1 does not exist; the timeline has %2 track(s)")
+                                   .arg(options.track)
+                                   .arg(projectTracks.size()));
+    }
+    const int onlyTrack = only.first >= 0 ? only.first : options.track;
+    const bool includeClips = options.clips || only.first >= 0;
+    const bool detail = options.detail || only.first >= 0;
+    const bool includeCues = options.cues;
 
     int clipCount = 0;
     QJsonArray trackRows;
-    const QList<drift::Track> &projectTracks = m_project.tracks();
     const QVariantList trackModels = detail ? tracks() : QVariantList{};
     for (int t = 0; t < projectTracks.size(); ++t) {
         const drift::Track &track = projectTracks.at(t);
         clipCount += track.clips.size();
+        if (onlyTrack >= 0 && t != onlyTrack)
+            continue;
         QJsonObject row{
             {QStringLiteral("i"), t},
             {QStringLiteral("type"), drift::trackTypeToString(track.type)},
@@ -18312,8 +19134,10 @@ QJsonObject AppController::mcpInspect(bool includeClips, int sinceRevision, bool
         };
         if (detail && t < trackModels.size()) {
             const QVariantMap tm = trackModels.at(t).toMap();
-            row.insert(QStringLiteral("showWaveform"), tm.value(QStringLiteral("showWaveform")).toBool());
-            row.insert(QStringLiteral("heightScale"), tm.value(QStringLiteral("heightScale")).toDouble());
+            if (tm.value(QStringLiteral("showWaveform")).toBool())
+                row.insert(QStringLiteral("showWaveform"), true);
+            if (tm.value(QStringLiteral("heightScale")).toDouble() != 1.0)
+                row.insert(QStringLiteral("heightScale"), tm.value(QStringLiteral("heightScale")).toDouble());
             const QVariantList transitions = tm.value(QStringLiteral("transitions")).toList();
             QJsonArray trJson;
             for (const QVariant &tr : transitions)
@@ -18324,10 +19148,17 @@ QJsonObject AppController::mcpInspect(bool includeClips, int sinceRevision, bool
         if (includeClips) {
             QJsonArray clips;
             for (int c = 0; c < track.clips.size(); ++c) {
+                if (only.second >= 0 && c != only.second)
+                    continue;
                 if (detail && t < trackModels.size()) {
                     const QVariantList clipList = trackModels.at(t).toMap().value(QStringLiteral("clips")).toList();
-                    if (c < clipList.size())
-                        clips.append(QJsonObject::fromVariantMap(clipList.at(c).toMap()));
+                    if (c < clipList.size()) {
+                        const QVariantMap canvas = mcpCompactClip(t, c, true);
+                        QVariantMap transform;
+                        for (const char *key : {"x", "y", "w", "h", "rotation", "opacity"})
+                            transform.insert(QLatin1String(key), canvas.value(QLatin1String(key)));
+                        clips.append(mcpDetailRow(clipList.at(c).toMap(), transform, options.verbose));
+                    }
                 } else {
                     const QVariantMap compact = mcpCompactClip(t, c, false);
                     QJsonObject row = QJsonObject::fromVariantMap(compact);
@@ -18394,26 +19225,41 @@ QJsonObject AppController::mcpInspect(bool includeClips, int sinceRevision, bool
             });
         }
         extra.insert(QStringLiteral("bookmarks"), marks);
-        extra.insert(QStringLiteral("package"),
-                     QJsonObject{{QStringLiteral("active"), packaging()},
-                                 {QStringLiteral("progress"), packageProgress()}});
-        extra.insert(QStringLiteral("subtitleGen"),
-                     QJsonObject{{QStringLiteral("active"), subtitleGenerating()},
-                                 {QStringLiteral("progress"), subtitleGenProgress()},
-                                 {QStringLiteral("status"), subtitleGenStatus()}});
-        extra.insert(QStringLiteral("reverseRender"),
-                     QJsonObject{{QStringLiteral("active"), reverseRendering()},
-                                 {QStringLiteral("progress"), reverseRenderProgress()},
-                                 {QStringLiteral("status"), reverseRenderStatus()}});
+        QJsonObject jobs;
+        if (packaging()) {
+            jobs.insert(QStringLiteral("package"),
+                        QJsonObject{{QStringLiteral("active"), true},
+                                    {QStringLiteral("progress"), packageProgress()}});
+        }
+        if (subtitleGenerating()) {
+            jobs.insert(QStringLiteral("subtitleGen"),
+                        QJsonObject{{QStringLiteral("active"), true},
+                                    {QStringLiteral("progress"), subtitleGenProgress()},
+                                    {QStringLiteral("status"), subtitleGenStatus()}});
+        }
+        if (reverseRendering()) {
+            jobs.insert(QStringLiteral("reverseRender"),
+                        QJsonObject{{QStringLiteral("active"), true},
+                                    {QStringLiteral("progress"), reverseRenderProgress()},
+                                    {QStringLiteral("status"), reverseRenderStatus()}});
+        }
         // Scene state without the rows — list_scenes returns those. There is deliberately no
         // `stale` flag as there is for beats: this analysis describes the source file, not the
         // mix, so edits do not invalidate it.
-        extra.insert(QStringLiteral("sceneDetect"),
-                     QJsonObject{{QStringLiteral("active"), m_sceneDetecting},
-                                 {QStringLiteral("progress"), m_sceneDetectProgress},
-                                 {QStringLiteral("status"), m_sceneDetectStatus},
-                                 {QStringLiteral("clip"), m_sceneClipId},
-                                 {QStringLiteral("scenes"), int(m_scenes.size())}});
+        if (m_sceneDetecting || !m_scenes.isEmpty()) {
+            jobs.insert(QStringLiteral("sceneDetect"),
+                        QJsonObject{{QStringLiteral("active"), m_sceneDetecting},
+                                    {QStringLiteral("progress"), m_sceneDetectProgress},
+                                    {QStringLiteral("status"), m_sceneDetectStatus},
+                                    {QStringLiteral("clip"), m_sceneClipId},
+                                    {QStringLiteral("scenes"), int(m_scenes.size())}});
+        }
+        if (m_marketClient && m_marketClient->activeDownloadCount() > 0) {
+            jobs.insert(QStringLiteral("market"),
+                        QJsonObject{{QStringLiteral("active"), m_marketClient->activeDownloadCount()}});
+        }
+        if (!jobs.isEmpty())
+            extra.insert(QStringLiteral("jobs"), jobs);
         // Beat state without the arrays — detect_beats returns those. `stale` matters because
         // finishEdit drops the analysis as soon as the mix changes, so a grid an agent found a
         // few ops ago may already be gone.
@@ -18436,7 +19282,8 @@ QJsonObject AppController::mcpInspect(bool includeClips, int sinceRevision, bool
             beatState.insert(QStringLiteral("stale"),
                              m_beatAudioFingerprint != audioLayoutFingerprint());
         }
-        extra.insert(QStringLiteral("beats"), beatState);
+        if (m_beatAnalysisRunning || !m_beatAnalysis.isEmpty())
+            extra.insert(QStringLiteral("beats"), beatState);
     }
     if (m_selectedTrack >= 0 && m_selectedClip >= 0
         && isValidClipIndex(m_selectedTrack, m_selectedClip)) {
@@ -18453,7 +19300,7 @@ QJsonObject AppController::mcpInspect(bool includeClips, int sinceRevision, bool
                              {QStringLiteral("canRedo"), m_undoStack.canRedo()},
                              {QStringLiteral("depth"), m_undoStack.count()},
                              {QStringLiteral("index"), m_undoStack.index()},
-                             {QStringLiteral("hash"), historyHashAt(m_undoStack.index())}});
+                             {QStringLiteral("hash"), historyHashAt(m_undoStack.index()).left(12)}});
     if (detail && m_multicamActive) {
         extra.insert(QStringLiteral("multicam"),
                      QJsonObject{
@@ -18557,12 +19404,17 @@ QJsonObject AppController::mcpCaptureFrame(double atSeconds, bool full)
     if (frame->isNull())
         return textResult(err("capture_failed", QStringLiteral("Compositor returned no frame")), true);
 
-    const QJsonObject meta = ok({
+    QJsonObject meta = ok({
         {QStringLiteral("at"), drift::usToSeconds(timeUs)},
         {QStringLiteral("w"), frame->width()},
         {QStringLiteral("h"), frame->height()},
         {QStringLiteral("full"), full},
     });
+    if (timeUs > snapshot->durationUs()) {
+        meta.insert(QStringLiteral("beyond_end"), true);
+        meta.insert(QStringLiteral("dur"), drift::usToSeconds(snapshot->durationUs()));
+    }
+    meta = compactJson(meta);
 
     if (full) {
         const QString outPath = newFreezeFramePath(m_project.id());
@@ -19048,27 +19900,47 @@ QJsonObject AppController::mcpDetectScenes(int trackIndex, int clipIndex, double
     return ok({{QStringLiteral("started"), true}, {QStringLiteral("clip"), clip.id}});
 }
 
-QJsonObject AppController::mcpListScenes(const QString &label, double minScore,
-                                         const QString &sort, int limit) const
+QVariantList AppController::mcpSceneRows(int trackIndex, int clipIndex, const drift::Clip **clip) const
 {
-    using namespace drift::mcp;
-    if (m_scenes.isEmpty())
-        return err("not_found", QStringLiteral("No scene analysis yet — call detect_scenes first"));
-
-    const drift::Clip *clip = nullptr;
-    for (const drift::Track &track : m_project.tracks()) {
-        for (const drift::Clip &candidate : track.clips) {
-            if (candidate.id == m_sceneClipId) {
-                clip = &candidate;
-                break;
+    *clip = nullptr;
+    if (trackIndex < 0 || clipIndex < 0) {
+        for (const drift::Track &track : m_project.tracks()) {
+            for (const drift::Clip &candidate : track.clips) {
+                if (candidate.id == m_sceneClipId)
+                    *clip = &candidate;
             }
         }
+        return *clip ? m_scenes : QVariantList{};
     }
-    if (!clip)
-        return err("not_found", QStringLiteral("The analysed clip is no longer on the timeline"));
+    const auto &tracks = m_project.tracks();
+    if (trackIndex >= tracks.size() || clipIndex >= tracks.at(trackIndex).clips.size())
+        return {};
+    *clip = &tracks.at(trackIndex).clips.at(clipIndex);
+    if ((*clip)->id == m_sceneClipId)
+        return m_scenes;
+    drift::SceneAnalysis analysis;
+    if (drift::loadCachedAnalysis(sceneRequestFor(**clip, true, 0.0), &analysis)
+        || drift::loadCachedAnalysis(sceneRequestFor(**clip, false, 0.0), &analysis))
+        return sceneRowsFromAnalysis(analysis);
+    return {};
+}
+
+QJsonObject AppController::mcpListScenes(const QString &label, double minScore,
+                                         const QString &sort, int limit, int trackIndex,
+                                         int clipIndex) const
+{
+    using namespace drift::mcp;
+    const drift::Clip *clip = nullptr;
+    const QVariantList scenes = mcpSceneRows(trackIndex, clipIndex, &clip);
+    if (trackIndex >= 0 && !clip)
+        return err("not_found", QStringLiteral("no clip at track %1 index %2").arg(trackIndex).arg(clipIndex));
+    if (scenes.isEmpty()) {
+        return err("not_found", clip ? QStringLiteral("Clip %1 has no scene analysis — call detect_scenes({clip}) first").arg(clip->id)
+                                     : QStringLiteral("No scene analysis yet — call detect_scenes first"));
+    }
 
     QList<QVariantMap> rows;
-    for (const QVariant &value : m_scenes) {
+    for (const QVariant &value : scenes) {
         const QVariantMap scene = value.toMap();
         if (sceneMatches(scene, label, minScore))
             rows.append(scene);
@@ -19097,6 +19969,9 @@ QJsonObject AppController::mcpListScenes(const QString &label, double minScore,
             {QStringLiteral("duration"), scene.value(QStringLiteral("duration")).toDouble()},
             {QStringLiteral("timeline_start"), sceneSourceToTimeline(*clip, sourceStart)},
             {QStringLiteral("timeline_end"), sceneSourceToTimeline(*clip, sourceEnd)},
+            {QStringLiteral("thumb"), scene.value(QStringLiteral("thumbnailSeconds")).toDouble()},
+            {QStringLiteral("timeline_thumb"),
+             sceneSourceToTimeline(*clip, scene.value(QStringLiteral("thumbnailSeconds")).toDouble())},
             {QStringLiteral("motion"), scene.value(QStringLiteral("motion")).toDouble()},
             {QStringLiteral("loudness"), scene.value(QStringLiteral("loudness")).toDouble()},
             {QStringLiteral("objects"), scene.value(QStringLiteral("objects")).toDouble()},
@@ -19105,17 +19980,23 @@ QJsonObject AppController::mcpListScenes(const QString &label, double minScore,
         });
     }
 
-    return ok({{QStringLiteral("clip"), m_sceneClipId},
+    return ok({{QStringLiteral("clip"), clip->id},
                {QStringLiteral("scenes"), out},
                {QStringLiteral("n"), out.size()},
-               {QStringLiteral("total"), int(m_scenes.size())}});
+               {QStringLiteral("total"), int(scenes.size())}});
 }
 
-QJsonObject AppController::mcpDescribeClip(int topCount) const
+QJsonObject AppController::mcpDescribeClip(int topCount, int trackIndex, int clipIndex) const
 {
     using namespace drift::mcp;
-    if (m_scenes.isEmpty())
-        return err("not_found", QStringLiteral("No scene analysis yet — call detect_scenes first"));
+    const drift::Clip *clip = nullptr;
+    const QVariantList scenes = mcpSceneRows(trackIndex, clipIndex, &clip);
+    if (trackIndex >= 0 && !clip)
+        return err("not_found", QStringLiteral("no clip at track %1 index %2").arg(trackIndex).arg(clipIndex));
+    if (scenes.isEmpty()) {
+        return err("not_found", clip ? QStringLiteral("Clip %1 has no scene analysis — call detect_scenes({clip}) first").arg(clip->id)
+                                     : QStringLiteral("No scene analysis yet — call detect_scenes first"));
+    }
 
     double shortest = std::numeric_limits<double>::max();
     double longest = 0.0;
@@ -19127,7 +20008,7 @@ QJsonObject AppController::mcpDescribeClip(int topCount) const
     QHash<QString, int> labelScenes;
     QHash<QString, double> labelSeconds;
 
-    for (const QVariant &value : m_scenes) {
+    for (const QVariant &value : scenes) {
         const QVariantMap scene = value.toMap();
         const double duration = scene.value(QStringLiteral("duration")).toDouble();
         shortest = qMin(shortest, duration);
@@ -19152,7 +20033,7 @@ QJsonObject AppController::mcpDescribeClip(int topCount) const
     }
 
     QList<QVariantMap> ranked;
-    for (const QVariant &value : m_scenes)
+    for (const QVariant &value : scenes)
         ranked.append(value.toMap());
     std::sort(ranked.begin(), ranked.end(), [](const QVariantMap &a, const QVariantMap &b) {
         return a.value(QStringLiteral("score")).toDouble()
@@ -19172,20 +20053,20 @@ QJsonObject AppController::mcpDescribeClip(int topCount) const
     }
 
     bool objectsScanned = false;
-    for (const QVariant &value : m_scenes) {
+    for (const QVariant &value : scenes) {
         if (!value.toMap().value(QStringLiteral("labels")).toStringList().isEmpty()) {
             objectsScanned = true;
             break;
         }
     }
 
-    return ok({{QStringLiteral("clip"), m_sceneClipId},
+    return ok({{QStringLiteral("clip"), clip->id},
                {QStringLiteral("duration"), totalDuration},
-               {QStringLiteral("scenes"), int(m_scenes.size())},
-               {QStringLiteral("cuts"), int(m_scenes.size()) - 1},
-               {QStringLiteral("shortest"), m_scenes.isEmpty() ? 0.0 : shortest},
+               {QStringLiteral("scenes"), int(scenes.size())},
+               {QStringLiteral("cuts"), int(scenes.size()) - 1},
+               {QStringLiteral("shortest"), shortest},
                {QStringLiteral("longest"), longest},
-               {QStringLiteral("mean_score"), m_scenes.isEmpty() ? 0.0 : totalScore / m_scenes.size()},
+               {QStringLiteral("mean_score"), totalScore / scenes.size()},
                {QStringLiteral("objects_scanned"), objectsScanned},
                {QStringLiteral("labels"), labels},
                {QStringLiteral("top"), top}});
@@ -19374,9 +20255,9 @@ QJsonObject AppController::mcpAiCapabilities() const
 
     QJsonArray models;
     for (const Capability &capability : capabilities) {
-        models.append(QJsonObject{{QStringLiteral("kind"), QLatin1String(capability.kind)},
+        models.append(QJsonObject{{QStringLiteral("kind"), QString::fromUtf8(capability.kind)},
                                   {QStringLiteral("installed"), capability.installed},
-                                  {QStringLiteral("unlocks"), QLatin1String(capability.unlocks)}});
+                                  {QStringLiteral("unlocks"), QString::fromUtf8(capability.unlocks)}});
     }
 
     // A model is useless without a runtime to execute it, so report that too rather than
@@ -19637,6 +20518,685 @@ QList<SilenceRange> rangesFromPeaks(const QVector<float> &peaks, double startSec
 
 } // namespace
 
+
+namespace {
+
+constexpr int kMcpSheetMaxTiles = 20;
+constexpr int kMcpSheetMaxCandidates = 120;
+constexpr int kMcpSheetMinTile = 120;
+constexpr int kMcpSheetMaxTile = 720;
+constexpr int kMcpSheetHashEdge = 160;
+constexpr int kMcpActivityMinSamples = 8;
+constexpr int kMcpActivityMaxSamples = 600;
+constexpr double kMcpActivityMaxSeconds = 3600.0;
+constexpr int kMcpActivityScanWidth = 64;
+constexpr double kMcpWaveformImageMaxSeconds = 600.0;
+constexpr int kMcpWaveformImageMaxWidth = 2000;
+constexpr int kMcpSpectrogramBins = 64;
+
+QJsonObject imageResult(const QJsonObject &meta, const QByteArray &bytes, const QString &mime)
+{
+    using namespace drift::mcp;
+    QJsonArray content;
+    content.append(QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("text")},
+        {QStringLiteral("text"),
+         QString::fromUtf8(QJsonDocument(compactJson(meta)).toJson(QJsonDocument::Compact))},
+    });
+    content.append(QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("image")},
+        {QStringLiteral("mimeType"), mime},
+        {QStringLiteral("data"), QString::fromLatin1(bytes.toBase64())},
+    });
+    return {{QStringLiteral("content"), content}, {QStringLiteral("isError"), false}};
+}
+
+QString newCapturePath(const QString &projectId, const QString &prefix, const QString &ext)
+{
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (base.isEmpty())
+        return {};
+    const QString dir = QDir(base).filePath(QStringLiteral("projects/%1/media").arg(projectId));
+    if (!QDir().mkpath(dir))
+        return {};
+    return QDir(dir).filePath(QStringLiteral("%1-%2.%3")
+                                  .arg(prefix, QUuid::createUuid().toString(QUuid::WithoutBraces), ext));
+}
+
+// One decode cursor for the sheet/activity reads so they never share one with playback.
+constexpr quint64 kFrameSheetStreamId = 0xA5'11'5C'A4'00'00'00'07ull;
+
+// Where the frames come from: the composited timeline, or one clip's source file.
+struct FrameSource
+{
+    std::shared_ptr<const drift::Project> project;
+    QString path;          // source mode when non-empty
+    bool source() const { return !path.isEmpty(); }
+    int longEdge() const { return qMax(project->width(), project->height()); }
+
+    QImage render(FrameCompositor &compositor, double seconds, int maxW, int maxH) const
+    {
+        const drift::TimeUs us = qMax<drift::TimeUs>(0, drift::secondsToUs(seconds));
+        if (source())
+            return ClipReaderPool::instance().readVideoFrame(path, kFrameSheetStreamId, us, maxW, maxH);
+        FrameCompositor::RenderOptions options;
+        options.previewScale =
+            qBound(kMinPreviewScale, double(maxW) / double(longEdge()), 1.0);
+        return compositor.compositeAt(us, options);
+    }
+};
+
+double clipLocalToTimelineSeconds(const drift::Clip &clip, drift::TimeUs sourceUs)
+{
+    return drift::usToSeconds(clip.timelineStart + clip.sourceUsToClipLocalUs(sourceUs));
+}
+
+QByteArray encodeJpeg(const QImage &image, int quality)
+{
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    image.save(&buffer, "JPEG", quality);
+    return bytes;
+}
+
+QByteArray encodePng(const QImage &image)
+{
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    image.save(&buffer, "PNG");
+    return bytes;
+}
+
+QVector<float> blockingMixedPeaks(const drift::Project &snap, double startSeconds, double durSeconds,
+                                  int buckets)
+{
+    const int rate = 8000;
+    const qint64 frames = static_cast<qint64>(durSeconds * rate);
+    if (frames <= 0 || buckets <= 0)
+        return {};
+    const drift::TimeUs startUs = drift::secondsToUs(startSeconds);
+    auto raw = std::make_shared<QVector<float>>();
+    QEventLoop loop;
+    (void)QtConcurrent::run([snap, startUs, frames, rate, buckets, raw, &loop]() {
+        AudioMixer mixer;
+        mixer.setProject(&snap);
+        *raw = MediaWaveform::mixedPeaks(
+            frames, rate, static_cast<int>(qMin<qint64>(buckets, frames)),
+            [&mixer, startUs, rate](float *out, qint64 frameOffset, int maxFrames) {
+                const drift::TimeUs at = startUs + frameOffset * drift::kUsPerSecond / rate;
+                mixer.mix(at, maxFrames, rate, out);
+                return maxFrames;
+            });
+        QMetaObject::invokeMethod(&loop, &QEventLoop::quit, Qt::QueuedConnection);
+    });
+    loop.exec();
+    return *raw;
+}
+
+} // namespace
+
+QJsonObject AppController::mcpFrameSheet(const McpFrameSheetRequest &request)
+{
+    using namespace drift::mcp;
+    using namespace drift::framesheet;
+    setPlaying(false);
+
+    FrameSource src;
+    src.project = std::make_shared<const drift::Project>(m_project.detachedCopy());
+    const bool sourceMode = request.track >= 0 || request.clip >= 0;
+    drift::Clip clip;
+    if (sourceMode) {
+        const auto &tracks = src.project->tracks();
+        if (request.track < 0 || request.track >= tracks.size() || request.clip < 0
+            || request.clip >= tracks.at(request.track).clips.size())
+            return err("not_found", QStringLiteral("no clip at track %1 index %2")
+                                        .arg(request.track).arg(request.clip));
+        clip = tracks.at(request.track).clips.at(request.clip);
+        if (clip.path.isEmpty() || clip.type != drift::ClipType::Video)
+            return err("type_mismatch", QStringLiteral("clip has no video file; omit clip to render the composition"));
+        src.path = clip.path;
+    } else if (src.project->durationUs() <= 0) {
+        return err("not_found", QStringLiteral("Timeline is empty"));
+    }
+
+    double start = 0.0;
+    double end = 0.0;
+    if (sourceMode) {
+        start = drift::usToSeconds(clip.srcIn);
+        end = drift::usToSeconds(clip.srcOut);
+    } else if (src.project->hasWorkArea()) {
+        start = drift::usToSeconds(src.project->workAreaInUs());
+        end = drift::usToSeconds(src.project->workAreaOutUs());
+    } else {
+        end = drift::usToSeconds(src.project->durationUs());
+    }
+    if (request.start >= 0.0)
+        start = request.start;
+    if (request.end >= 0.0)
+        end = request.end;
+    if (end <= start)
+        return err("bad_args", QStringLiteral("end must be > start (got %1..%2)").arg(start).arg(end));
+
+    const int n = qBound(1, request.n, kMcpSheetMaxTiles);
+    QString sample = request.sample.isEmpty() ? QStringLiteral("changes") : request.sample;
+    QList<double> candidates;
+    QJsonArray unscanned;
+    QList<QPair<QString, int>> sceneOf;   // parallel to candidates in scenes mode
+
+    if (!request.at.isEmpty()) {
+        sample = QStringLiteral("at");
+        for (double t : request.at) {
+            if (candidates.size() >= kMcpSheetMaxTiles)
+                break;
+            candidates.append(t);
+        }
+    } else if (sample == QLatin1String("scenes")) {
+        QList<QPair<double, QPair<QString, int>>> hits;
+        const auto collect = [&](const drift::Clip &c) {
+            drift::SceneAnalysis analysis;
+            if (!drift::loadCachedAnalysis(sceneRequestFor(c, true, 0.0), &analysis)
+                && !drift::loadCachedAnalysis(sceneRequestFor(c, false, 0.0), &analysis)) {
+                unscanned.append(c.id);
+                const double t = sourceMode ? drift::usToSeconds(c.srcIn)
+                                            : drift::usToSeconds(c.timelineStart);
+                if (t >= start && t < end)
+                    hits.append({t, {c.id, -1}});
+                return;
+            }
+            for (int i = 0; i < analysis.scenes.size(); ++i) {
+                const drift::TimeUs thumb = analysis.scenes.at(i).thumbnailUs;
+                const double t = sourceMode ? drift::usToSeconds(thumb)
+                                            : clipLocalToTimelineSeconds(c, thumb);
+                if (t >= start && t < end)
+                    hits.append({t, {c.id, i}});
+            }
+        };
+        if (sourceMode) {
+            collect(clip);
+        } else {
+            for (const drift::Track &track : src.project->tracks()) {
+                if (track.type != drift::TrackType::Video)
+                    continue;
+                for (const drift::Clip &c : track.clips) {
+                    if (c.type != drift::ClipType::Video || c.path.isEmpty())
+                        continue;
+                    if (drift::usToSeconds(c.timelineEnd()) <= start
+                        || drift::usToSeconds(c.timelineStart) >= end)
+                        continue;
+                    collect(c);
+                }
+            }
+        }
+        std::sort(hits.begin(), hits.end(),
+                  [](const auto &a, const auto &b) { return a.first < b.first; });
+        for (int i : selectUniform(hits.size(), qMin(n, int(hits.size())))) {
+            candidates.append(hits.at(i).first);
+            sceneOf.append(hits.at(i).second);
+        }
+        if (candidates.isEmpty())
+            return err("not_found", QStringLiteral("No scanned shots in %1..%2 — call detect_scenes first or use sample:\"uniform\"").arg(start).arg(end));
+    } else if (sample == QLatin1String("uniform")) {
+        for (int i = 0; i < n; ++i)
+            candidates.append(start + (end - start) * i / n);
+    } else if (sample == QLatin1String("changes")) {
+        const int count = qBound(n, int((end - start) * 4.0), kMcpSheetMaxCandidates);
+        for (int i = 0; i < count; ++i)
+            candidates.append(start + (end - start) * i / count);
+    } else {
+        return err("bad_args", QStringLiteral("sample must be one of changes, uniform, scenes"));
+    }
+
+    const bool changes = sample == QLatin1String("changes");
+    const int minChange = qBound(1, request.minChange, 32);
+    const int tileWidth = request.tileWidth > 0
+                              ? qBound(kMcpSheetMinTile, request.tileWidth, kMcpSheetMaxTile)
+                              : 0;
+
+    struct Result
+    {
+        QList<int> kept;
+        int skipped = 0;
+        bool dropped = false;
+        Layout layout;
+        QList<QImage> tiles;
+        QList<int> diff;
+        QImage sheet;
+        double aspect = 16.0 / 9.0;
+    };
+    auto result = std::make_shared<Result>();
+    const bool label = request.label;
+    const int cols = request.cols;
+    QEventLoop loop;
+    (void)QtConcurrent::run([=, &loop]() {
+        FrameCompositor compositor;
+        compositor.setProject(src.project.get());
+
+        if (changes) {
+            QList<quint64> hashes;
+            for (double t : candidates) {
+                const QImage frame = src.render(compositor, t, kMcpSheetHashEdge, kMcpSheetHashEdge * 9 / 16);
+                if (!frame.isNull() && hashes.isEmpty())
+                    result->aspect = double(frame.width()) / double(qMax(1, frame.height()));
+                hashes.append(dHash(frame));
+            }
+            const Selection all = selectChanges(hashes, minChange, 4, hashes.size());
+            const Selection sel = all.kept.size() > n ? selectChanges(hashes, minChange, 4, n) : all;
+            result->kept = sel.kept;
+            result->skipped = sel.skipped;
+            result->dropped = all.kept.size() > n;
+        } else {
+            for (int i = 0; i < candidates.size(); ++i)
+                result->kept.append(i);
+        }
+
+        if (!src.source())
+            result->aspect = double(src.project->width()) / double(qMax(1, src.project->height()));
+        else if (!changes && !candidates.isEmpty()) {
+            const QImage probe = src.render(compositor, candidates.first(), kMcpSheetHashEdge, kMcpSheetHashEdge);
+            if (!probe.isNull())
+                result->aspect = double(probe.width()) / double(qMax(1, probe.height()));
+        }
+
+        result->layout = layoutFor(result->kept.size(), result->aspect, cols, tileWidth);
+        QList<Tile> tiles;
+        quint64 previous = 0;
+        for (int k = 0; k < result->kept.size(); ++k) {
+            const double t = candidates.at(result->kept.at(k));
+            Tile tile;
+            tile.image = src.render(compositor, t, result->layout.tile.width(), result->layout.tile.height());
+            if (label)
+                tile.label = QStringLiteral("#%1 %2s").arg(k).arg(QString::number(t, 'f', 2));
+            const quint64 hash = dHash(tile.image);
+            result->diff.append(k == 0 ? 0 : hammingDistance(previous, hash));
+            previous = hash;
+            tiles.append(tile);
+        }
+        result->sheet = compose(result->layout, tiles, label);
+        QMetaObject::invokeMethod(&loop, &QEventLoop::quit, Qt::QueuedConnection);
+    });
+    loop.exec();
+
+    if (result->sheet.isNull() || result->kept.isEmpty())
+        return err("capture_failed", QStringLiteral("Compositor returned no frame"));
+
+    const double materialStart = sourceMode ? drift::usToSeconds(clip.srcIn) : 0.0;
+    const double materialEnd = sourceMode ? drift::usToSeconds(clip.srcOut)
+                                          : drift::usToSeconds(src.project->durationUs());
+    int outside = 0;
+    QJsonArray frames;
+    for (int k = 0; k < result->kept.size(); ++k) {
+        const int idx = result->kept.at(k);
+        const double t = candidates.at(idx);
+        QJsonObject row{{QStringLiteral("i"), k},
+                        {QStringLiteral("t"), round3(t)},
+                        {QStringLiteral("diff"), result->diff.at(k)}};
+        if (t < materialStart || t >= materialEnd) {
+            row.insert(QStringLiteral("beyond_end"), true);
+            ++outside;
+        }
+        if (sourceMode)
+            row.insert(QStringLiteral("tl"), round3(clipLocalToTimelineSeconds(clip, drift::secondsToUs(t))));
+        if (!sceneOf.isEmpty()) {
+            row.insert(QStringLiteral("clip"), sceneOf.at(idx).first);
+            if (sceneOf.at(idx).second >= 0)
+                row.insert(QStringLiteral("scene"), sceneOf.at(idx).second);
+        }
+        frames.append(row);
+    }
+
+    QJsonObject meta = ok({
+        {QStringLiteral("space"), sourceMode ? QStringLiteral("source") : QStringLiteral("timeline")},
+        {QStringLiteral("sample"), sample},
+        {QStringLiteral("start"), round3(start)},
+        {QStringLiteral("end"), round3(end)},
+        {QStringLiteral("grid"), QStringLiteral("%1x%2").arg(result->layout.cols).arg(result->layout.rows)},
+        {QStringLiteral("tile"), QJsonArray{result->layout.tile.width(), result->layout.tile.height()}},
+        {QStringLiteral("frames"), frames},
+        {QStringLiteral("w"), result->sheet.width()},
+        {QStringLiteral("h"), result->sheet.height()},
+    });
+    meta.insert(QStringLiteral("dur"), round3(materialEnd - materialStart));
+    if (outside > 0)
+        meta.insert(QStringLiteral("beyond_end"), outside);
+    if (sourceMode)
+        meta.insert(QStringLiteral("clip"), clip.id);
+    if (changes) {
+        meta.insert(QStringLiteral("candidates"), candidates.size());
+        meta.insert(QStringLiteral("skipped"), result->skipped);
+        if (result->dropped) {
+            meta.insert(QStringLiteral("next"),
+                        QJsonObject{{QStringLiteral("start"), round3(candidates.at(result->kept.last()))},
+                                    {QStringLiteral("end"), round3(end)}});
+        }
+    }
+    if (!unscanned.isEmpty())
+        meta.insert(QStringLiteral("unscanned"), unscanned);
+
+    if (request.toPath) {
+        const QString outPath = newCapturePath(m_project.id(), QStringLiteral("sheet"), QStringLiteral("jpg"));
+        if (outPath.isEmpty() || !result->sheet.save(outPath, "JPEG", 80))
+            return err("capture_failed", QStringLiteral("Could not write JPEG"));
+        meta.insert(QStringLiteral("path"), outPath);
+        return meta;
+    }
+    return imageResult(meta, encodeJpeg(result->sheet, 80), QStringLiteral("image/jpeg"));
+}
+
+QJsonObject AppController::mcpActivity(const McpActivityRequest &request)
+{
+    using namespace drift::mcp;
+    setPlaying(false);
+
+    FrameSource src;
+    src.project = std::make_shared<const drift::Project>(m_project.detachedCopy());
+    const bool sourceMode = request.track >= 0 || request.clip >= 0;
+    drift::Clip clip;
+    if (sourceMode) {
+        const auto &tracks = src.project->tracks();
+        if (request.track < 0 || request.track >= tracks.size() || request.clip < 0
+            || request.clip >= tracks.at(request.track).clips.size())
+            return err("not_found", QStringLiteral("no clip at track %1 index %2")
+                                        .arg(request.track).arg(request.clip));
+        clip = tracks.at(request.track).clips.at(request.clip);
+        if (clip.path.isEmpty() || clip.type != drift::ClipType::Video)
+            return err("type_mismatch", QStringLiteral("clip has no video file; omit clip to profile the composition"));
+        src.path = clip.path;
+    } else if (src.project->durationUs() <= 0) {
+        return err("not_found", QStringLiteral("Timeline is empty"));
+    }
+
+    double start = 0.0;
+    double end = 0.0;
+    if (sourceMode) {
+        start = drift::usToSeconds(clip.srcIn);
+        end = drift::usToSeconds(clip.srcOut);
+    } else if (src.project->hasWorkArea()) {
+        start = drift::usToSeconds(src.project->workAreaInUs());
+        end = drift::usToSeconds(src.project->workAreaOutUs());
+    } else {
+        end = drift::usToSeconds(src.project->durationUs());
+    }
+    if (request.start >= 0.0)
+        start = request.start;
+    if (request.end >= 0.0)
+        end = request.end;
+    if (end <= start)
+        return err("bad_args", QStringLiteral("end must be > start (got %1..%2)").arg(start).arg(end));
+    if (end - start > kMcpActivityMaxSeconds)
+        return err("bad_args", QStringLiteral("range must be <= %1 seconds").arg(kMcpActivityMaxSeconds));
+
+    const int samples = qBound(kMcpActivityMinSamples, request.samples, kMcpActivityMaxSamples);
+    const double step = (end - start) / samples;
+
+    struct Result
+    {
+        QVector<double> content;
+        QVector<double> motion;
+        QSize scan;
+    };
+    auto result = std::make_shared<Result>();
+    QEventLoop loop;
+    (void)QtConcurrent::run([=, &loop]() {
+        FrameCompositor compositor;
+        compositor.setProject(src.project.get());
+        drift::HsvFrame previous;
+        drift::HsvFrame current;
+        for (int i = 0; i < samples; ++i) {
+            const QImage frame = src.render(compositor, start + i * step, kMcpActivityScanWidth,
+                                            kMcpActivityScanWidth * 9 / 16);
+            if (frame.isNull()) {
+                result->content.append(0.0);
+                result->motion.append(0.0);
+                continue;
+            }
+            if (result->scan.isEmpty())
+                result->scan = frame.size();
+            drift::toHsv(frame, &current);
+            if (i == 0 || !previous.matches(current)) {
+                result->content.append(0.0);
+                result->motion.append(0.0);
+            } else {
+                const drift::FrameDelta delta = drift::compareFrames(previous, current);
+                result->content.append(delta.content);
+                result->motion.append(delta.motion);
+            }
+            std::swap(previous, current);
+        }
+        QMetaObject::invokeMethod(&loop, &QEventLoop::quit, Qt::QueuedConnection);
+    });
+    loop.exec();
+
+    if (result->scan.isEmpty())
+        return err("capture_failed", QStringLiteral("Compositor returned no frame"));
+
+    QVector<float> audio;
+    if (request.audio) {
+        if (sourceMode)
+            audio = blockingSourcePeaks(clip.path, start, end - start, samples);
+        else
+            audio = blockingMixedPeaks(*src.project, start, end - start, samples);
+    }
+
+    QJsonArray content;
+    QJsonArray motion;
+    QJsonArray audioArr;
+    double maxContent = 0.0;
+    double maxMotion = 0.0;
+    double maxAudio = 0.0;
+    for (int i = 0; i < samples; ++i) {
+        const double c = std::round(result->content.at(i) * 10.0) / 10.0;
+        const double m = round2(result->motion.at(i));
+        content.append(c);
+        motion.append(m);
+        maxContent = qMax(maxContent, c);
+        maxMotion = qMax(maxMotion, m);
+        if (i < audio.size()) {
+            const double a = round2(audio.at(i));
+            audioArr.append(a);
+            maxAudio = qMax(maxAudio, a);
+        }
+    }
+
+    QList<QPair<double, int>> maxima;
+    for (int i = 1; i < samples; ++i) {
+        const double c = result->content.at(i);
+        if (c <= 0.0)
+            continue;
+        bool isPeak = true;
+        for (int j = qMax(0, i - 2); j <= qMin(samples - 1, i + 2); ++j) {
+            if (j != i && result->content.at(j) > c) {
+                isPeak = false;
+                break;
+            }
+        }
+        if (isPeak)
+            maxima.append({c, i});
+    }
+    std::sort(maxima.begin(), maxima.end(),
+              [](const auto &a, const auto &b) { return a.first > b.first; });
+    const int keep = qBound(0, request.peaks, 30);
+    if (maxima.size() > keep)
+        maxima.resize(keep);
+    std::sort(maxima.begin(), maxima.end(),
+              [](const auto &a, const auto &b) { return a.second < b.second; });
+    QJsonArray peaks;
+    for (const auto &m : maxima) {
+        peaks.append(QJsonObject{{QStringLiteral("t"), round3(start + m.second * step)},
+                                 {QStringLiteral("content"), std::round(m.first * 10.0) / 10.0}});
+    }
+
+    QJsonObject reply = ok({
+        {QStringLiteral("space"), sourceMode ? QStringLiteral("source") : QStringLiteral("timeline")},
+        {QStringLiteral("start"), round3(start)},
+        {QStringLiteral("end"), round3(end)},
+        {QStringLiteral("step"), round3(step)},
+        {QStringLiteral("n"), samples},
+        {QStringLiteral("scan"), QJsonArray{result->scan.width(), result->scan.height()}},
+        {QStringLiteral("content"), content},
+        {QStringLiteral("motion"), motion},
+        {QStringLiteral("peaks"), peaks},
+        {QStringLiteral("max"), QJsonObject{{QStringLiteral("content"), maxContent},
+                                            {QStringLiteral("motion"), maxMotion},
+                                            {QStringLiteral("audio"), maxAudio}}},
+    });
+    if (sourceMode)
+        reply.insert(QStringLiteral("clip"), clip.id);
+    if (!audioArr.isEmpty())
+        reply.insert(QStringLiteral("audio"), audioArr);
+    return reply;
+}
+
+QJsonObject AppController::mcpWaveformImage(const QString &mode, int trackIndex, int clipIndex,
+                                            const QString &assetId, double startSeconds,
+                                            double durSeconds, int width, int height,
+                                            bool spectrogram, int summaryBuckets) const
+{
+    using namespace drift::mcp;
+    using namespace drift::waveformsheet;
+
+    width = qBound(200, width, kMcpWaveformImageMaxWidth);
+    height = qBound(120, height, 800);
+    summaryBuckets = qBound(1, summaryBuckets, kMcpMaxBuckets);
+
+    Input in;
+    Options opt;
+    opt.width = width;
+    opt.height = height;
+    QStringList lanes{QStringLiteral("mixed")};
+    QString source = mode;
+    double start = qMax(0.0, startSeconds);
+    double dur = durSeconds;
+
+    if (mode == QLatin1String("asset")) {
+        const drift::MediaAsset *asset = m_project.asset(assetId);
+        if (!asset)
+            return err("not_found", QStringLiteral("Unknown asset"));
+        if (asset->path.isEmpty())
+            return err("type_mismatch", QStringLiteral("Asset has no file"));
+        const double total = drift::usToSeconds(asset->durationUs);
+        dur = durSeconds > 0.0 ? qMin(durSeconds, total - start) : total - start;
+        if (dur <= 0.0)
+            return err("bad_args", QStringLiteral("Range is past the end of the asset"));
+        if (dur > kMcpWaveformImageMaxSeconds)
+            return err("bad_args", QStringLiteral("duration must be <= %1 seconds for image mode").arg(kMcpWaveformImageMaxSeconds));
+        in.mixed = blockingSourcePeaks(asset->path, start, dur, width);
+        if (in.mixed.isEmpty())
+            return err("not_found", QStringLiteral("No audio decoded for that range"));
+    } else {
+        drift::Project snap = m_project;
+        if (mode == QLatin1String("clip")) {
+            const auto &tracks = m_project.tracks();
+            if (trackIndex < 0 || trackIndex >= tracks.size() || clipIndex < 0
+                || clipIndex >= tracks.at(trackIndex).clips.size())
+                return err("not_found", QStringLiteral("no clip at track %1 index %2").arg(trackIndex).arg(clipIndex));
+            const drift::Clip &clip = tracks.at(trackIndex).clips.at(clipIndex);
+            muteAllButClip(snap, clip.id);
+            start = drift::usToSeconds(clip.timelineStart);
+            dur = drift::usToSeconds(clip.timelineDuration);
+        }
+        if (dur <= 0.0)
+            return err("bad_args", QStringLiteral("duration must be > 0"));
+        if (dur > kMcpWaveformImageMaxSeconds)
+            return err("bad_args", QStringLiteral("duration must be <= %1 seconds for image mode").arg(kMcpWaveformImageMaxSeconds));
+
+        const int rate = spectrogram ? 16000 : 8000;
+        const qint64 frames = static_cast<qint64>(dur * rate);
+        if (frames <= 0)
+            return err("bad_args", QStringLiteral("duration is too short to measure"));
+        const drift::TimeUs startUs = drift::secondsToUs(start);
+
+        struct Mixed
+        {
+            QVector<float> mixed;
+            QVector<float> speech;
+            QVector<QVector<float>> spectrogram;
+        };
+        auto out = std::make_shared<Mixed>();
+        QEventLoop loop;
+        (void)QtConcurrent::run([snap, startUs, frames, rate, width, spectrogram, out, &loop]() {
+            AudioMixer mixer;
+            mixer.setProject(&snap);
+            QVector<float> pcm(static_cast<qsizetype>(frames) * 2);
+            constexpr int kChunk = 4096;
+            for (qint64 done = 0; done < frames; done += kChunk) {
+                const int want = static_cast<int>(qMin<qint64>(kChunk, frames - done));
+                const drift::TimeUs at = startUs + done * drift::kUsPerSecond / rate;
+                mixer.mix(at, want, rate, pcm.data() + done * 2);
+            }
+            const MediaWaveform::FillChunk fill = [&pcm, frames](float *dst, qint64 offset, int maxFrames) {
+                const int got = static_cast<int>(qMin<qint64>(maxFrames, frames - offset));
+                if (got <= 0)
+                    return 0;
+                std::copy_n(pcm.constData() + offset * 2, static_cast<qsizetype>(got) * 2, dst);
+                return got;
+            };
+            out->mixed = MediaWaveform::mixedPeaks(frames, rate, width, fill);
+            out->speech = MediaWaveform::speechPeaks(frames, rate, width, fill);
+            if (spectrogram) {
+                QVector<float> mono(static_cast<qsizetype>(frames));
+                for (qint64 i = 0; i < frames; ++i)
+                    mono[i] = 0.5f * (pcm[i * 2] + pcm[i * 2 + 1]);
+                out->spectrogram = drift::waveformsheet::spectrogram(mono.constData(), frames, rate,
+                                                                     kMcpSpectrogramBins, width);
+            }
+            QMetaObject::invokeMethod(&loop, &QEventLoop::quit, Qt::QueuedConnection);
+        });
+        loop.exec();
+
+        in.mixed = out->mixed;
+        in.speech = out->speech;
+        in.spectrogram = out->spectrogram;
+        lanes.append(QStringLiteral("speech"));
+        if (spectrogram)
+            lanes.append(QStringLiteral("spectrogram"));
+        for (const SilenceRange &r : rangesFromPeaks(out->speech, start, dur, 0.02, 0.35, 0.0))
+            in.silence.append({r.start, r.end});
+
+        if (!m_beatAnalysis.isEmpty() && audioLayoutFingerprint() == m_beatAudioFingerprint) {
+            for (const AudioOnset &o : m_beatAnalysisRaw.onsets)
+                if (o.seconds >= start && o.seconds <= start + dur)
+                    in.onsets.append(o.seconds);
+            for (double b : m_beatAnalysisRaw.beats)
+                if (b >= start && b <= start + dur)
+                    in.beats.append(b);
+        }
+    }
+
+    in.startSeconds = start;
+    in.durationSeconds = dur;
+    const QImage image = render(in, opt);
+    if (image.isNull())
+        return err("capture_failed", QStringLiteral("Could not render waveform"));
+
+    QJsonObject meta = peaksReply(reduceRawPeaks(in.mixed, summaryBuckets), start, dur, source);
+    if (!meta.value(QStringLiteral("ok")).toBool())
+        return meta;
+    QJsonArray laneArr;
+    for (const QString &l : lanes)
+        laneArr.append(l);
+    meta.insert(QStringLiteral("image"),
+                QJsonObject{{QStringLiteral("w"), image.width()},
+                            {QStringLiteral("h"), image.height()},
+                            {QStringLiteral("lanes"), laneArr},
+                            {QStringLiteral("axis_step"), axisStepSeconds(dur, width)}});
+    QJsonArray silence;
+    for (const auto &r : in.silence)
+        silence.append(QJsonObject{{QStringLiteral("start"), round3(r.first)},
+                                   {QStringLiteral("end"), round3(r.second)}});
+    meta.insert(QStringLiteral("silence"), silence);
+    meta.insert(QStringLiteral("onsets"), in.onsets.size());
+    meta.insert(QStringLiteral("beats"), in.beats.size());
+    if (spectrogram && !in.spectrogram.isEmpty()) {
+        meta.insert(QStringLiteral("spectrogram"),
+                    QJsonObject{{QStringLiteral("bins"), kMcpSpectrogramBins},
+                                {QStringLiteral("min_hz"), 50},
+                                {QStringLiteral("max_hz"), 8000}});
+    }
+    return imageResult(meta, encodePng(image), QStringLiteral("image/png"));
+}
+
 namespace {
 
 const drift::ProjectSnapshotCommand *historyCommand(const QUndoStack &stack, int commandIndex)
@@ -19718,28 +21278,28 @@ QByteArray AppController::historyJsonAt(int stackIndex) const
     return cmd ? cmd->after().toCompactJson() : m_project.toCompactJson();
 }
 
-QJsonObject AppController::mcpListHistory() const
+QJsonObject AppController::mcpListHistory(int limit) const
 {
     using namespace drift::mcp;
     QJsonArray entries;
     const QString dir = historySnapshotDir();
-    for (int i = 0; i <= m_undoStack.count(); ++i) {
+    const int total = m_undoStack.count() + 1;
+    for (int i = total - 1; i >= 0 && entries.size() < qMax(1, limit); --i) {
         const QString hash = historyHashAt(i);
-        const QString label = (i == 0)
-                                  ? QStringLiteral("Origin")
-                                  : m_undoStack.text(i - 1);
-        const bool snapshotted =
-            QFile::exists(dir + QLatin1Char('/') + hash + QStringLiteral(".json"));
-        entries.append(QJsonObject{{QStringLiteral("index"), i},
-                                   {QStringLiteral("label"), label},
-                                   {QStringLiteral("hash"), hash},
-                                   {QStringLiteral("short"), shortHash(hash)},
-                                   {QStringLiteral("snapshot"), snapshotted}});
+        QJsonObject entry{{QStringLiteral("index"), i},
+                          {QStringLiteral("label"), i == 0 ? QStringLiteral("Origin") : m_undoStack.text(i - 1)},
+                          {QStringLiteral("short"), shortHash(hash)}};
+        if (QFile::exists(dir + QLatin1Char('/') + hash + QStringLiteral(".json")))
+            entry.insert(QStringLiteral("snapshot"), true);
+        entries.append(entry);
     }
     const int current = m_undoStack.index();
+    const QString head = historyHashAt(current);
     return ok({{QStringLiteral("entries"), entries},
                {QStringLiteral("current"), current},
-               {QStringLiteral("hash"), historyHashAt(current)},
+               {QStringLiteral("hash"), head},
+               {QStringLiteral("short"), shortHash(head)},
+               {QStringLiteral("total"), total},
                {QStringLiteral("linear"), true}});
 }
 

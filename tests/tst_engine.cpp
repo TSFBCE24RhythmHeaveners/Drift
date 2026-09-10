@@ -28,6 +28,7 @@
 #include "core/TimelineOps.h"
 #include "engine/AudioMixer.h"
 #include "engine/ClipReader.h"
+#include "engine/StillImage.h"
 #include "engine/DebugReport.h"
 #include "engine/Exporter.h"
 #include "engine/GpuCompositor.h"
@@ -46,6 +47,8 @@
 #include "engine/AudioOnsets.h"
 #include "engine/ObjectDetector.h"
 #include "engine/SceneDetect.h"
+#include "engine/FrameSheet.h"
+#include "engine/WaveformSheet.h"
 #include "engine/DeepFilterDenoiser.h"
 #include "engine/EffectCatalog.h"
 #include "engine/EffectPackageLoader.h"
@@ -108,6 +111,12 @@ private slots:
     void colorParametersParseAndResolve();
     void modelAssetLoadsCubeGlb();
     void modelAssetRejectsDraco();
+    void hwAccelDescribesEveryBackend();
+    void stillImageDecodesWebp();
+    void stillImageDecodesHeicAndAvifViaFfmpeg();
+    void stillImageFallsBackWhenQtCannotRead();
+    void stillImagePreservesAlpha();
+    void stillImageRejectsGarbage();
     void modelAssetRejectsCorrupt();
     void faceModelMvpIsResolutionIndependent();
     void faceModelMvpMapsUpToDecreasingNdcY();
@@ -275,6 +284,13 @@ private slots:
     void sceneCutsRejectNoiseAndGrain();
     void scenesPartitionTheRange();
     void sceneLoudnessRanksAcrossTheClip();
+    void sceneDetectExportsFrameMetric();
+    void frameSheetDHashIsStableAndDiscriminates();
+    void frameSheetSelectChangesKeepsDistinctLooks();
+    void frameSheetLayoutRespectsCaps();
+    void frameSheetComposeBurnsLabels();
+    void waveformSheetRendersExpectedSize();
+    void waveformSheetSpectrogramSeparatesTones();
     void yoloxDecodeAppliesGridAndStride();
     void objectNmsIsPerClass();
     void denoiseAuxiliaryConstantsRoundTrip();
@@ -8789,6 +8805,346 @@ void EngineTest::softwareRenderersAreRecognisedByName()
     info.minor = 0;
     info.renderer = QStringLiteral("llvmpipe");
     QCOMPARE(drift::gl::describeGl(info), QStringLiteral("OpenGL 3.0 — llvmpipe"));
+}
+
+
+// --- Still images -----------------------------------------------------------------------------
+// decodeStillImage is the single entry point the bin, the thumbnailer and the compositor share.
+// Qt handles most formats; FFmpeg is the fallback that covers HEIC/AVIF (no Qt plugin exists in
+// any official kit) and rescues webp/tiff when the build's Qt lacks qtimageformats.
+
+// decodeBackendOrder() only ever names this platform's backends, so the round-trip test above
+// cannot see an enumerator that belongs to another one — and a new Backend with a missing switch
+// arm compiles fine and returns "" or AV_HWDEVICE_TYPE_NONE at runtime. Cover them all here.
+void EngineTest::hwAccelDescribesEveryBackend()
+{
+    using drift::hwaccel::Backend;
+    for (const Backend backend : {Backend::Cuda, Backend::D3d11va, Backend::Vaapi,
+                                  Backend::VideoToolbox, Backend::MediaCodec}) {
+        const QString id = drift::hwaccel::id(backend);
+        QVERIFY2(!id.isEmpty(), qPrintable(QString::number(int(backend))));
+        QCOMPARE(drift::hwaccel::backendFromId(id), backend);
+        QVERIFY(drift::hwaccel::deviceType(backend) != AV_HWDEVICE_TYPE_NONE);
+        QVERIFY(qstrlen(drift::hwaccel::name(backend)) > 0);
+    }
+
+#ifndef Q_OS_ANDROID
+    // MediaCodec exists in the enum on every platform so the picker can name it, but it must
+    // never be offered off Android — and a settings file carried over from a phone has to
+    // resolve to something that works rather than to a mode that silently never engages.
+    QVERIFY(!drift::hwaccel::mediaCodecDecodeAvailable());
+    QVERIFY(!drift::hwaccel::availableDecodeBackends().contains(Backend::MediaCodec));
+    QVERIFY(!drift::hwaccel::decodeBackendOrder().contains(Backend::MediaCodec));
+#endif
+}
+
+void EngineTest::stillImageDecodesWebp()
+{
+    const QString path = QStringLiteral(DRIFT_TEST_DATA_DIR "/still.webp");
+    QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+
+    const QImage image = drift::decodeStillImage(path);
+    QVERIFY(!image.isNull());
+    QCOMPARE(image.size(), QSize(64, 64));
+    QCOMPARE(drift::stillImageSize(path), QSize(64, 64));
+}
+
+void EngineTest::stillImageDecodesHeicAndAvifViaFfmpeg()
+{
+    // No Qt kit ships a qheif/qavif plugin, so on a user's machine these can only come from the
+    // FFmpeg fallback. A dev box with KDE's KImageFormats installed satisfies them through Qt
+    // instead and would prove nothing, so each is also decoded under a suffix no plugin claims,
+    // which leaves QImageReader with no handler to try and forces the fallback. libavformat
+    // sniffs the ftyp box, so the suffix never mattered to it.
+    // The fixtures are 64x64 for a reason: FFmpeg n7.1, which the desktop CI links, cannot
+    // parse a HEIC header below that and fails the whole file with "error reading header".
+    // FFmpeg 8.x (what Android ships) reads it at 32x32 fine. Real camera stills are
+    // megapixels, so this is a fixture constraint, not a user-facing limit.
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+
+    for (const char *name : {"still.heic", "still.avif"}) {
+        const QString path =
+            QStringLiteral(DRIFT_TEST_DATA_DIR "/") + QLatin1String(name);
+        QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+        const QImage image = drift::decodeStillImage(path);
+        QVERIFY2(!image.isNull(), name);
+        QCOMPARE(image.size(), QSize(64, 64));
+
+        const QString disguised =
+            tmp.filePath(QLatin1String(name) + QStringLiteral(".drift-unknown"));
+        QVERIFY(QFile::copy(path, disguised));
+        QVERIFY(!drift::qtCanDecodeStill(disguised));
+        const QImage viaFfmpeg = drift::decodeStillImage(disguised);
+        QVERIFY2(!viaFfmpeg.isNull(), name);
+        QCOMPARE(viaFfmpeg.size(), QSize(64, 64));
+        QCOMPARE(drift::stillImageSize(disguised), QSize(64, 64));
+    }
+}
+
+void EngineTest::stillImageFallsBackWhenQtCannotRead()
+{
+    // CI installs qtimageformats, so a plain .webp would pass through Qt and prove nothing about
+    // the fallback. Copying it to a suffix no image plugin claims forces the FFmpeg branch:
+    // QImageReader has no handler to try, and libavformat sniffs the RIFF header regardless.
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString disguised = tmp.filePath(QStringLiteral("still.drift-unknown"));
+    QVERIFY(QFile::copy(QStringLiteral(DRIFT_TEST_DATA_DIR "/still.webp"), disguised));
+
+    QVERIFY(!drift::qtCanDecodeStill(disguised));
+    const QImage image = drift::decodeStillImage(disguised);
+    QVERIFY(!image.isNull());
+    QCOMPARE(image.size(), QSize(64, 64));
+}
+
+void EngineTest::stillImagePreservesAlpha()
+{
+    // The fixture is opaque red on its left half and fully transparent on its right. Losing that
+    // is invisible on a dark canvas, and the obvious FFmpeg helper to reuse (MediaThumbnail's)
+    // converts to RGB24 — flattening every transparent sticker and luma mask with no visible error.
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString disguised = tmp.filePath(QStringLiteral("alpha.drift-unknown"));
+    QVERIFY(QFile::copy(QStringLiteral(DRIFT_TEST_DATA_DIR "/still.webp"), disguised));
+
+    const QImage viaFfmpeg = drift::decodeStillImage(disguised);
+    QVERIFY(!viaFfmpeg.isNull());
+    QVERIFY(viaFfmpeg.hasAlphaChannel());
+    QCOMPARE(qAlpha(viaFfmpeg.pixel(8, 8)), 255);
+    QCOMPARE(qAlpha(viaFfmpeg.pixel(56, 56)), 0);
+}
+
+void EngineTest::stillImageRejectsGarbage()
+{
+    // Neither decoder can read this. The contract is a null QImage and an empty QSize, which is
+    // what makes the bin withdraw the row instead of keeping a 0x0 asset that renders as nothing.
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString path = tmp.filePath(QStringLiteral("truncated.png"));
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write(QByteArray("\x89PNG\r\n\x1a\n", 8) + QByteArray(64, '\0'));
+    f.close();
+
+    QVERIFY(drift::decodeStillImage(path).isNull());
+    QVERIFY(drift::stillImageSize(path).isEmpty());
+}
+
+void EngineTest::sceneDetectExportsFrameMetric()
+{
+    QImage red(drift::kScanFrameWidth, drift::kScanFrameHeight, QImage::Format_RGBA8888);
+    red.fill(Qt::red);
+    QImage black(red.size(), QImage::Format_RGBA8888);
+    black.fill(Qt::black);
+
+    drift::HsvFrame a;
+    drift::HsvFrame b;
+    drift::toHsv(red, &a);
+    drift::toHsv(black, &b);
+    QVERIFY(a.matches(b));
+
+    const drift::FrameDelta cut = drift::compareFrames(a, b);
+    QVERIFY(cut.content > 27.0);
+    QCOMPARE(cut.motion, 1.0);
+
+    const drift::FrameDelta same = drift::compareFrames(a, a);
+    QCOMPARE(same.content, 0.0);
+    QCOMPARE(same.motion, 0.0);
+}
+
+void EngineTest::frameSheetDHashIsStableAndDiscriminates()
+{
+    using namespace drift::framesheet;
+
+    QImage gradient(160, 90, QImage::Format_RGB888);
+    for (int y = 0; y < gradient.height(); ++y) {
+        for (int x = 0; x < gradient.width(); ++x)
+            gradient.setPixel(x, y, qRgb(x * 255 / 159, x * 255 / 159, x * 255 / 159));
+    }
+    const quint64 h1 = dHash(gradient);
+    QCOMPARE(dHash(gradient), h1);
+    QCOMPARE(dHash(gradient.scaled(320, 180)), h1);
+    QCOMPARE(h1, quint64(0xFFFFFFFFFFFFFFFFull));
+
+    const quint64 flipped = dHash(gradient.flipped(Qt::Horizontal));
+    QCOMPARE(flipped, quint64(0));
+    QCOMPARE(hammingDistance(h1, flipped), 64);
+
+    QImage flat(160, 90, QImage::Format_RGB888);
+    flat.fill(Qt::gray);
+    QCOMPARE(dHash(flat), quint64(0));
+    QCOMPARE(dHash(QImage()), quint64(0));
+    QCOMPARE(hammingDistance(h1, h1), 0);
+    QCOMPARE(hammingDistance(0, 0xF), 4);
+}
+
+void EngineTest::frameSheetSelectChangesKeepsDistinctLooks()
+{
+    using namespace drift::framesheet;
+
+    const quint64 looks[4] = {0x0000000000000000ull, 0xFFFFFFFFFFFFFFFFull,
+                              0x00000000FFFFFFFFull, 0xF0F0F0F0F0F0F0F0ull};
+    QList<quint64> hashes;
+    for (int look = 0; look < 4; ++look) {
+        for (int r = 0; r < 12; ++r)
+            hashes.append(looks[look] ^ (r % 2 == 0 ? 0 : (quint64(1) << (r % 64))));
+    }
+    QCOMPARE(hashes.size(), 48);
+
+    const Selection sel = selectChanges(hashes, 6, 4, 12);
+    QCOMPARE(sel.kept.size(), 4);
+    QCOMPARE(sel.kept.first(), 0);
+    QCOMPARE(sel.kept, (QList<int>{0, 12, 24, 36}));
+    QCOMPARE(sel.skipped, 44);
+
+    const Selection capped = selectChanges(hashes, 6, 4, 2);
+    QCOMPARE(capped.kept.size(), 2);
+    QCOMPARE(capped.kept.first(), 0);
+    QVERIFY(capped.kept.at(1) > 0);
+    QCOMPARE(capped.skipped, 46);
+
+    QVERIFY(selectChanges({}, 6, 4, 12).kept.isEmpty());
+    QCOMPARE(selectUniform(48, 4), (QList<int>{0, 12, 24, 36}));
+    QCOMPARE(selectUniform(3, 10), (QList<int>{0, 1, 2}));
+}
+
+void EngineTest::frameSheetLayoutRespectsCaps()
+{
+    using namespace drift::framesheet;
+
+    const Layout twenty = layoutFor(20, 16.0 / 9.0, 4, 0);
+    QCOMPARE(twenty.cols, 4);
+    QCOMPARE(twenty.rows, 5);
+    QVERIFY(twenty.sheet.width() <= 1456);
+    QVERIFY(twenty.sheet.height() <= 1456);
+    QVERIFY(twenty.tokens <= 1568);
+    QCOMPARE(twenty.tokens,
+             ((twenty.sheet.width() + 27) / 28) * ((twenty.sheet.height() + 27) / 28));
+    QCOMPARE(twenty.sheet.width(), twenty.tile.width() * 4);
+
+    const Layout six = layoutFor(6, 16.0 / 9.0, 0, 0);
+    QCOMPARE(six.cols, 3);
+    QCOMPARE(six.rows, 2);
+    QVERIFY(six.sheet.width() <= 1456);
+    QVERIFY(six.tokens <= 1568);
+
+    QCOMPARE(layoutFor(12, 16.0 / 9.0, 0, 0).cols, 4);
+
+    const Layout wide = layoutFor(12, 16.0 / 9.0, 4, 720);
+    QVERIFY(wide.tile.width() < 720);
+    QVERIFY(wide.sheet.width() <= 1456);
+    QVERIFY(wide.tokens <= 1568);
+
+    const Layout two = layoutFor(2, 1.0, 0, 200);
+    QCOMPARE(two.cols, 2);
+    QCOMPARE(two.tile, QSize(200, 200));
+    QCOMPARE(two.sheet, QSize(400, 200));
+}
+
+void EngineTest::frameSheetComposeBurnsLabels()
+{
+    using namespace drift::framesheet;
+
+    const Layout layout = layoutFor(2, 16.0 / 9.0, 0, 320);
+    QImage blue(320, 180, QImage::Format_RGB888);
+    blue.fill(Qt::blue);
+    QImage green(320, 180, QImage::Format_RGB888);
+    green.fill(Qt::green);
+    const QList<Tile> tiles{{blue, QStringLiteral("0.00s")}, {green, QStringLiteral("1.50s")}};
+
+    const QImage plain = compose(layout, tiles, false);
+    QCOMPARE(plain.size(), layout.sheet);
+    QCOMPARE(plain.pixel(4, 4), QColor(Qt::blue).rgb());
+    QCOMPARE(plain.pixel(layout.tile.width() + 4, 4), QColor(Qt::green).rgb());
+
+    const QImage labelled = compose(layout, tiles, true);
+    QCOMPARE(labelled.size(), layout.sheet);
+    QCOMPARE(labelled.pixel(2, 2), QColor(Qt::black).rgb());
+    bool white = false;
+    for (int y = 0; y < 40 && !white; ++y) {
+        for (int x = 0; x < 80 && !white; ++x)
+            white = qRed(labelled.pixel(x, y)) > 200 && qGreen(labelled.pixel(x, y)) > 200;
+    }
+    QVERIFY(white);
+    QCOMPARE(labelled.pixel(layout.tile.width() / 2, layout.tile.height() / 2),
+             QColor(Qt::blue).rgb());
+}
+
+void EngineTest::waveformSheetRendersExpectedSize()
+{
+    using namespace drift::waveformsheet;
+
+    Input in;
+    in.startSeconds = 0.0;
+    in.durationSeconds = 4.0;
+    in.mixed.resize(50);
+    in.speech.resize(50);
+    for (int i = 0; i < 25; ++i) {
+        in.mixed[i] = 0.8f;
+        in.speech[i] = 0.5f;
+    }
+    in.silence.append({2.0, 4.0});
+    in.onsets.append(0.5);
+    in.beats.append(1.0);
+
+    const Options opt;
+    const QImage img = render(in, opt);
+    QCOMPARE(img.size(), QSize(1400, 300));
+
+    const int laneArea = 300 - opt.axisHeight;
+    QCOMPARE(img.pixel(1050, laneArea / 4), kSilenceShade);
+    QCOMPARE(img.pixel(1050, laneArea * 3 / 4), kSilenceShade);
+    QVERIFY(img.pixel(350, laneArea / 4) != kSilenceShade);
+    QVERIFY(img.pixel(350, int(laneArea * 0.55) / 2) != QColor(Qt::black).rgb());
+
+    in.spectrogram = QVector<QVector<float>>(10, QVector<float>(8, 0.5f));
+    QCOMPARE(render(in, opt).size(), QSize(1400, 300));
+
+    QCOMPARE(axisStepSeconds(4.0, 1400), 0.5);
+    QCOMPARE(axisStepSeconds(600.0, 1400), 60.0);
+    QCOMPARE(axisStepSeconds(30.0, 1400), 2.0);
+}
+
+void EngineTest::waveformSheetSpectrogramSeparatesTones()
+{
+    using namespace drift::waveformsheet;
+
+    const int rate = 16000;
+    QVector<float> mono(rate * 2);
+    for (int i = 0; i < rate; ++i)
+        mono[i] = 0.5f * std::sin(2.0 * M_PI * 440.0 * i / rate);
+    for (int i = rate; i < 2 * rate; ++i)
+        mono[i] = 0.5f * std::sin(2.0 * M_PI * 3000.0 * i / rate);
+
+    const int bins = 64;
+    const int columns = 40;
+    const QVector<QVector<float>> spec = spectrogram(mono.constData(), mono.size(), rate, bins,
+                                                     columns);
+    QCOMPARE(spec.size(), columns);
+    QCOMPARE(spec.first().size(), bins);
+
+    const auto loudestBin = [&](int from, int to) {
+        QVector<float> sum(bins, 0.0f);
+        for (int c = from; c < to; ++c) {
+            for (int b = 0; b < bins; ++b)
+                sum[b] += spec.at(c).at(b);
+        }
+        return int(std::max_element(sum.begin(), sum.end()) - sum.begin());
+    };
+    const int low = loudestBin(0, columns / 2 - 1);
+    const int high = loudestBin(columns / 2 + 1, columns);
+    QVERIFY2(low < high, qPrintable(QStringLiteral("%1 vs %2").arg(low).arg(high)));
+
+    float peak = 0.0f;
+    for (const QVector<float> &column : spec) {
+        for (float v : column) {
+            QVERIFY(v >= 0.0f && v <= 1.0f);
+            peak = std::max(peak, v);
+        }
+    }
+    QCOMPARE(peak, 1.0f);
+    QVERIFY(spectrogram(mono.constData(), 100, rate, bins, columns).isEmpty());
 }
 
 QTEST_MAIN(EngineTest)

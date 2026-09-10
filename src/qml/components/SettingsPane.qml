@@ -3,9 +3,13 @@ import QtQuick.Controls.Basic
 import QtQuick.Window
 import Drift
 
-// Every editor and app preference, in one scrolling pane: this project’s canvas,
-// then the editor, then the app. Hosted by SettingsDialog; it used to be a tab in
-// the assets panel's rail.
+// Every editor and app preference, in one scrolling pane: the editor, then the app.
+// Hosted by SettingsDialog; it used to be a tab in the assets panel's rail.
+//
+// Canvas size, aspect and frame rate are not here. On the phone they belong to the
+// project rather than to preferences, and the project title's sheet already offers
+// them under Canvas & layout and Project properties; on desktop they are the
+// header's Video dialog. Both reach VideoSizeControls directly.
 Item {
     id: root
 
@@ -71,15 +75,6 @@ Item {
                         width: parent.width
                         spacing: Theme.spacingLg
                     }
-                }
-            }
-
-            SettingsSection {
-                title: qsTr("Video")
-                visible: Theme.touchUi
-
-                VideoSizeControls {
-                    width: parent.width
                 }
             }
 
@@ -171,6 +166,16 @@ Item {
                     text: qsTr("Faster preview (experimental)")
                     tooltip: qsTr("Can make playback smoother by keeping video on the graphics card. Turn it off if the picture looks wrong. Takes effect after restart.")
                     onToggled: EditorState.vaapiZeroCopy = checked
+                }
+
+                // Same wording as the VAAPI switch above: only one of the two is ever visible,
+                // since each is supported on exactly the platform the other is not.
+                ThemedSwitch {
+                    visible: EditorState.mediaCodecZeroCopySupported
+                    checked: EditorState.mediaCodecZeroCopy
+                    text: qsTr("Faster preview (experimental)")
+                    tooltip: qsTr("Can make playback smoother by keeping video on the graphics card. Turn it off if the picture looks wrong. Takes effect after restart.")
+                    onToggled: EditorState.mediaCodecZeroCopy = checked
                 }
             }
 
@@ -360,6 +365,44 @@ Item {
                     text: qsTr("Remind about pack updates")
                     tooltip: qsTr("Pulse the Extras icon when updates are available for packs you already have installed")
                     onToggled: Addons.remindUpdates = checked
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: Theme.borderWidth
+                    color: Theme.panelBorder
+                }
+
+                ThemedLabel {
+                    text: qsTr("Agent access")
+                }
+
+                // Shared with the header's AgentAccessDialog rather than restated: the
+                // cut-down copy that lived here offered only the Claude command, so a
+                // switch turned on from this pane could not be connected from Cursor.
+                AgentAccessControls {
+                    width: parent.width
+                    showIntro: false
+                }
+            }
+
+            SettingsSection {
+                title: qsTr("Marketplace")
+                visible: Market.configured && Market.authenticated
+
+                ThemedLabel {
+                    width: parent.width
+                    text: Market.accountName.length > 0
+                          ? qsTr("Account connected (%1)").arg(Market.accountName)
+                          : qsTr("Marketplace account connected")
+                    color: Theme.panelForeground
+                }
+
+                ThemedButton {
+                    text: qsTr("Disconnect")
+                    variant: "ghost"
+                    tooltip: qsTr("Unlink the marketplace account from this device")
+                    onClicked: Market.disconnectAccount()
                 }
             }
         }

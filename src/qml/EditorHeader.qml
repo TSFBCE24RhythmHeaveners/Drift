@@ -8,21 +8,28 @@ import "components"
 Rectangle {
     id: root
 
+    // Main owns the window; the header only asks for it.
+    signal downloadsRequested()
+
     height: Theme.headerHeight
     color: Theme.appBackground
 
     property string projectName: EditorState.projectName
 
+    // Disabled: external project imports (Premiere Pro, DaVinci Resolve/FCPXML, Kdenlive/Shotcut,
+    // .mogrt, EDL, OTIO) need more fixing before shipping. Uncomment these entries, the open*()
+    // functions below and the RecentProjectsPopup connections when the readers are stable.
     readonly property var projectFilter: [
-        qsTr("All Supported Projects (*.drift *.prproj *.xml)"),
         qsTr("Drift project (*.drift)"),
-        qsTr("Premiere Pro project (*.prproj)"),
-        qsTr("Final Cut Pro XML (*.xml)")
+        qsTr("JSON document (*.json)"),
+        qsTr("All Files (*)")
     ]
     readonly property var projectMimeTypes: [
         "application/x-drift-project",
         "application/xml",
-        "text/xml"
+        "text/xml",
+        "application/zip",
+        "application/octet-stream"
     ]
 
     // Action to run after Save or Don't Save resolves. Null when idle.
@@ -76,6 +83,19 @@ Rectangle {
         return !EditorState.hasUnsavedChanges
     }
 
+    // Save As: writes the open project to a new .drift and keeps editing that one, leaving the
+    // file it came from exactly as it was on disk. The suggested name is the project's plus
+    // "copy", so accepting the picker's default cannot overwrite the original.
+    function saveProjectAs() {
+        var url = FileDialogs.saveFile(qsTr("Save Project As"), root.projectFilter,
+                                       qsTr("%1 copy").arg(EditorState.projectName), "drift", "",
+                                       root.projectMimeTypes)
+        if (url == "")
+            return false
+        EditorState.saveProjectAs(url)
+        return !EditorState.hasUnsavedChanges
+    }
+
     // Raw document JSON: an export, not a project file. Always asks for a path and leaves the
     // current .drift association untouched.
     function saveProjectJson() {
@@ -99,17 +119,74 @@ Rectangle {
         })
     }
 
-    function openPremiereProject() {
-        root.confirmIfDirty(function () {
-            var url = FileDialogs.openFile(qsTr("Import Premiere Pro Project"),
-                                           [qsTr("Premiere Pro project (*.prproj *.xml)"),
-                                            qsTr("Premiere Pro project (*.prproj)"),
-                                            qsTr("Final Cut Pro XML (*.xml)")],
-                                           ["application/xml", "text/xml"])
-            if (url != "")
-                EditorState.loadPremiereProject(url)
-        })
-    }
+    // Disabled: external project imports (Premiere Pro, DaVinci Resolve/FCPXML, Kdenlive/Shotcut,
+    // .mogrt, EDL, OTIO). Uncomment alongside the loadProject() routing in AppController once the
+    // readers are stable.
+    //
+    // function openPremiereProject() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import Premiere Pro Project"),
+    //                                        [qsTr("Premiere Pro project (*.prproj *.xml)"),
+    //                                         qsTr("Premiere Pro project (*.prproj)"),
+    //                                         qsTr("Final Cut Pro XML (*.xml)")],
+    //                                        ["application/xml", "text/xml"])
+    //         if (url != "")
+    //             EditorState.loadPremiereProject(url)
+    //     })
+    // }
+    //
+    // function openMogrt() {
+    //     var url = FileDialogs.openFile(qsTr("Import Motion Graphics Template"),
+    //                                    [qsTr("Motion Graphics Template (*.mogrt)"),
+    //                                     qsTr("All Files (*)")],
+    //                                    ["application/zip", "application/octet-stream"])
+    //     if (url != "")
+    //         EditorState.importMogrt(url)
+    // }
+    //
+    // function openKdenliveProject() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import Kdenlive / Shotcut Project"),
+    //                                        [qsTr("Kdenlive & Shotcut project (*.kdenlive *.mlt)"),
+    //                                         qsTr("Kdenlive project (*.kdenlive)"),
+    //                                         qsTr("Shotcut project (*.mlt)")],
+    //                                        ["application/xml", "text/xml", "application/x-kdenlive"])
+    //         if (url != "")
+    //             EditorState.loadKdenliveProject(url)
+    //     })
+    // }
+    //
+    // function openResolveProject() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import DaVinci Resolve Project / FCPXML"),
+    //                                        [qsTr("DaVinci Resolve project (*.drp *.fcpxml)"),
+    //                                         qsTr("DaVinci Resolve project archive (*.drp)"),
+    //                                         qsTr("Final Cut Pro X XML (*.fcpxml)")],
+    //                                        ["application/zip", "application/octet-stream", "application/xml", "text/xml"])
+    //         if (url != "")
+    //             EditorState.loadResolveProject(url)
+    //     })
+    // }
+    //
+    // function openEdlTimeline() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import Edit Decision List (.edl)"),
+    //                                        [qsTr("Edit Decision List (*.edl)")],
+    //                                        ["text/plain", "application/octet-stream"])
+    //         if (url != "")
+    //             EditorState.loadEdlTimeline(url)
+    //     })
+    // }
+    //
+    // function openOtioTimeline() {
+    //     root.confirmIfDirty(function () {
+    //         var url = FileDialogs.openFile(qsTr("Import OpenTimelineIO (.otio)"),
+    //                                        [qsTr("OpenTimelineIO sequence (*.otio)")],
+    //                                        ["application/json", "text/plain", "application/octet-stream"])
+    //         if (url != "")
+    //             EditorState.loadOtioTimeline(url)
+    //     })
+    // }
 
     // Save As with every source file copied in, so the result opens on a machine that has none of
     // the media. Always asks for a path: it is a different artefact from the working save.
@@ -139,6 +216,7 @@ Rectangle {
             }
         }
         function onSaveRequested() { root.saveProject() }
+        function onSaveAsRequested() { root.saveProjectAs() }
         function onOpenRequested() { root.openProject() }
         function onNewProjectRequested() { root.requestNewProject() }
     }
@@ -301,10 +379,17 @@ Rectangle {
                     onOpenFileRequested: root.openProject()
                     onNewProjectRequested: root.requestNewProject()
                     onOpenRecentRequested: (path) => root.openRecent(path)
+                    onSaveAsRequested: root.saveProjectAs()
                     onPackageRequested: root.packageProject()
                     onSaveJsonRequested: root.saveProjectJson()
                     onOpenJsonRequested: root.openProjectJson()
-                    onImportPremiereRequested: root.openPremiereProject()
+                    // Disabled: external project imports. Uncomment with the open*() functions above.
+                    // onImportPremiereRequested: root.openPremiereProject()
+                    // onImportMogrtRequested: root.openMogrt()
+                    // onImportKdenliveRequested: root.openKdenliveProject()
+                    // onImportResolveRequested: root.openResolveProject()
+                    // onImportEdlRequested: root.openEdlTimeline()
+                    // onImportOtioRequested: root.openOtioTimeline()
                     onPropertiesRequested: projectPropertiesDialog.openDialog()
                 }
             }
@@ -343,6 +428,50 @@ Rectangle {
         Row {
             Layout.alignment: Qt.AlignVCenter
             spacing: Theme.spacingSm
+
+            Item {
+                id: downloadsButton
+                visible: Market.configured
+                implicitWidth: downloadsBtn.implicitWidth
+                implicitHeight: downloadsBtn.implicitHeight
+                width: visible ? implicitWidth : 0
+                height: implicitHeight
+                anchors.verticalCenter: parent.verticalCenter
+
+                IconButton {
+                    id: downloadsBtn
+                    anchors.fill: parent
+                    glyph: Theme.icons.download
+                    variant: "ghost"
+                    active: Market.activeDownloadCount > 0
+                    tooltip: Market.activeDownloadCount > 0
+                             ? qsTr("Downloads — %n running", "", Market.activeDownloadCount)
+                             : qsTr("Downloads")
+                    onClicked: root.downloadsRequested()
+                }
+
+                // Count rather than a plain dot: with a queue behind a three-at-a-time cap,
+                // how many are outstanding is the thing worth knowing at a glance.
+                Rectangle {
+                    visible: Market.activeDownloadCount > 0
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingXs
+                    width: Math.max(Theme.spacingXl, downloadCount.implicitWidth + Theme.spacingSm)
+                    height: Theme.spacingXl
+                    radius: height / 2
+                    color: Theme.primary
+
+                    Text {
+                        id: downloadCount
+                        anchors.centerIn: parent
+                        text: String(Market.activeDownloadCount)
+                        color: Theme.primaryForeground
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeXs
+                    }
+                }
+            }
 
             component HeaderSeparator: Item {
                 width: Theme.spacingLg + Theme.borderWidth

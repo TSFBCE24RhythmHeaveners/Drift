@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QSet>
 #include <QStringList>
+#include <QThreadPool>
 #include <QUrl>
 
 namespace drift {
@@ -43,6 +44,7 @@ public:
     Q_ENUM(Role)
 
     explicit AssetLibrary(QObject *parent = nullptr);
+    ~AssetLibrary() override;
 
     void setProject(drift::Project *project);
     drift::Project *project() const { return m_project; }
@@ -73,7 +75,10 @@ public:
     Q_INVOKABLE QString mediaNameFilter() const;
     // Import local paths and return the asset ids involved (new or already-present).
     QStringList importLocalPaths(const QStringList &paths);
-    bool isImportPending(const QString &assetId) const;
+    // Q_INVOKABLE because QML has to know when a freshly imported row is still a placeholder:
+    // importFinished fires before the off-thread probe fills width/height/fps/duration, so
+    // anything sizing a canvas or a clip from a new asset must wait on this.
+    Q_INVOKABLE bool isImportPending(const QString &assetId) const;
     // Registers media the app rendered itself (freeze frames and the like). The asset is already
     // complete, so this skips the probe and thumbnail jobs the import path runs. Returns its id.
     QString addGeneratedAsset(drift::MediaAsset asset);
@@ -127,6 +132,9 @@ signals:
     // Result of startReplaceProbe. Nothing has been applied yet; the caller decides whether the
     // probed media is an acceptable stand-in and calls applyProbedSource if so.
     void assetSourceProbed(const QString &assetId, const drift::MediaAsset &filled, bool ok);
+    // A file that passed the suffix whitelist and then could not be read at all, so its bin row
+    // was withdrawn. Without this the row just disappears and the user is told nothing.
+    void assetImportFailed(const QString &name);
 
 private:
     // `sourceUris` maps an absolute path to the content:// URI it was materialized from, so the
@@ -169,4 +177,10 @@ private:
     QSet<QString> m_importPending;
     QSet<QString> m_thumbPending;
     QSet<QString> m_audioProbePending;
+    // Probe and thumbnail jobs run here rather than on the global pool, because the destructor
+    // has to be able to wait for them: each captures `this` and posts its result back with
+    // QMetaObject::invokeMethod(this, ...). Nothing joined them before, so a job outliving the
+    // object called into freed memory — the tests are where that bites, since AssetLibrary is a
+    // stack local per test function and the address is handed straight to the next one.
+    QThreadPool m_jobs;
 };

@@ -15,6 +15,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImageIOHandler>
+#include "engine/StillImage.h"
+
 #include <QImageReader>
 #include <QJsonObject>
 #include <QMetaObject>
@@ -174,14 +176,10 @@ const QStringList &audioExtensions()
     return extensions;
 }
 
+// Canonical list lives in core so the engine and the project importers can share it.
 const QStringList &imageExtensions()
 {
-    static const QStringList extensions = {
-        QStringLiteral("png"),  QStringLiteral("jpg"),  QStringLiteral("jpeg"),
-        QStringLiteral("gif"),  QStringLiteral("webp"), QStringLiteral("bmp"),
-        QStringLiteral("tiff"), QStringLiteral("tif"),  QStringLiteral("svg"),
-    };
-    return extensions;
+    return drift::imageExtensions();
 }
 
 drift::MediaKind kindFrom(const MediaInfo &info, const QString &path)
@@ -282,15 +280,21 @@ drift::MediaAsset buildProbedAsset(const QString &absolutePath, const QString &n
     return asset;
 }
 
-drift::MediaAsset buildImageAsset(const QString &absolutePath, const QString &name)
+// nullopt when neither Qt nor the FFmpeg fallback can read the file. The suffix is on the import
+// whitelist, so reaching that means a format Drift claims to support has no decoder here at all.
+// Returning a zero-sized asset instead, which is what this used to do, left a row in the bin that
+// silently rendered as nothing.
+std::optional<drift::MediaAsset> buildImageAsset(const QString &absolutePath, const QString &name)
 {
     const QString kindString = drift::mediaKindToString(drift::MediaKind::Image);
     const QString thumb = MediaThumbnail::generate(absolutePath, kindString);
-    QImageReader reader(absolutePath);
-    reader.setAutoTransform(true);
-    QSize size = reader.size();
-    if (reader.transformation() & QImageIOHandler::TransformationRotate90)
-        size.transpose();
+    const QSize size = drift::stillImageSize(absolutePath);
+
+    if (size.isEmpty()) {
+        qWarning("import: cannot read image %s. Qt decodes: %s", qPrintable(absolutePath),
+                 QImageReader::supportedImageFormats().join(", ").constData());
+        return std::nullopt;
+    }
 
     drift::MediaAsset asset;
     asset.name = name;
@@ -376,6 +380,17 @@ AssetLibrary::AssetLibrary(QObject *parent)
     connect(this, &QAbstractItemModel::rowsInserted, this, &AssetLibrary::snapshotAssets);
     connect(this, &QAbstractItemModel::rowsRemoved, this, &AssetLibrary::snapshotAssets);
     connect(this, &QAbstractItemModel::modelReset, this, &AssetLibrary::snapshotAssets);
+}
+
+// Every probe and thumbnail job captures `this` and posts its result back to this object, so
+// none of them may outlive it. clear() drops the ones that have not started — an import of a
+// few hundred files leaves a long queue, and there is no reason to run it to completion just
+// to throw the answers away — and waitForDone() waits out the handful already running.
+// Results that did get posted are ordinary queued events, which ~QObject discards.
+AssetLibrary::~AssetLibrary()
+{
+    m_jobs.clear();
+    m_jobs.waitForDone();
 }
 
 QList<QString> AssetLibrary::currentPaths() const
@@ -593,7 +608,7 @@ void AssetLibrary::startThumbJob(const QString &assetId)
     const QString path = asset->path;
     const drift::MediaKind kind = asset->kind;
 
-    (void)QtConcurrent::run([this, assetId, path, kind, needThumb, needStrip]() {
+    (void)QtConcurrent::run(&m_jobs, [this, assetId, path, kind, needThumb, needStrip]() {
         const QString kindString = drift::mediaKindToString(kind);
         QString thumb;
         QString strip;
@@ -660,7 +675,7 @@ void AssetLibrary::startImportJob(const QString &assetId, const QString &absolut
 
     m_importPending.insert(assetId);
 
-    (void)QtConcurrent::run([this, assetId, absolutePath, imageOnly]() {
+    (void)QtConcurrent::run(&m_jobs, [this, assetId, absolutePath, imageOnly]() {
         const std::optional<drift::MediaAsset> probed = probeAsset(absolutePath, imageOnly);
         const drift::MediaAsset filled = probed.value_or(drift::MediaAsset{});
         const bool ok = probed.has_value();
@@ -685,7 +700,7 @@ bool AssetLibrary::startReplaceProbe(int index, const QString &absolutePath)
     m_importPending.insert(assetId);
     const bool imageOnly = isImagePath(absolutePath);
 
-    (void)QtConcurrent::run([this, assetId, absolutePath, imageOnly]() {
+    (void)QtConcurrent::run(&m_jobs, [this, assetId, absolutePath, imageOnly]() {
         const std::optional<drift::MediaAsset> probed = probeAsset(absolutePath, imageOnly);
         const drift::MediaAsset filled = probed.value_or(drift::MediaAsset{});
         const bool ok = probed.has_value();
@@ -742,10 +757,13 @@ void AssetLibrary::applyImportResult(const QString &assetId, const drift::MediaA
         return;
 
     if (!ok) {
+        const drift::MediaAsset *failing = m_project->asset(assetId);
+        const QString name = failing ? failing->name : QString();
         beginRemoveRows({}, index, index);
         m_project->assets().remove(assetId);
         m_project->assetOrder().removeAll(assetId);
         endRemoveRows();
+        emit assetImportFailed(name);
         return;
     }
 
@@ -844,7 +862,7 @@ void AssetLibrary::ensureAudioPresence(const QString &assetId)
     m_audioProbePending.insert(assetId);
     const QString path = asset->path;
 
-    (void)QtConcurrent::run([this, assetId, path]() {
+    (void)QtConcurrent::run(&m_jobs, [this, assetId, path]() {
         const MediaInfo info = MediaProbe::probe(path);
         bool hasAudio = false;
         int sampleRate = 0;

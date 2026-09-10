@@ -42,12 +42,11 @@ struct EffectTemplateEntry;
 
 class QTimer;
 class AddonManager;
+class MarketClient;
 
-#ifndef Q_OS_ANDROID
 namespace drift::mcp {
 class McpServer;
 }
-#endif
 
 #include "playback/ClipPreviewPlayer.h"
 #include "playback/PlaybackEngine.h"
@@ -121,6 +120,12 @@ class AppController : public QObject
     Q_PROPERTY(bool vaapiZeroCopy READ vaapiZeroCopy WRITE setVaapiZeroCopy NOTIFY vaapiZeroCopyChanged)
     Q_PROPERTY(bool playbackBenchmarkRunning READ playbackBenchmarkRunning NOTIFY playbackBenchmarkRunningChanged)
     Q_PROPERTY(bool vaapiZeroCopySupported READ vaapiZeroCopySupported CONSTANT)
+    // Android MediaCodec zero-copy preview. Same shape and the same caveat as the VAAPI pair
+    // above: a driver can import the surface and still sample it wrongly, which shows up as a
+    // corrupt preview with nothing to catch it — so it is opt-in and takes effect on restart.
+    Q_PROPERTY(bool mediaCodecZeroCopy READ mediaCodecZeroCopy WRITE setMediaCodecZeroCopy NOTIFY
+                   mediaCodecZeroCopyChanged)
+    Q_PROPERTY(bool mediaCodecZeroCopySupported READ mediaCodecZeroCopySupported CONSTANT)
     Q_PROPERTY(bool invertTimelineScroll READ invertTimelineScroll WRITE setInvertTimelineScroll
                    NOTIFY invertTimelineScrollChanged)
     // Session-only localhost MCP for agents. Never persisted. Off at every launch.
@@ -245,6 +250,21 @@ class AppController : public QObject
     Q_PROPERTY(bool fadeCurveSessionActive READ fadeCurveSessionActive NOTIFY fadeCurveSessionChanged)
     Q_PROPERTY(QVariantList fadeCurvePoints READ fadeCurvePoints NOTIFY fadeCurveChanged)
     Q_PROPERTY(QString fadeCurveClipName READ fadeCurveClipName NOTIFY fadeCurveSessionChanged)
+    // Cubic handles for FadeCurve::Bezier, as {c1x, c1y, c2x, c2y}. Separate from the point list
+    // because the two modes edit different shapes, not two views of one.
+    Q_PROPERTY(QVariantList fadeCurveHandles READ fadeCurveHandles NOTIFY fadeCurveChanged)
+    // "points" (polyline) or "bezier" (cubic). The editor opens on whichever the clip already
+    // uses, so reopening Custom does not silently convert a bezier fade into a polyline.
+    Q_PROPERTY(QString fadeCurveMode READ fadeCurveMode NOTIFY fadeCurveChanged)
+
+    // The same editor, scoped to a transition's progress curve rather than a clip's fade. Kept
+    // separate from the clip session above because that one also drives animIn/animOut and the
+    // linked-partner sync, none of which a transition has.
+    Q_PROPERTY(bool transitionCurveSessionActive READ transitionCurveSessionActive NOTIFY transitionCurveSessionChanged)
+    Q_PROPERTY(QVariantList transitionCurvePoints READ transitionCurvePoints NOTIFY transitionCurveChanged)
+    Q_PROPERTY(QString transitionCurveName READ transitionCurveName NOTIFY transitionCurveSessionChanged)
+    Q_PROPERTY(QVariantList transitionCurveHandles READ transitionCurveHandles NOTIFY transitionCurveChanged)
+    Q_PROPERTY(QString transitionCurveMode READ transitionCurveMode NOTIFY transitionCurveChanged)
     Q_PROPERTY(bool faceDetecting READ faceDetecting NOTIFY faceDetectingChanged)
     Q_PROPERTY(double faceDetectProgress READ faceDetectProgress NOTIFY faceDetectProgressChanged)
     Q_PROPERTY(QString faceDetectStatus READ faceDetectStatus NOTIFY faceDetectStatusChanged)
@@ -345,6 +365,8 @@ public:
     bool reopenLastProject() const { return m_reopenLastProject; }
     bool vaapiZeroCopy() const { return m_vaapiZeroCopy; }
     bool vaapiZeroCopySupported() const;
+    bool mediaCodecZeroCopy() const { return m_mediaCodecZeroCopy; }
+    bool mediaCodecZeroCopySupported() const;
     bool invertTimelineScroll() const { return m_invertTimelineScroll; }
     QString uiLanguage() const { return m_uiLanguage; }
     QVariantList uiLanguages() const;
@@ -444,13 +466,12 @@ public:
     void setAutoKeyEnabled(bool enabled);
     void setReopenLastProject(bool enabled);
     void setVaapiZeroCopy(bool enabled);
+    void setMediaCodecZeroCopy(bool enabled);
     void setInvertTimelineScroll(bool enabled);
     Q_INVOKABLE void setMcpEnabled(bool enabled);
-#ifndef Q_OS_ANDROID
     // Headless wires transports onto the server itself, which the on/off switch above
-    // does not expose. Null on Android, where there is no MCP server.
+    // does not expose.
     drift::mcp::McpServer *mcpServer() const { return m_mcp.get(); }
-#endif
     bool mcpEnabled() const { return mcpRunning(); }
     bool mcpRunning() const;
     QString mcpUrl() const;
@@ -484,11 +505,58 @@ public:
     QPair<int, int> mcpLocateClip(const QString &id) const;
     QString mcpClipId(int trackIndex, int clipIndex) const;
     QVariantMap mcpCompactClip(int trackIndex, int clipIndex, bool includeCanvas = true) const;
+    struct McpInspectOptions {
+        bool clips = false;
+        bool detail = false;
+        bool cues = false;
+        bool verbose = false;
+        int since = -1;
+        int track = -1;
+        QString clip;
+    };
+    QJsonObject mcpInspect(const McpInspectOptions &options) const;
     QJsonObject mcpInspect(bool includeClips, int sinceRevision = -1, bool detail = false,
-                           bool includeCues = false) const;
+                           bool includeCues = false) const
+    {
+        return mcpInspect(McpInspectOptions{includeClips, detail, includeCues, false, sinceRevision});
+    }
     int mcpRevision() const { return m_mcpEditRevision; }
     bool mcpSetClipCanvas(int trackIndex, int clipIndex, const QVariantMap &patch);
     QJsonObject mcpCaptureFrame(double atSeconds, bool full);
+
+    // Perception for agents: a labelled contact sheet, a text profile of change over time, and a
+    // waveform rendered as an image. All block on the mcpCaptureFrame pattern.
+    struct McpFrameSheetRequest {
+        double start = -1.0;
+        double end = -1.0;
+        QList<double> at;
+        QString sample = QStringLiteral("changes");
+        int n = 12;
+        int cols = 0;
+        int tileWidth = 0;
+        int minChange = 12;
+        bool label = true;
+        bool toPath = false;
+        int track = -1;
+        int clip = -1;
+    };
+    QJsonObject mcpFrameSheet(const McpFrameSheetRequest &request);
+
+    struct McpActivityRequest {
+        double start = -1.0;
+        double end = -1.0;
+        int samples = 200;
+        int peaks = 8;
+        bool audio = true;
+        int track = -1;
+        int clip = -1;
+    };
+    QJsonObject mcpActivity(const McpActivityRequest &request);
+
+    QJsonObject mcpWaveformImage(const QString &mode, int trackIndex, int clipIndex,
+                                 const QString &assetId, double startSeconds, double durSeconds,
+                                 int width, int height, bool spectrogram,
+                                 int summaryBuckets) const;
     bool mcpSetWorkArea(double inSeconds, double outSeconds);
 
     // Audio for agents. All of these block: the QML-facing waveform getters return empty on the
@@ -510,8 +578,11 @@ public:
     // The live analysis, filtered and shaped for MCP. Times are reported in both source and
     // timeline space so an agent never has to redo the trim/speed/reverse mapping itself.
     QJsonObject mcpListScenes(const QString &label, double minScore, const QString &sort,
-                              int limit) const;
-    QJsonObject mcpDescribeClip(int topCount) const;
+                              int limit, int trackIndex = -1, int clipIndex = -1) const;
+    // Rows for a clip's scene analysis: the live one when it is the last scanned clip, else the
+    // on-disk cache. Empty when it was never scanned.
+    QVariantList mcpSceneRows(int trackIndex, int clipIndex, const drift::Clip **clip) const;
+    QJsonObject mcpDescribeClip(int topCount, int trackIndex = -1, int clipIndex = -1) const;
     QJsonObject mcpFindScenes(const QString &label, double minScore, int trackIndex,
                               int limit) const;
     // Timeline seconds of every detected boundary inside the clip that was analysed.
@@ -529,7 +600,7 @@ public:
     void mcpRememberExportSettings(const QVariantMap &settings);
     void mcpBeginBatch();
     void mcpEndBatch(const QString &text, bool pushUndo);
-    QJsonObject mcpListHistory() const;
+    QJsonObject mcpListHistory(int limit = 20) const;
     QJsonObject mcpUndoTo(int index, const QString &hash);
     QJsonObject mcpTakeSnapshot(const QString &label);
     QJsonObject mcpListSnapshots() const;
@@ -552,6 +623,8 @@ public:
     QJsonObject mcpCancelAddonInstall(const QString &id);
     QJsonObject mcpSetAcceleration(const QString &variant);
     void setAddonManager(AddonManager *manager) { m_addonManager = manager; }
+    void setMarketClient(MarketClient *client) { m_marketClient = client; }
+    MarketClient *marketClient() const { return m_marketClient; }
     AddonManager *addonManager() const { return m_addonManager; }
     void setUiLanguage(const QString &code);
     // First-launch chooser: persist the pick and never ask again. Settings uses setUiLanguage.
@@ -743,6 +816,23 @@ public:
     QString fadeCurveClipName() const { return m_fadeCurveClipName; }
     Q_INVOKABLE void applyFadeCurve();
     Q_INVOKABLE void resetFadeCurvePreset(const QString &preset);
+    QVariantList fadeCurveHandles() const;
+    QString fadeCurveMode() const;
+    Q_INVOKABLE void setFadeCurveHandles(double c1x, double c1y, double c2x, double c2y);
+
+    Q_INVOKABLE void setTransitionEasing(int trackIndex, const QString &transitionId,
+                                         const QString &curve);
+    Q_INVOKABLE void beginTransitionCurveSession(int trackIndex, const QString &transitionId);
+    Q_INVOKABLE void endTransitionCurveSession();
+    bool transitionCurveSessionActive() const { return m_transitionCurveActive; }
+    QVariantList transitionCurvePoints() const;
+    QString transitionCurveName() const { return m_transitionCurveName; }
+    Q_INVOKABLE void setTransitionCurvePoints(const QVariantList &points);
+    Q_INVOKABLE void applyTransitionCurve();
+    Q_INVOKABLE void resetTransitionCurvePreset(const QString &preset);
+    QVariantList transitionCurveHandles() const;
+    QString transitionCurveMode() const;
+    Q_INVOKABLE void setTransitionCurveHandles(double c1x, double c1y, double c2x, double c2y);
     Q_INVOKABLE void setSegmentationFrame(double seconds);
     Q_INVOKABLE void addSegmentationPoint(double x, double y, bool include);
     Q_INVOKABLE void removeSegmentationPoint(int index);
@@ -1245,6 +1335,11 @@ public:
     // Writes a .drift bundle keeping each asset's current storage mode, so a referencing project
     // stays instant to save and a packaged one stays self-contained.
     Q_INVOKABLE void saveProject(const QUrl &url);
+    // Save As: the same write, but the copy gets its own project id and takes its title from the
+    // chosen file name, and the open document only adopts that identity once the write lands. The
+    // file it was opened from is never touched, so the original stays as it was on disk and the
+    // session carries on in the duplicate — which is the point of the command.
+    Q_INVOKABLE void saveProjectAs(const QUrl &url);
     // Same container, every source asset embedded. Runs off the GUI thread — it copies the media.
     Q_INVOKABLE void packageProject(const QUrl &url);
     // Export-only: the raw document JSON, no container and no media. Leaves the open project's
@@ -1258,6 +1353,18 @@ public:
     // Imports an Adobe Premiere Pro project (.prproj) or Final Cut Pro XML (.xml),
     // mapping sequences, video/audio tracks, clips, in/out trimming, and media assets.
     Q_INVOKABLE void loadPremiereProject(const QUrl &url);
+    // Unpacks and imports a Motion Graphics Template (.mogrt), extracting assets and mapping
+    // editable text, colors, and media overlays onto the timeline and media library.
+    Q_INVOKABLE void importMogrt(const QUrl &url);
+    // Imports a Kdenlive (.kdenlive) or Shotcut MLT (.mlt) project, mapping
+    // multitrack playlists, video/audio cuts, title text clips, and bin folders.
+    Q_INVOKABLE void loadKdenliveProject(const QUrl &url);
+    // Imports a DaVinci Resolve project (.drp) or Final Cut Pro X XML (.fcpxml).
+    Q_INVOKABLE void loadResolveProject(const QUrl &url);
+    // Imports a CMX 3600 Edit Decision List (.edl).
+    Q_INVOKABLE void loadEdlTimeline(const QUrl &url);
+    // Imports an OpenTimelineIO (.otio) sequence.
+    Q_INVOKABLE void loadOtioTimeline(const QUrl &url);
     Q_INVOKABLE void cancelPackage();
     Q_INVOKABLE void loadProject(const QUrl &url);
     Q_INVOKABLE void newProject();
@@ -1315,6 +1422,18 @@ public:
     // sheet. Deferred to this point rather than done as part of the export because it is a second
     // full copy of the video, and most exports are never shared. Android only; false/no-op elsewhere.
     Q_INVOKABLE void shareLastExport();
+    // Same publish-to-gallery step as shareLastExport, handed to a player instead of a share
+    // sheet. Shares the m_sharingExport guard, so the two cannot run the copy twice at once.
+    Q_INVOKABLE void playLastExport();
+    // Copies a file into the shared media collection (Movies/Music/Pictures under "Drift") so it
+    // outlives the app's own storage. Marketplace downloads land in AppDataLocation, which is gone
+    // on uninstall or a "clear data" and invisible to every file manager — for something the user
+    // spent quota on, that is a file they can lose without ever having seen it.
+    //
+    // Asynchronous: this is a second full copy of the media, and doing it inline is an ANR on
+    // anything long. Reports through savedToGallery. Android only; a no-op elsewhere, where the
+    // download already went somewhere the user picked.
+    Q_INVOKABLE void saveToGallery(const QString &filePath, const QString &displayName);
     Q_INVOKABLE QUrl fileUrl(const QString &path) const;
     Q_INVOKABLE QString imageUrl(const QString &path) const;
     // Same as imageUrl but requests a single frame of a filmstrip strip (see DriftImageProvider).
@@ -1344,6 +1463,7 @@ signals:
     void autoKeyEnabledChanged();
     void reopenLastProjectChanged();
     void vaapiZeroCopyChanged();
+    void mediaCodecZeroCopyChanged();
     // Carries the finished benchmark, merged into whatever the dialog already collected.
     void playbackBenchmarkFinished(const QVariantMap &info);
     void playbackBenchmarkRunningChanged();
@@ -1359,6 +1479,9 @@ signals:
     void exportInProgressChanged();
     void exportProgressChanged();
     void canShareExportChanged();
+    // `location` is a human-readable folder ("Movies/Drift"), empty when ok is false.
+    void savedToGallery(const QString &displayName, bool ok, const QString &location,
+                        const QString &error);
     void subtitleGeneratingChanged();
     void subtitleGenProgressChanged();
     void subtitleGenStatusChanged();
@@ -1397,6 +1520,9 @@ signals:
     void fadeCurveSessionChanged();
     void fadeCurveChanged();
     void fadeCurveApplied();
+    void transitionCurveSessionChanged();
+    void transitionCurveChanged();
+    void transitionCurveApplied();
     void faceDetectingChanged();
     void faceDetectProgressChanged();
     void faceDetectStatusChanged();
@@ -1470,6 +1596,7 @@ signals:
     void newProjectRequested();
     void openRequested();
     void saveRequested();
+    void saveAsRequested();
     void openPasteAttributesRequested();
 
 protected:
@@ -1672,6 +1799,16 @@ protected:
     // bundle; otherwise each keeps whatever mode it had, tracked in m_embeddedSources. GUI thread
     // only — packageProject builds the request here and hands the finished copy to its worker.
     drift::bundle::WriteRequest buildWriteRequest(bool embedSource) const;
+    // Who the document becomes when a Save As write succeeds. A fresh id keeps the copy from
+    // sharing the original's extraction and derived-media directory, both of which are keyed on it.
+    struct ProjectIdentity {
+        QString id;
+        QString name;
+    };
+    // Body of saveProject / saveProjectAs. `adopt` is empty for a plain Save; when set, the copy is
+    // written under that identity and the open project only takes it on once the bytes are down.
+    void writeProjectBundle(const QUrl &url, const std::optional<ProjectIdentity> &adopt);
+    void adoptProjectIdentity(const std::optional<ProjectIdentity> &adopt);
     void rememberEmbeddedSources(const QList<drift::bundle::MediaEntry> &media);
     // Persist the save-picker folder and encode/scale choices for the next Export dialog.
     // Empty `outputPath` updates settings only and leaves lastExportFolder unchanged.
@@ -1705,6 +1842,7 @@ protected:
 
     AssetLibrary *m_assetLibrary = nullptr;
     AddonManager *m_addonManager = nullptr;
+    MarketClient *m_marketClient = nullptr;
     BinFolderListModel m_binFolderModel;
     QString m_currentBinFolderId;
     bool m_importingFolder = false;
@@ -1738,6 +1876,7 @@ protected:
     bool m_autoKeyEnabled = false;
     bool m_reopenLastProject = false;
     bool m_vaapiZeroCopy = false;
+    bool m_mediaCodecZeroCopy = false;
     // One benchmark at a time: it drives the shared decoders and the GL thread, and two
     // sweeps interleaved would measure each other rather than the pipeline.
     std::atomic<bool> m_benchmarkRunning{false};
@@ -1824,6 +1963,17 @@ protected:
     drift::FadeShape m_fadeShape;
     drift::FadeCurve m_fadeCurveBefore = drift::FadeCurve::Smooth;
     drift::FadeShape m_fadeShapeBefore;
+    // Which shape the live session is editing; committed as-is by applyFadeCurve.
+    drift::FadeCurve m_fadeCurveMode = drift::FadeCurve::Custom;
+    bool m_transitionCurveActive = false;
+    int m_transitionCurveTrack = -1;
+    QString m_transitionCurveId;
+    QString m_transitionCurveName;
+    drift::FadeShape m_transitionShape;
+    drift::FadeCurve m_transitionCurveBefore = drift::FadeCurve::Linear;
+    drift::FadeShape m_transitionShapeBefore;
+    drift::FadeCurve m_transitionCurveMode = drift::FadeCurve::Custom;
+    bool m_transitionCurveApplied = false;
     bool m_fadeCurveApplied = false;
 
     bool m_reverseRendering = false;
@@ -1967,9 +2117,7 @@ protected:
     // Launch layout picker / first-clip setup completed for this empty project.
     bool m_projectLayoutChosen = false;
 
-#ifndef Q_OS_ANDROID
     std::unique_ptr<drift::mcp::McpServer> m_mcp;
-#endif
     bool m_mcpUndoSuspended = false;
     int m_mcpBatchDepth = 0;
     drift::Project m_mcpBatchBefore;
