@@ -16,6 +16,11 @@ set(CMAKE_AUTORCC ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 option(WITH_BGREMOVAL "Enable OpenCV-based background removal" OFF)
+# Skia (Ganesh/GL) draws text, shapes and Lottie/SVG clips on the GPU; see
+# third_party/build-skia.sh for producing the prebuilt it links. OFF builds a video/image/audio
+# only editor: text, shapes and Lottie/SVG clips draw nothing.
+option(DRIFT_WITH_SKIA "Draw vector content (text, shapes, Lottie, SVG) with Skia" ON)
+set(DRIFT_SKIA_DIR "" CACHE PATH "Directory containing SkiaConfig.cmake (default: third_party/prebuilt/skia/<target>)")
 
 # Defaults off under CI so the Translations test still compares the committed catalogs.
 if(DEFINED ENV{CI})
@@ -380,6 +385,7 @@ add_library(driftcore STATIC
     src/core/BinFolder.h
     src/core/MediaAsset.h
     src/core/MediaAsset.cpp
+    src/core/BlendMode.h
     src/core/Clip.h
     src/core/Clip.cpp
     src/core/Stabilize.h
@@ -399,6 +405,18 @@ add_library(driftcore STATIC
     src/core/Mask.cpp
     src/core/Transition.h
     src/core/Transition.cpp
+    src/core/TextParamSpec.h
+    src/core/TextParamSpec.cpp
+    src/core/LottieTextImport.h
+    src/core/LottieTextImport.cpp
+    src/core/TextLook.h
+    src/core/TextLook.cpp
+    src/core/TextShading.h
+    src/core/TextShading.cpp
+    src/core/TextAnimationPreset.h
+    src/core/TextAnimationPreset.cpp
+    src/core/TextAnimator.h
+    src/core/TextAnimator.cpp
     src/core/TextStyle.h
     src/core/TextStyle.cpp
     src/core/TextPresetStore.h
@@ -409,6 +427,12 @@ add_library(driftcore STATIC
     src/core/ShapeStyle.cpp
     src/core/ShapePath.h
     src/core/ShapePath.cpp
+    src/core/VectorSource.h
+    src/core/VectorSource.cpp
+    src/core/ZipArchive.h
+    src/core/ZipArchive.cpp
+    src/core/DotLottie.h
+    src/core/DotLottie.cpp
     src/core/Track.h
     src/core/Track.cpp
     src/core/Project.h
@@ -432,6 +456,13 @@ add_library(driftcore STATIC
 )
 target_include_directories(driftcore PUBLIC src)
 target_link_libraries(driftcore PUBLIC Qt6::Core Qt6::Gui Qt6::Xml ZLIB::ZLIB)
+
+file(GLOB DRIFT_TEXT_ANIMATION_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/presets/text-animations/*.json")
+qt_add_resources(driftcore "drift_text_animations"
+    PREFIX "/text-animations"
+    BASE "${CMAKE_SOURCE_DIR}/presets/text-animations"
+    FILES ${DRIFT_TEXT_ANIMATION_FILES}
+)
 
 # Audio effect DSP. JUCE modules compile into whatever target links them, so keeping them in a
 # library of their own is what stops JUCE's headers, its compile definitions and its build time
@@ -533,8 +564,12 @@ add_library(driftengine STATIC
     src/engine/EmojiCatalog.cpp
     src/engine/EmojiTable.h
     src/engine/EmojiTable.cpp
-    src/engine/TextRaster.h
-    src/engine/TextRaster.cpp
+    src/engine/TextLayout.h
+    src/engine/TextLayout.cpp
+    src/engine/VectorClipRenderer.h
+    src/engine/VectorClipRenderer.cpp
+    src/engine/VectorInspect.h
+    src/engine/VectorInspect.cpp
     src/engine/EffectPackageLoader.h
     src/engine/EffectPackageLoader.cpp
     src/engine/TransitionCatalog.h
@@ -625,6 +660,41 @@ if(WITH_BGREMOVAL)
     target_compile_definitions(driftengine PUBLIC DRIFT_WITH_BGREMOVAL)
 endif()
 
+if(DRIFT_WITH_SKIA)
+    find_package(Skia REQUIRED)
+    target_sources(driftengine PRIVATE
+        src/engine/SkiaRuntime.h
+        src/engine/SkiaRuntime.cpp
+        src/engine/SkiaPath.h
+        src/engine/SkiaPath.cpp
+        src/engine/SkiaShading.h
+        src/engine/SkiaShading.cpp
+        src/engine/SkiaShapePainter.h
+        src/engine/SkiaShapePainter.cpp
+        src/engine/SkiaFonts.h
+        src/engine/SkiaFonts.cpp
+        src/engine/SkiaVectorResources.h
+        src/engine/SkiaVectorResources.cpp
+        src/engine/SkiaVectorObservers.h
+        src/engine/SkiaVectorObservers.cpp
+        src/engine/SkiaTextPainter.h
+        src/engine/SkiaTextPainter.cpp
+        src/engine/SkiaTextEffects.h
+        src/engine/SkiaTextEffects.cpp
+    )
+    # build-skia.sh compiles Skia with RTTI (see the extra_cflags_cc note there), so Drift classes
+    # may subclass Skia interfaces from any translation unit. vcpkg's port on Windows keeps /GR-,
+    # which is harmless: MSVC emits type descriptors as COMDAT wherever they are needed, so a
+    # derived class never depends on its base's archive carrying one.
+    # PRIVATE: no header outside src/engine/Skia*.h includes Skia (Vector*.cpp do, under
+    # DRIFT_WITH_SKIA), so the defines and the include root stay out of the rest of the build.
+    target_link_libraries(driftengine PRIVATE Skia::Skia)
+    target_compile_definitions(driftengine PUBLIC DRIFT_WITH_SKIA)
+    # Qt's `foreach` keyword macro collides with SkTHash::foreach(), which the Skottie headers
+    # pull in. Nothing in Drift writes foreach; Q_FOREACH stays available.
+    target_compile_definitions(driftengine PRIVATE QT_NO_FOREACH)
+endif()
+
 # --- application ------------------------------------------------------------
 qt_add_executable(drift
     src/main.cpp
@@ -644,6 +714,8 @@ qt_add_executable(drift
     src/MulticamImageStore.cpp
     src/TextStylePreviewImageProvider.h
     src/TextStylePreviewImageProvider.cpp
+    src/ShapePreviewImageProvider.h
+    src/ShapePreviewImageProvider.cpp
     src/models/AddonEndpoint.h
     src/models/AddonManager.h
     src/models/AddonManager.cpp
@@ -852,6 +924,12 @@ qt_add_qml_module(drift
         src/qml/PropertiesPanel.qml
         src/qml/components/properties/GeneralInspector.qml
         src/qml/components/properties/TextInspector.qml
+        src/qml/components/properties/TextParamSlots.qml
+        src/qml/components/properties/PaintEditor.qml
+        src/qml/components/properties/GradientStopEditor.qml
+        src/qml/components/properties/ShadingLayerRow.qml
+        src/qml/components/properties/TextAnimPresetTile.qml
+        src/qml/components/properties/TextLookPicker.qml
         src/qml/components/properties/TransformInspector.qml
         src/qml/components/properties/StabilizeInspector.qml
         src/qml/components/properties/AudioInspector.qml
@@ -861,6 +939,7 @@ qt_add_qml_module(drift
         src/qml/components/properties/TransitionInspector.qml
         src/qml/components/properties/BlendingInspector.qml
         src/qml/components/properties/ShapeInspector.qml
+        src/qml/components/properties/VectorInspector.qml
         src/qml/components/properties/MasksInspector.qml
         src/qml/components/properties/EffectsInspector.qml
         src/qml/components/assets/TextAssetsTab.qml
@@ -893,7 +972,6 @@ qt_add_qml_module(drift
         src/qml/components/KeyframeGraph.qml
         src/qml/components/SubtitleCueLane.qml
         src/qml/components/ShortcutCaptureField.qml
-        src/qml/components/ShapePreview.qml
         src/qml/components/ColorSwatchField.qml
         src/qml/components/EffectBrowser.qml
         src/qml/components/AudioEffectBrowser.qml
