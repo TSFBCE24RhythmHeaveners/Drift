@@ -275,12 +275,12 @@ jobs:
           # playable only on GPUs whose VAAPI/NVDEC covers it and black everywhere else.
           export LD_LIBRARY_PATH="${GITHUB_WORKSPACE}/.deps/ffmpeg/lib:${QT_ROOT_DIR}/lib:${LD_LIBRARY_PATH:-}"
           export EXTRA_PLATFORM_PLUGINS="libqwayland.so"
-          # waylandclient as well as waylandcompositor: the client half is what brings
-          # wayland-graphics-integration-client, and without its EGL plugin QtWayland
-          # cannot hand out an offscreen surface — the compositor then falls back to a
-          # hidden QWindow it is not allowed to create off the GUI thread, and the
-          # preview goes black on Wayland while X11 is fine.
-          export EXTRA_QT_MODULES="waylandcompositor waylandclient"
+          # waylandcompositor is the only module whose deployer ships
+          # wayland-graphics-integration-client. Without its EGL plugin QtWayland has no client
+          # buffer integration, so no OpenGL context can be created on Wayland at all.
+          # The plugin splits this list on ';' — a space-separated list matches nothing and
+          # silently deploys no extra modules (the 0.6.0 AppImage shipped that way).
+          export EXTRA_QT_MODULES="waylandcompositor"
           #
           # The -l lines are libraries dlopened by soname, so linuxdeploy sees no NEEDED entry
           # to follow: OpenSSL is Qt's ossl TLS backend — without it the AppImage ships the
@@ -438,8 +438,16 @@ jobs:
       # elevation on Windows. Roughly 16 tests QSKIP as a result; the rest is what this covers.
       #
       # Serial, not ctest -j: the suites share QStandardPaths::AppDataLocation test-mode state.
+      #
+      # QT_FORCE_STDERR_LOGGING is what makes a failure here legible at all. QPlainTestLogger
+      # diverts its whole stream to OutputDebugString when it is writing to stdout and stderr has
+      # no console attached (qplaintestlogger.cpp) — which is exactly ctest's pipe. Without it a
+      # failing suite reports only "***Failed" with not one FAIL! line to say which case or why,
+      # and qWarning/qFatal go the same way, so even a fatal startup error is invisible.
       - name: Test
         shell: pwsh
+        env:
+          QT_FORCE_STDERR_LOGGING: 1
         run: |
           $env:PATH = "${{ github.workspace }}\.deps\ffmpeg\bin;${{ env.QT_ROOT_DIR }}\bin;$env:PATH"
           ctest --test-dir build -C Release --output-on-failure

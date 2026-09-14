@@ -2311,6 +2311,10 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>The graphics card choice takes effect after you restart Drift.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Clips moved</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6591,8 +6595,36 @@
         <translation>තවමත් මාධ්‍ය කිසිවක් නැත</translation>
     </message>
     <message>
+        <source>Import files or drop them here, then drag them onto the timeline. Right-click a clip to preview and trim it first.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Import media</source>
         <translation>මාධ්‍ය ආයාත කරන්න</translation>
+    </message>
+    <message>
+        <source>Import folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Supported formats</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Video</source>
+        <translation type="unfinished">වීඩියෝ</translation>
+    </message>
+    <message>
+        <source>Audio</source>
+        <translation type="unfinished">ශ්‍රව්‍ය</translation>
+    </message>
+    <message>
+        <source>Images</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Vector</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Search media</source>
@@ -6665,10 +6697,6 @@
     <message>
         <source>Expand folder</source>
         <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Import video, audio or images, then drag them onto the timeline. Right-click a clip to preview and trim it first.</source>
-        <translation>වීඩියෝ, ශ්‍රව්‍ය හෝ පින්තූර ආයාත කර, පසුව ඒවා කාලරේඛාව වෙත අදින්න. ප්‍රථමයෙන් පෙරදසුන් කිරීමට සහ කප්පාදු කිරීමට ක්ලිප් එකක් මත දකුණු-ක්ලික් කරන්න.</translation>
     </message>
     <message>
         <source>Move to folder…</source>
@@ -7220,6 +7248,14 @@
 <context>
     <name>PlaybackEngine</name>
     <message>
+        <source>%1 decodes on %2, but Drift draws on %3. Every frame is copied through system memory, which is slower than decoding on the graphics card that draws.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 decodes on a different graphics card than the one Drift draws on. Every frame is copied through system memory, which is slower than decoding on the graphics card that draws.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Auto</source>
         <translation>ස්වයංක්‍රීය</translation>
     </message>
@@ -7427,6 +7463,26 @@ If playback stutters, try another.</source>
     <message>
         <source>Fullscreen preview</source>
         <translation>සම්පූර්ණ තිර පෙරදසුන</translation>
+    </message>
+    <message>
+        <source>Decoding on a different graphics card</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use anyway</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation type="unfinished">අවලංගු කරන්න</translation>
+    </message>
+    <message>
+        <source>Launching Drift with prime-run (or DRI_PRIME=1) puts OpenGL on the same card as the decoder.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Run Drift on the high-performance graphics card</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -8429,6 +8485,26 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Can make playback smoother by keeping video on the graphics card. Turn it off if the picture looks wrong. Takes effect after restart.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Graphics card</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Windows default</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Power saving (integrated GPU)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>High performance (discrete GPU)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Which graphics card Drift runs on. High performance keeps video decoded on an NVIDIA card on that card; power saving uses less battery. Takes effect after restart.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

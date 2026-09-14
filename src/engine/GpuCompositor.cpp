@@ -1052,12 +1052,19 @@ QString previewUploadPathId()
         return QStringLiteral("vaapi-dmabuf");
     case GlRuntime::PreviewUploadPath::MediaCodecImage:
         return QStringLiteral("mediacodec-image");
+    case GlRuntime::PreviewUploadPath::D3d11Interop:
+        return QStringLiteral("d3d11-interop");
     case GlRuntime::PreviewUploadPath::CpuRoundTrip:
         return QStringLiteral("cpu-roundtrip");
     case GlRuntime::PreviewUploadPath::None:
         break;
     }
     return QStringLiteral("none");
+}
+
+QString zeroCopyDeclineReason()
+{
+    return GlRuntime::lastZeroCopyDeclineReason();
 }
 
 QImage render(const GpuScene &scene)
