@@ -285,6 +285,17 @@ void applyOpenFilters(QFileDialog &dialog, const QStringList &nameFilters,
 
 } // namespace
 
+int FileDialogs::exec(QFileDialog &dialog) const
+{
+    auto *self = const_cast<FileDialogs *>(this);
+    if (m_active++ == 0)
+        emit self->activeChanged();
+    const int result = dialog.exec();
+    if (--m_active == 0)
+        emit self->activeChanged();
+    return result;
+}
+
 QUrl FileDialogs::openFile(const QString &title, const QStringList &nameFilters,
                            const QStringList &mimeTypeFilters) const
 {
@@ -293,7 +304,7 @@ QUrl FileDialogs::openFile(const QString &title, const QStringList &nameFilters,
     dialog.setAcceptMode(QFileDialog::AcceptOpen);
     dialog.setFileMode(QFileDialog::ExistingFile);
     applyOpenFilters(dialog, nameFilters, mimeTypeFilters);
-    if (dialog.exec() != QDialog::Accepted)
+    if (exec(dialog) != QDialog::Accepted)
         return {};
     const QList<QUrl> urls = dialog.selectedUrls();
     return urls.isEmpty() ? QUrl() : urls.first();
@@ -306,7 +317,7 @@ QList<QUrl> FileDialogs::openFiles(const QString &title, const QStringList &name
     dialog.setAcceptMode(QFileDialog::AcceptOpen);
     dialog.setFileMode(QFileDialog::ExistingFiles);
     applyOpenFilters(dialog, nameFilters, {});
-    if (dialog.exec() != QDialog::Accepted)
+    if (exec(dialog) != QDialog::Accepted)
         return {};
     return dialog.selectedUrls();
 }
@@ -334,7 +345,7 @@ QUrl FileDialogs::openDirectory(const QString &title, const QUrl &startDir) cons
     dialog.setAcceptMode(QFileDialog::AcceptOpen);
     dialog.setFileMode(QFileDialog::Directory);
     dialog.setOption(QFileDialog::ShowDirsOnly, true);
-    if (dialog.exec() != QDialog::Accepted)
+    if (exec(dialog) != QDialog::Accepted)
         return {};
     const QList<QUrl> urls = dialog.selectedUrls();
     return urls.isEmpty() ? QUrl() : urls.first();
@@ -349,7 +360,27 @@ QUrl FileDialogs::saveFile(const QString &title, const QStringList &nameFilters,
     dialog.setWindowTitle(title);
     dialog.setAcceptMode(QFileDialog::AcceptSave);
     dialog.setFileMode(QFileDialog::AnyFile);
+#ifdef Q_OS_ANDROID
+    // On a name clash the storage provider only keeps the extension ahead of " (1)" when the
+    // requested MIME type matches that extension in Android's own MimeTypeMap. Qt sends "*/*"
+    // whenever more than one filter is set, and its MIME names do not always match Android's,
+    // so ask Android for the one type and clear the name filters Qt would add on top of it.
+    // An unmapped extension gets octet-stream, which the provider treats as matching too.
+    if (!suffix.isEmpty()) {
+        const QJniObject mimeMap = QJniObject::callStaticObjectMethod(
+            "android/webkit/MimeTypeMap", "getSingleton", "()Landroid/webkit/MimeTypeMap;");
+        const QJniObject mime = mimeMap.callObjectMethod(
+            "getMimeTypeFromExtension", "(Ljava/lang/String;)Ljava/lang/String;",
+            QJniObject::fromString(suffix.toLower()).object<jstring>());
+        dialog.setMimeTypeFilters({mime.isValid() ? mime.toString()
+                                                  : QStringLiteral("application/octet-stream")});
+        dialog.setNameFilters({});
+    } else {
+        applyFilters(dialog, nameFilters, mimeTypeFilters);
+    }
+#else
     applyFilters(dialog, nameFilters, mimeTypeFilters);
+#endif
 
     if (!initialDirectory.isEmpty() && QDir(initialDirectory).exists())
         dialog.setDirectory(initialDirectory);
@@ -367,7 +398,7 @@ QUrl FileDialogs::saveFile(const QString &title, const QStringList &nameFilters,
         name += QLatin1Char('.') + suffix;
     dialog.selectFile(name);
 
-    if (dialog.exec() != QDialog::Accepted)
+    if (exec(dialog) != QDialog::Accepted)
         return {};
     const QList<QUrl> urls = dialog.selectedUrls();
     return urls.isEmpty() ? QUrl() : urls.first();

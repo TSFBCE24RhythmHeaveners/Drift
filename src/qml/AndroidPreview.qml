@@ -35,7 +35,7 @@ Item {
     readonly property bool playing: EditorState.playing
 
     readonly property int projectFps: {
-        void EditorState.tracks
+        void EditorState.tracksRevision
         const fps = EditorState.projectFps()
         return fps > 0 ? fps : 30
     }
@@ -106,7 +106,7 @@ Item {
                 anchors.margins: Theme.spacing2xl
 
                 property real aspect: {
-                    void EditorState.tracks
+                    void EditorState.tracksRevision
                     const w = EditorState.projectWidth()
                     const h = EditorState.projectHeight()
                     return (w > 0 && h > 0) ? (w / h) : (16 / 9)
@@ -204,10 +204,15 @@ Item {
                     height: viewport.fitHeight
                     x: (viewport.width - width) / 2 + viewport.panX
                     y: (viewport.height - height) / 2 + viewport.panY
-                    color: Theme.overlayColor
+                    color: (EditorState.background && EditorState.background.kind === "transparent")
+                           ? "transparent" : Theme.overlayColor
                     border.width: Theme.borderWidth
                     border.color: Theme.border
                     clip: true
+
+                    Checkerboard {
+                        anchors.fill: parent
+                    }
 
                     PreviewItem {
                         id: preview
@@ -224,66 +229,10 @@ Item {
                         onHeightChanged: updateRenderSize()
                     }
 
-                    // Composition guides. The switch and the type live in the
-                    // Settings tab; this is the layer that reads them.
-                    Item {
+                    // Composition guides. Which sets are active lives in the
+                    // Settings tab; this is the layer that draws them.
+                    GuideLayer {
                         anchors.fill: parent
-                        visible: EditorState.guidesEnabled
-
-                        Repeater {
-                            model: EditorState.guideType === "thirds" ? 2 : 0
-                            Rectangle {
-                                width: 1
-                                height: parent.height
-                                x: parent.width * (index + 1) / 3
-                                color: Theme.guideMedium
-                            }
-                        }
-                        Repeater {
-                            model: EditorState.guideType === "thirds" ? 2 : 0
-                            Rectangle {
-                                height: 1
-                                width: parent.width
-                                y: parent.height * (index + 1) / 3
-                                color: Theme.guideMedium
-                            }
-                        }
-
-                        Rectangle {
-                            visible: EditorState.guideType === "crosshair"
-                            width: 1
-                            height: parent.height
-                            x: parent.width / 2
-                            color: Theme.guideMedium
-                        }
-                        Rectangle {
-                            visible: EditorState.guideType === "crosshair"
-                            height: 1
-                            width: parent.width
-                            y: parent.height / 2
-                            color: Theme.guideMedium
-                        }
-
-                        Rectangle {
-                            visible: EditorState.guideType === "safe"
-                            x: parent.width * 0.05
-                            y: parent.height * 0.05
-                            width: parent.width * 0.90
-                            height: parent.height * 0.90
-                            color: "transparent"
-                            border.width: 1
-                            border.color: Theme.guideMedium
-                        }
-                        Rectangle {
-                            visible: EditorState.guideType === "safe"
-                            x: parent.width * 0.025
-                            y: parent.height * 0.025
-                            width: parent.width * 0.95
-                            height: parent.height * 0.95
-                            color: "transparent"
-                            border.width: 1
-                            border.color: Theme.guideWeak
-                        }
                     }
 
                     Text {
@@ -328,13 +277,48 @@ Item {
                     width: canvasRect.width
                     height: canvasRect.height
                     z: 100
-                    visible: !root.playing && EditorState.projectWidth() > 0
+                    visible: !root.playing && !EditorState.scrubbing && EditorState.projectWidth() > 0
                              && !EditorState.canvasCropMode
                     // Disables every DragHandler / TapHandler / MouseArea in the
                     // overlay: PointerHandler::wantsEvent walks isEnabled() on
                     // ancestors. Hiding would also work, but the boxes should stay
                     // drawn under the scrim so the project does not appear to jump.
                     enabled: !root.overlayBlocksPreview
+                }
+
+                // Lifted asset cards can be dropped on the preview as well as on the timeline:
+                // overlays land at the playhead where the finger lets go, effects and masks on the
+                // clip under it.
+                PreviewDropOverlay {
+                    id: previewDrop
+                    x: canvasRect.x
+                    y: canvasRect.y
+                    width: canvasRect.width
+                    height: canvasRect.height
+                    z: 150
+                    visible: EditorState.projectWidth() > 0 && !EditorState.canvasCropMode
+
+                    function local(sceneX, sceneY) {
+                        return previewDrop.mapFromItem(null, sceneX, sceneY)
+                    }
+                    function touchDropContains(sceneX, sceneY) {
+                        const p = local(sceneX, sceneY)
+                        return previewDrop.containsLocal(p.x, p.y)
+                    }
+                    function updateTouchDrop(kind, payload, sceneX, sceneY) {
+                        const p = local(sceneX, sceneY)
+                        return previewDrop.hover(kind, payload, p.x, p.y)
+                    }
+                    function performTouchDrop(kind, payload, sceneX, sceneY) {
+                        const p = local(sceneX, sceneY)
+                        previewDrop.drop(kind, payload, TouchDrag.label, p.x, p.y)
+                    }
+                    function clearTouchDrop() {
+                        previewDrop.clear()
+                    }
+
+                    Component.onCompleted: TouchDrag.registerTarget(previewDrop)
+                    Component.onDestruction: TouchDrag.unregisterTarget(previewDrop)
                 }
 
                 AndroidCropOverlay {
@@ -634,15 +618,10 @@ Item {
         }
     }
 
+    // Seeks and edits render from the engine itself (setPlayheadUs, notifyProjectEdited); asking
+    // again here doubled every scrub step and copied the whole project each time.
     Connections {
         target: EditorState
-        function onPlayheadSecondsChanged() {
-            if (!EditorState.playing)
-                EditorState.playback.refreshFrame()
-        }
-        function onTracksChanged() {
-            EditorState.playback.refreshFrame()
-        }
         function onPlayingChanged() {
             if (!EditorState.playing)
                 EditorState.playback.refreshFrame()

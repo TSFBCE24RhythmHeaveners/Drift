@@ -4,6 +4,7 @@
 #include "FontCatalog.h"
 
 #include <QFontMetricsF>
+#include <QGlyphRun>
 #include <QCache>
 #include <QMutex>
 #include <QMutexLocker>
@@ -13,6 +14,7 @@
 #include <QTextOption>
 #include <QtMath>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -174,6 +176,10 @@ QList<StyledWord> layoutStyledText(const QString &text, const drift::TextStyle &
 
     QTextOption option;
     option.setWrapMode(style.wordWrap ? QTextOption::WordWrap : QTextOption::NoWrap);
+    // Alignment is applied by hand below; left to Qt, an RTL paragraph would be pushed to the right
+    // edge of the (possibly unbounded) line width.
+    option.setAlignment(Qt::AlignLeft | Qt::AlignAbsolute);
+    option.setTextDirection(Qt::LayoutDirectionAuto);
 
     QTextLayout layout(source, font);
     layout.setTextOption(option);
@@ -289,6 +295,15 @@ QList<StyledWord> layoutStyledText(const QString &text, const drift::TextStyle &
             const QFontMetricsF wordMetrics(wordFont);
             const QFont &emojiFont = accentFlags.at(wi) ? emojiAccentFont : emojiBaseFont;
 
+            // A ligature spanning several pieces (the لله of most Arabic fonts) comes back from
+            // glyphRuns() for every piece it covers; the first piece keeps it.
+            struct LigatureGlyph {
+                QRawFont font;
+                quint32 index;
+                QPointF pos;
+            };
+            QList<LigatureGlyph> ligatures;
+
             auto appendRun = [&](int from, int to, bool emoji) {
                 QString slice = source.mid(from, to - from);
                 slice.remove(QChar::LineSeparator);
@@ -308,7 +323,29 @@ QList<StyledWord> layoutStyledText(const QString &text, const drift::TextStyle &
                     // Winding, not the odd-even default: at heavy weights adjacent glyph contours
                     // overlap, and odd-even punches those overlaps out as holes.
                     path.setFillRule(Qt::WindingFill);
-                    path.addText(x0, baseline, wordFont, slice);
+                    // The glyphs come from the line's own shaping, not a re-shaped slice: a piece
+                    // cut from a word keeps its joined forms and marks, and RTL runs keep their
+                    // visual order.
+                    const QPointF shift(lineX, baseline - (line.y() + line.ascent()));
+                    const QList<QGlyphRun> runs = line.glyphRuns(from, to - from);
+                    for (const QGlyphRun &run : runs) {
+                        const QRawFont raw = run.rawFont();
+                        const QList<quint32> indexes = run.glyphIndexes();
+                        const QList<QPointF> positions = run.positions();
+                        const bool splitLigature = run.flags().testFlag(QGlyphRun::SplitLigature);
+                        for (qsizetype g = 0; g < indexes.size(); ++g) {
+                            if (splitLigature) {
+                                const auto claimed = std::find_if(ligatures.cbegin(), ligatures.cend(), [&](const LigatureGlyph &l) {
+                                    return l.index == indexes.at(g) && l.font == raw
+                                           && (l.pos - positions.at(g)).manhattanLength() < 0.5;
+                                });
+                                if (claimed != ligatures.cend())
+                                    continue;
+                                ligatures.append({raw, indexes.at(g), positions.at(g)});
+                            }
+                            path.addPath(raw.pathForGlyph(indexes.at(g)).translated(positions.at(g) + shift));
+                        }
+                    }
                     const QRectF ink = path.boundingRect();
                     if (ink.isEmpty())
                         return;

@@ -17,7 +17,9 @@ TrackType trackTypeFromString(const QString &type);
 // canvas composited so far, so it treats every track under it as one flattened image.
 // ParentTrack is the nested lane: it contributes its effects to each clip of `parentTrackId`
 // it overlaps, inside that clip's own layer pass, so the clip's transform still carries them.
-enum class AdjustmentScope { AllBelow, ParentTrack };
+// Range is a transform layer: its Transform clips parent every track from just below it down to
+// `spanEndTrackId`.
+enum class AdjustmentScope { AllBelow, ParentTrack, Range };
 
 QString adjustmentScopeToString(AdjustmentScope scope);
 AdjustmentScope adjustmentScopeFromString(const QString &scope);
@@ -36,7 +38,13 @@ struct Track
     bool muted = false;
     bool hidden = false;
     bool locked = false;
-    bool showWaveform = false; // view-only: show audio waveform instead of filmstrip for this track's clips
+    bool solo = false;
+    double volume = 1.0;
+    double pan = 0.0;
+    // view-only, video tracks: how clips draw. Video = filmstrip only, Both = filmstrip with a
+    // waveform bar along the bottom, Waveform = waveform instead of the filmstrip.
+    enum class ClipDisplay { Video = 0, Both = 1, Waveform = 2 };
+    ClipDisplay clipDisplay = ClipDisplay::Both;
     // view-only: draw a multi-channel clip's waveform as one lane per source channel instead
     // of the single max-across-channels envelope. Opt-in because a 5.1 clip in a standard row
     // gives each lane a few pixels — pair it with heightScale.
@@ -49,8 +57,14 @@ struct Track
     AdjustmentScope adjustmentScope = AdjustmentScope::AllBelow;
     // Set iff type == Adjustment && adjustmentScope == ParentTrack.
     QString parentTrackId;
+    // Range tracks only: the last track the layer covers. Kept when that track is moved above
+    // the layer, so moving it back restores the group.
+    QString spanEndTrackId;
 
     bool allowsClipType(ClipType clipType) const;
+    // allowsClipType plus the adjustment kind: a Range track holds Transform clips and nothing
+    // else, and a Transform clip lives nowhere else.
+    bool acceptsClip(const Clip &clip) const;
 
     bool isAdjustment() const { return type == TrackType::Adjustment; }
     // A nested lane draws inside its parent's row rather than occupying one of its own.
@@ -58,6 +72,10 @@ struct Track
     {
         return type == TrackType::Adjustment && adjustmentScope == AdjustmentScope::ParentTrack
                && !parentTrackId.isEmpty();
+    }
+    bool isTransformLayer() const
+    {
+        return type == TrackType::Adjustment && adjustmentScope == AdjustmentScope::Range;
     }
 };
 

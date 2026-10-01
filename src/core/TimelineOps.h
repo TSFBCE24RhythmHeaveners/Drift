@@ -5,6 +5,8 @@
 
 #include <QSet>
 
+#include <vector>
+
 namespace drift {
 
 constexpr TimeUs kImageClipDurationUs = 5 * kUsPerSecond;
@@ -13,11 +15,31 @@ constexpr TimeUs kSubtitleClipDurationUs = 30 * kUsPerSecond;
 constexpr TimeUs kMinClipDurationUs = kUsPerSecond / 10;
 constexpr TimeUs kSnapThresholdUs = 150'000;
 
+// Every time an edge can snap to, sorted and deduplicated. Built once and reused: snapTime()
+// below collects the same set from scratch on every call, which is two entries per clip in the
+// project, allocated and linearly scanned for each step of a drag.
+struct SnapTargets {
+    std::vector<TimeUs> sorted;
+
+    // `excludeClipId`, when set, leaves that clip's own two edges out. A clip being dragged is
+    // still sitting at its old position in the model, so without this a short drag snaps
+    // straight back to where it started.
+    void build(const Project &project, TimeUs playheadUs, const QList<TimeUs> &extraTargets,
+               const QString &excludeClipId = {});
+    bool isEmpty() const { return sorted.empty(); }
+};
+
+// Nearest target within kSnapThresholdUs, else `time` unchanged. O(log n).
+TimeUs snapTimeTo(const SnapTargets &targets, TimeUs time, bool snapEnabled);
+
 // `extraTargets` are additional snap positions supplied by the caller — currently the
 // detected beat grid, which is analysis state rather than something the project stores.
 // Core never learns what a beat is; it just snaps to whatever times it is handed.
+//
+// Convenience form for the callers that snap exactly once; a drag should build a SnapTargets
+// up front and call snapTimeTo() instead.
 TimeUs snapTime(const Project &project, TimeUs time, bool snapEnabled, TimeUs playheadUs,
-                const QList<TimeUs> &extraTargets = {});
+                const QList<TimeUs> &extraTargets = {}, const QString &excludeClipId = {});
 
 TimeUs resolveClipStart(const Project &project, const Track &track, int excludeClipIndex,
                         TimeUs desiredStart, TimeUs duration, bool snapEnabled, TimeUs playheadUs,
@@ -78,8 +100,10 @@ struct LaneMask
 
 // Every Mask-kind lane adjustment on `trackIndex` covering `timelineUs`, in stack order — lane
 // order first (lanes are listed parent-first, which is the order they were created in), then clip
-// order within a lane.
-QList<LaneMask> laneMasksAt(const Project &project, int trackIndex, TimeUs timelineUs);
+// order within a lane. One pinned to a clip (linkedClipId) masks only `hostClipId`; an unpinned
+// one masks whatever the track shows at that time.
+QList<LaneMask> laneMasksAt(const Project &project, int trackIndex, TimeUs timelineUs,
+                            const QString &hostClipId);
 
 // The Mask-kind adjustments pinned to clips[clipIndex], as (trackIndex, clipIndex) pairs.
 QList<ClipRef> linkedMaskAdjustments(const Project &project, int trackIndex, int clipIndex);
@@ -133,7 +157,44 @@ void hoistClipEffectsToAdjustmentLanes(Project &project);
 // an adjustment was just a clip squatting on a video track. INSERTS TRACKS.
 void liftAdjustmentClipsToOwnTracks(Project &project);
 
+// Transform layers. A Range track at index T covers the non-lane tracks with index in (T, E],
+// where E is its spanEndTrackId (a lane named as the end resolves to its parent). Lanes ride with
+// their parent. Audio tracks and standalone effect adjustments inside the range are not moved;
+// Range tracks inside it nest, their own parent composing outer × inner.
+
+// E, or -1 when the layer covers nothing (no end, a missing end, or an end at or above it).
+int transformSpanEndIndex(const QList<Track> &tracks, int layerIndex);
+
+// True for the tracks a transform layer moves: video, text, subtitle and graphic tracks.
+bool isTransformableTrack(const Track &track);
+
+// The transformable tracks the layer at `layerIndex` covers, top to bottom.
+QList<int> transformSpanTrackIndexes(const QList<Track> &tracks, int layerIndex);
+
+// The Range tracks covering `trackIndex` (a lane counts as its parent), outermost first.
+QList<int> transformLayersCovering(const QList<Track> &tracks, int trackIndex);
+
+// Inserts an empty Range track at `index` spanning to `spanEndTrackId`; returns `index`.
+int insertTransformTrack(QList<Track> &tracks, int index, const QString &spanEndTrackId);
+
+// An identity transform clip over [startUs, startUs + durationUs).
+Clip makeTransformClip(TimeUs startUs, TimeUs durationUs);
+
+// Keeps transform layers well formed after any edit. Range tracks hold only Transform clips and
+// Transform clips live only on Range tracks (strays are lifted onto a track of their own, never
+// dropped); Transform clips are never pinned; a lane named as a span end resolves to its parent.
+// A span end that no longer exists moves up to the nearest track that `before` shows inside the
+// span and still exists, or is cleared when there is none or no `before` to ask. Ids must exist.
+void normalizeTransformLayers(QList<Track> &tracks, const QList<Track> *before = nullptr);
+
 int ensureTrackForClipType(Project &project, ClipType type, bool insertAtTop = false);
+
+// Picks a track of the right type whose span at [startUs, startUs+durationUs) is free, creating one
+// when every candidate is busy. Use this for clips that share a track type with other kinds —
+// graphics all land on the shape lane — so a second one at the same time stacks instead of being
+// pushed down the timeline.
+int ensureFreeTrackForClipType(Project &project, ClipType type, TimeUs startUs, TimeUs durationUs,
+                               bool insertAtTop = false);
 
 // Always prepends a fresh track (multiple tracks of the same type are allowed).
 int insertTrackAtTopForClipType(Project &project, ClipType type);
@@ -147,8 +208,12 @@ TimeUs clipDurationForAsset(const MediaAsset *asset);
 TimeUs sourceDurationForClip(const Project &project, const Clip &clip);
 
 // Split `head` at `offset` from its timeline start into head + tail (same reverse/speed).
-// Caller assigns `tail.id`. Returns false if the offset is too close to either end.
+// Caller assigns `tail.id`. Returns false if the offset is too close to either end. The cut
+// edges get no fade or animation; the outer ones are kept, clamped to each half.
 bool splitClipAtOffset(Clip &head, Clip &tail, TimeUs offset);
+// Same, with the minimum half length the caller chooses (splitClipAtOffset uses
+// kMinClipDurationUs). Word-level cutting needs pieces shorter than an interactive split allows.
+bool splitClipAtOffsetMin(Clip &head, Clip &tail, TimeUs offset, TimeUs minEdgeUs);
 
 // Repoint `dst` at the media `src` carries while keeping dst's timeline placement. The source
 // time is read from `src` at dst's timeline start, so the two stay in timeline sync — which is
@@ -165,6 +230,13 @@ bool clipsCanMerge(const Clip &left, const Clip &right);
 
 // Merge abutting clips. Keeps left transforms/effects; takes right's fade-out.
 Clip mergeClips(const Clip &left, const Clip &right);
+
+// True for two or more clips that are all Subtitle clips. Gaps and overlaps are allowed.
+bool subtitleClipsCanMerge(const QList<Clip> &clips);
+
+// Merge subtitle clips into one spanning the earliest start to the latest end. Keeps the earliest
+// clip's id, style, transform and effects; every cue is rebased onto the merged clip's start.
+Clip mergeSubtitleClips(QList<Clip> clips);
 
 // All clips sharing `clip.linkId` (excluding `clip` itself).
 QList<ClipRef> linkedPartners(const Project &project, const Clip &clip);
@@ -183,8 +255,16 @@ QString assignSplitLinkIds(Clip &head, Clip &tail);
 // This freezes that implicit size into explicit values first, then shifts stored
 // positions by (-originX, -originY) so the region the user framed stays put.
 // Clips are left visually stationary; whatever falls outside the new canvas is
-// simply clipped away by the compositor.
-void rebaseClipLayout(Project &project, int oldWidth, int oldHeight, double originX, double originY);
+// simply clipped away by the compositor. Every timeline is rebased, and boxes that show a whole
+// canvas (clipBoxIsCanvasReferenced) scale with it instead, so nested content holds still too.
+void rebaseClipLayout(Project &project, int oldWidth, int oldHeight, int newWidth, int newHeight,
+                      double originX, double originY);
+
+// True for boxes whose natural size is the canvas itself: composites and transform layers.
+bool clipBoxIsCanvasReferenced(const Clip &clip);
+
+// Multiplies every key's value and tangent height; an empty track stays empty.
+void scaleTrackValues(KeyframeTrack<double> &track, double factor);
 
 // A punch on a staged multicam assignment: from `timeUs` until the next cut (or the
 // session end), this camera is the one that stays. `cuts` is empty while the session is
@@ -217,6 +297,15 @@ QList<MulticamInterval> multicamIntervals(const QList<MulticamCut> &cuts, TimeUs
 
 // Intersection of `src` with `[start, end)`. False when that span is empty or shorter than
 // kMinClipDurationUs. `out` keeps `src`'s id; the caller mints a new one if it needs one.
+// Move every clip-relative keyframe on a clip by `delta`. Key times are relative to the clip's
+// own start, so a clip that keeps its material but starts somewhere else has to carry its curves
+// with it. Keys pushed before the start are dropped.
+void shiftClipKeyframes(Clip &clip, TimeUs delta);
+
+// Carry a split tail's curves back onto its own start, keeping the value they held at the cut so
+// the animation continues rather than restarting.
+void rebaseKeyframesForSplitTail(Clip &tail, TimeUs offset);
+
 bool sliceClipToTimelineRange(const Clip &src, TimeUs start, TimeUs end, Clip &out);
 
 } // namespace drift

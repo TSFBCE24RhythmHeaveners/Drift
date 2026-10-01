@@ -16,6 +16,10 @@ namespace drift::gpu {
 // set of GPUs does not change under a running app in any way the decoders could follow anyway.
 QList<Adapter> hardwareAdapters();
 
+// DXGI index of the first hardware adapter with this PCI vendor id, or -1 when none is present.
+// AMD is matched on 0x1022 as well: some APUs report the CPU vendor id on the graphics adapter.
+int adapterIndexForVendorId(quint16 vendorId);
+
 // DXGI index of the first hardware adapter from the vendor a GL_VENDOR string names, or -1 when
 // the string is empty, names no vendor this recognises, or matches no adapter here.
 int adapterIndexForGlVendor(const QString &glVendor);
@@ -32,7 +36,14 @@ Preference preferenceFromId(const QString &id);
 
 Preference storedPreference();
 
-// True where choosing changes anything: Windows with at least two hardware adapters.
+// Windows with at least two hardware adapters.
+bool multipleAdapters();
+
+// Running from an MSIX package (the Microsoft Store build). Its HKCU writes land in a private
+// hive the graphics driver never reads, so the choice has to be made in Windows Settings instead.
+bool packagedApp();
+
+// True where choosing in Drift changes anything: multipleAdapters() and not packagedApp().
 bool preferenceSupported();
 
 // Persists the choice and writes it where Windows keeps per-application GPU preferences. The GPU

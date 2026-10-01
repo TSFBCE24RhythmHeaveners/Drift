@@ -3,6 +3,7 @@
 #include "engine/FrameCompositor.h"
 #include "engine/GpuCompositor.h"
 
+#include <QHash>
 #include <QObject>
 #include <QThread>
 
@@ -69,6 +70,11 @@ public:
     ~CompositorService() override;
 
     void setProject(const drift::Project *project);
+    // The immutable copy of the project that composites are reading, made now if an edit
+    // invalidated the last one. Shared with the audio thread so one edit costs one copy.
+    std::shared_ptr<const drift::Project> snapshot();
+    // Bumped each time snapshot() makes a new copy; never 0 for a real snapshot.
+    quint64 snapshotSerial() const { return m_snapshotSerial; }
     void requestComposite(drift::TimeUs timeUs,
                           FrameCompositor::RenderOptions options = FrameCompositor::RenderOptions{});
 
@@ -85,6 +91,13 @@ public:
     // Realtime playback running. Adaptation measures playback frames only — paused
     // and scrubbed frames have no deadline to miss — and ignores the first few
     // frames of each run, which pay for opening and seeking the decoders.
+    // Whether a request would redraw exactly what `last` already asked for. An approximate
+    // request after an exact one of the same frame is redundant; an exact one after an
+    // approximate one is not — it is the settle.
+    static bool isRedundantRequest(drift::TimeUs time, const FrameCompositor::RenderOptions &options,
+                                   drift::TimeUs lastTime,
+                                   const FrameCompositor::RenderOptions &last);
+
     void setPlaybackActive(bool active);
 
     // Wall-clock budget for one composite before it counts against the adaptive
@@ -123,6 +136,7 @@ private:
     std::shared_ptr<const drift::Project> m_sharedSnapshot;
     int m_snapshotGeneration = 0;
     int m_liveGeneration = 0;
+    quint64 m_snapshotSerial = 0;
 
     // Requests and completions are both GUI-thread only (every requestComposite caller is
     // PlaybackEngine, and onWorkerFrameReady is a queued slot), so this needs no atomic.
@@ -133,10 +147,14 @@ private:
     // showing it would step the picture backwards. This replaces the old wall-clock staleness
     // test, which threw away finished frames that had nothing newer to replace them with.
     quint64 m_lastPresentedSequence = 0;
-    std::atomic<drift::TimeUs> m_pendingTimeUs{0};
-    std::atomic<int> m_pendingPreviewScalePercent{100};
-    std::atomic<int> m_pendingMaxTimeEchoHistoryFrames{-1};
-    std::atomic<drift::TimeUs> m_pendingReadAheadUs{0};
+    // Dispatch time per sequence, for request-to-screen latency. Filled only under perf logging.
+    QHash<quint64, qint64> m_perfDispatchNs;
+    // The newest request, whole. Both writers (requestComposite and the catch-up dispatch in
+    // onWorkerFrameReady) run on the GUI thread. It used to be four atomics, which silently
+    // dropped every option they did not name — proxies and the inline-edit skip never reached
+    // the worker.
+    drift::TimeUs m_pendingTimeUs = 0;
+    FrameCompositor::RenderOptions m_pendingOptions;
     drift::TimeUs m_lastDispatchedTimeUs = -1;
     // The scale the caller asked for, before any adaptive multiplier — that is
     // applied at dispatch, so a change takes effect on the very next frame.

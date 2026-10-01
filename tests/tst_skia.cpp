@@ -2,6 +2,7 @@
 
 #include <functional>
 
+#include <QFontDatabase>
 #include <QOpenGLExtraFunctions>
 
 #include "core/Project.h"
@@ -301,6 +302,7 @@ private slots:
     void gradientOffsetShiftsColour();
     void wipeMaskRevealsBottomUp();
     void caretDrawsAfterLastVisibleFragment();
+    void arabicTextShapesRightToLeft();
     void skslEffectsCompileAndRender();
     void textLookRenders();
     void textPacksRender();
@@ -1434,6 +1436,68 @@ void SkiaTest::wipeMaskRevealsBottomUp()
 }
 
 // The typewriter caret appears after the last typed character and blinks.
+void SkiaTest::arabicTextShapesRightToLeft()
+{
+    const QStringList families = QFontDatabase::families(QFontDatabase::Arabic);
+    if (families.isEmpty())
+        QSKIP("no Arabic font installed");
+    const QString verse = QString::fromUtf8("بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ");
+    const double width = 900.0;
+
+    // Every installed Arabic face: ligatures and mark clusters differ from font to font.
+    for (const QString &family : families) {
+        QFont font(family);
+        font.setPixelSize(40);
+        for (const bool wrap : {false, true}) {
+            TextStyle style;
+            style.pixelSize = 40;
+            style.wordWrap = wrap;
+            const QList<text::StyledWord> words =
+                text::layoutStyledText(verse, style, font, font, width, 200.0, -1, text::WordSplit::Whole);
+            QCOMPARE(words.size(), 4);
+            for (int i = 0; i < words.size(); ++i) {
+                const text::StyledWord &w = words.at(i);
+                // Every word lands inside the box and paints over its own cell, not a neighbour's.
+                QVERIFY2(w.inkRect.left() > -10.0 && w.inkRect.right() < width + 10.0,
+                         qPrintable(QStringLiteral("word %1 ink %2..%3").arg(i).arg(w.inkRect.left()).arg(w.inkRect.right())));
+                QVERIFY(w.cellRect.contains(QPointF(w.inkRect.center().x(), w.cellRect.center().y())));
+                // Reading order runs right to left.
+                if (i > 0)
+                    QVERIFY(w.cellRect.right() <= words.at(i - 1).cellRect.left() + 0.5);
+            }
+
+            // Pieces cut per character keep the joined forms the whole line was shaped with.
+            const QList<text::StyledWord> chars =
+                text::layoutStyledText(verse, style, font, font, width, 200.0, -1, text::WordSplit::Characters);
+            QVERIFY(chars.size() > words.size());
+            // Drawing elements only: QPainterPath::addPath drops a glyph outline's trailing MoveTo
+            // (Arial Unicode MS on macOS ends its glyphs with one), so a whole word counts fewer
+            // MoveTos than its pieces do.
+            const auto drawnElements = [](const QPainterPath &path) {
+                int n = 0;
+                for (int e = 0; e < path.elementCount(); ++e)
+                    n += path.elementAt(e).type != QPainterPath::MoveToElement;
+                return n;
+            };
+            int wholeElements = 0;
+            QRectF wholeInk;
+            for (const text::StyledWord &w : words) {
+                wholeElements += drawnElements(w.path);
+                wholeInk = wholeInk.united(w.inkRect);
+            }
+            int charElements = 0;
+            QRectF charInk;
+            for (const text::StyledWord &w : chars) {
+                charElements += drawnElements(w.path);
+                charInk = charInk.united(w.inkRect);
+            }
+            QVERIFY2(charElements == wholeElements,
+                     qPrintable(QStringLiteral("%1: %2 vs %3").arg(family).arg(charElements).arg(wholeElements)));
+            QVERIFY(std::abs(charInk.left() - wholeInk.left()) < 0.5 && std::abs(charInk.right() - wholeInk.right()) < 0.5);
+        }
+    }
+}
+
 void SkiaTest::caretDrawsAfterLastVisibleFragment()
 {
     reloadFontCatalog({QString::fromUtf8(DRIFT_TEST_FONTS_DIR)});

@@ -33,17 +33,32 @@ Item {
     readonly property real snapTolPx: 8
 
     function refreshOverlay() {
-        if (interacting)
+        // Hidden: onVisibleChanged catches up when shown.
+        if (!visible || interacting)
             return
         // Playhead ticks ~60 Hz; rebuilding grips every tick during playback is wasted work.
         if (EditorState.playing)
             return
         const next = EditorState.maskEditorState()
         editorState = next
+        const layers = next.layers || []
+        // Delegates read their values from here by index; the models below are only swapped
+        // when the set of layers changes, so a value edit does not recreate the grips.
+        layerValues = layers
+        const signature = layers.map(l => l.track + ":" + l.clip + ":" + ((l.mask || {}).shape || ""))
+                                .join("|")
+        if (signature === layerSignature)
+            return
+        layerSignature = signature
         // Set imperatively for the same reason TransformOverlay does: binding the model
         // re-enters when tracksChanged fires during delegate setup.
-        maskRepeater.model = next.layers || []
+        layerModel = layers
+        maskRepeater.model = layers
     }
+
+    property var layerValues: []
+    property var layerModel: []
+    property string layerSignature: ""
 
     function endInteraction() {
         EditorState.commitPreviewDrag()
@@ -74,9 +89,27 @@ Item {
     Connections {
         target: EditorState
         function onTracksChanged() { root.refreshOverlay() }
+        function onClipPropertiesPreviewed(trackIndex, clipIndex, keys) {
+            for (const k of keys) {
+                if (k.startsWith("mask.") || k === "x" || k === "y" || k === "width"
+                        || k === "height" || k === "rotation" || k === "rotationX"
+                        || k === "rotationY" || k === "z" || k === "perspective") {
+                    root.refreshOverlay()
+                    return
+                }
+            }
+        }
         function onSelectionChanged() { root.refreshOverlay() }
         function onSelectedClipDataChanged() { root.refreshOverlay() }
-        function onPlayheadSecondsChanged() { root.refreshOverlay() }
+        // A scrub moves the playhead per scroll event; catch up once when it ends.
+        function onPlayheadSecondsChanged() {
+            if (!EditorState.scrubbing)
+                root.refreshOverlay()
+        }
+        function onScrubbingChanged() {
+            if (!EditorState.scrubbing)
+                root.refreshOverlay()
+        }
         function onPlayingChanged() {
             if (!EditorState.playing)
                 root.refreshOverlay()
@@ -93,7 +126,23 @@ Item {
         width: Math.max(1, (root.editorState.width || root.canvasW) * root.sx)
         height: Math.max(1, (root.editorState.height || root.canvasH) * root.sy)
         transformOrigin: Item.Center
-        rotation: root.editorState.rotation || 0
+        // A tilted clip frame goes through the clip's perspective instead of the flat spin.
+        readonly property bool is3d: (root.editorState.rotationX || 0) !== 0
+                                     || (root.editorState.rotationY || 0) !== 0
+                                     || (root.editorState.z || 0) !== 0
+        // Moved by a transform layer: composed through that parent as well, flat or not.
+        readonly property bool hasParent: root.editorState.parentActive === true
+        rotation: is3d || hasParent ? 0 : (root.editorState.rotation || 0)
+        transform: Matrix4x4 {
+            matrix: clipFrame.is3d || clipFrame.hasParent
+                    ? EditorState.previewClipPoseMatrix(root.editorState, root.editorState.x || 0,
+                                                        root.editorState.y || 0,
+                                                        root.editorState.width || root.canvasW,
+                                                        root.editorState.height || root.canvasH,
+                                                        root.editorState.rotation || 0,
+                                                        root.sx, root.sy)
+                    : Qt.matrix4x4()
+        }
 
         // The clip's own bounds, so it is obvious what the mask coordinates are relative to.
         Rectangle {
@@ -109,16 +158,18 @@ Item {
 
             delegate: Item {
                 id: maskBox
+                required property int index
                 required property var modelData
+                readonly property var layerEntry: root.layerValues[index] || modelData
 
-                readonly property bool isSelected: !!modelData.selected
-                readonly property var maskData: modelData.mask || ({})
-                readonly property int layerTrack: modelData.track
-                readonly property int layerClip: modelData.clip
+                readonly property bool isSelected: !!layerEntry.selected
+                readonly property var maskData: layerEntry.mask || ({})
+                readonly property int layerTrack: layerEntry.track
+                readonly property int layerClip: layerEntry.clip
                 // Once any scalar has keys the drag has to write through the keyframe API, or it
                 // would move the static value under an animation that immediately overrides it
                 // again on the next frame.
-                readonly property bool animated: !!modelData.animated
+                readonly property bool animated: !!layerEntry.animated
 
                 // Bars ignores x/y/w entirely — it is two full-width bands whose height comes from
                 // h — so a centred box with corner grips would be a lie. It draws its real bands
@@ -712,14 +763,16 @@ Item {
         // `h` alone, so a centred box with corner grips would be a lie. The one thing that does
         // mean something is the band edge, so that is what is draggable.
         Repeater {
-            model: root.layers
+            model: root.layerModel
 
             delegate: Item {
                 id: barsEntry
+                required property int index
                 required property var modelData
-                readonly property var maskData: modelData.mask || ({})
-                readonly property bool isSelected: !!modelData.selected
-                readonly property bool animated: !!modelData.animated
+                readonly property var layerEntry: root.layerValues[index] || modelData
+                readonly property var maskData: layerEntry.mask || ({})
+                readonly property bool isSelected: !!layerEntry.selected
+                readonly property bool animated: !!layerEntry.animated
                 anchors.fill: parent
                 visible: maskData.shape === "bars" && maskData.enabled !== false
 

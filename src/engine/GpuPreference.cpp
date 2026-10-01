@@ -12,6 +12,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <appmodel.h>
 #include <dxgi.h>
 
 #include <string>
@@ -105,16 +106,20 @@ QList<Adapter> hardwareAdapters()
     return adapters;
 }
 
-int adapterIndexForGlVendor(const QString &glVendor)
+int adapterIndexForVendorId(quint16 vendorId)
 {
-    const quint16 wanted = vendorIdForGlVendor(glVendor);
-    if (wanted == 0)
+    if (vendorId == 0)
         return -1;
     for (const Adapter &adapter : hardwareAdapters()) {
-        if (adapter.vendorId == wanted || (wanted == 0x1002 && adapter.vendorId == 0x1022))
+        if (adapter.vendorId == vendorId || (vendorId == 0x1002 && adapter.vendorId == 0x1022))
             return adapter.index;
     }
     return -1;
+}
+
+int adapterIndexForGlVendor(const QString &glVendor)
+{
+    return adapterIndexForVendorId(vendorIdForGlVendor(glVendor));
 }
 
 QString preferenceId(Preference preference)
@@ -144,13 +149,28 @@ Preference storedPreference()
     return preferenceFromId(QSettings().value(settingsKey()).toString());
 }
 
-bool preferenceSupported()
+bool multipleAdapters()
 {
 #if defined(Q_OS_WIN)
     return hardwareAdapters().size() >= 2;
 #else
     return false;
 #endif
+}
+
+bool packagedApp()
+{
+#if defined(Q_OS_WIN)
+    UINT32 length = 0;
+    return GetCurrentPackageFullName(&length, nullptr) != APPMODEL_ERROR_NO_PACKAGE;
+#else
+    return false;
+#endif
+}
+
+bool preferenceSupported()
+{
+    return multipleAdapters() && !packagedApp();
 }
 
 void storePreference(Preference preference)

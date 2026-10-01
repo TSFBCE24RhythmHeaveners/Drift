@@ -17,6 +17,7 @@
 #include "models/Haptics.h"
 #include "models/LayoutStore.h"
 #include "models/MarketClient.h"
+#include "models/DriftAssetStore.h"
 #include "models/UpdateChecker.h"
 #include "engine/VaapiZeroCopy.h"
 #include "ClipPreviewImageProvider.h"
@@ -25,7 +26,10 @@
 #include "SegmentImageProvider.h"
 #include "ShapePreviewImageProvider.h"
 #include "TextStylePreviewImageProvider.h"
+#include "playback/PerfLog.h"
 #include "preview/PreviewItem.h"
+#include "timeline/TimelineTrackItem.h"
+#include "timeline/TimelineViewState.h"
 
 // QApplication (not QGuiApplication) is required so QFileDialog can use the
 // native platform file picker, which routes through xdg-desktop-portal.
@@ -52,6 +56,23 @@
 #include <QtQml/qqml.h>
 #include <QFile>
 #include <QUrl>
+
+#include <condition_variable>
+#include <QElapsedTimer>
+#include <QTimer>
+#include <memory>
+#include <mutex>
+#include <thread>
+
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #ifdef Q_OS_ANDROID
 #include "core/Project.h"
@@ -368,6 +389,93 @@ void warnIfNoOpenGl()
     qCritical("%s: %s", qUtf8Printable(title), qUtf8Printable(body));
     QMessageBox::critical(nullptr, title, body);
 }
+
+// warnIfNoOpenGl() only sees what the driver claims. A driver can hand out a valid 3.3 core
+// context and still never get a frame to the screen: an outdated AMD driver on an RX 580 left the
+// window black with no error at all (#220). By then the GUI thread may itself be stuck waiting on
+// the render thread, so the clock runs on a thread of its own rather than a QTimer.
+class FirstFrameWatchdog : public QObject
+{
+public:
+    explicit FirstFrameWatchdog(QQuickWindow *window)
+        : QObject(window)
+        , m_state(std::make_shared<State>())
+    {
+        // Translated here, on the GUI thread, not by the watchdog thread when it fires.
+        m_state->title = QCoreApplication::translate("main", "Drift is not drawing its window");
+        m_state->body = QCoreApplication::translate(
+                            "main",
+                            "Drift has been running for %1 seconds but its window has not drawn "
+                            "anything yet.\n\nIf the window is blank or black, your graphics "
+                            "driver is most likely outdated or faulty. Update it from your GPU "
+                            "vendor's website (AMD, NVIDIA or Intel) and start Drift again.")
+                            .arg(kTimeout.count());
+
+        window->installEventFilter(this);
+        auto state = m_state;
+        connect(window, &QQuickWindow::frameSwapped, this, [state] { state->set(&State::framed); },
+                static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
+        std::thread([state] { watch(state); }).detach();
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        // Timed from the first expose, not from launch: a window that starts minimized or on
+        // another workspace has no reason to draw yet.
+        if (event->type() == QEvent::Expose && static_cast<QWindow *>(watched)->isExposed()) {
+            watched->removeEventFilter(this);
+            m_state->set(&State::exposed);
+        }
+        return false;
+    }
+
+private:
+    static constexpr std::chrono::seconds kTimeout{15};
+
+    struct State
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool exposed = false;
+        bool framed = false;
+        QString title;
+        QString body;
+
+        void set(bool State::*flag)
+        {
+            {
+                std::lock_guard lock(mutex);
+                this->*flag = true;
+            }
+            cv.notify_all();
+        }
+    };
+
+    static void watch(std::shared_ptr<State> state)
+    {
+        std::unique_lock lock(state->mutex);
+        state->cv.wait(lock, [&] { return state->exposed || state->framed; });
+        if (state->cv.wait_for(lock, kTimeout, [&] { return state->framed; }))
+            return;
+        lock.unlock();
+
+        qCritical("%s: %s", qUtf8Printable(state->title), qUtf8Printable(state->body));
+#ifdef Q_OS_WIN
+        // A native box has its own message loop, so it shows even when the GUI thread is the
+        // thing that is stuck.
+        MessageBoxW(nullptr, reinterpret_cast<LPCWSTR>(state->body.utf16()),
+                    reinterpret_cast<LPCWSTR>(state->title.utf16()),
+                    MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
+#else
+        QMetaObject::invokeMethod(
+            qApp, [state] { QMessageBox::warning(nullptr, state->title, state->body); },
+            Qt::QueuedConnection);
+#endif
+    }
+
+    std::shared_ptr<State> m_state;
+};
 #endif
 
 } // namespace
@@ -376,6 +484,9 @@ int main(int argc, char *argv[])
 {
     forceStderrLogging();
     applyLogLevel(verboseLoggingRequested(argc, argv));
+    // Per-frame polish/sync/render/swap from Qt's own render loop, next to DriftPerf's figures.
+    if (drift::perf::enabled() && qEnvironmentVariableIsEmpty("QT_LOGGING_RULES"))
+        qputenv("QT_LOGGING_RULES", "qt.scenegraph.time.renderloop.debug=true");
 
 #ifndef Q_OS_ANDROID
     // --headless is checked first: it also accepts --mcp-stdio, as the transport to serve
@@ -454,6 +565,17 @@ int main(int argc, char *argv[])
     if (drift::gpu::applyStoredPreference() == drift::gpu::Preference::HighPerformance) {
         NvOptimusEnablement = 1;
         AmdPowerXpressRequestHighPerformance = 1;
+    }
+#endif
+
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
+    // The AppImage bundles no gtk3/kde theme plugin (and cannot load the host's), so file dialogs
+    // fall back to Qt's own. The portal plugin is bundled but Qt only picks it inside Flatpak/Snap.
+    // linuxdeploy's AppRun hook sets "gtk2" on GNOME/XFCE, which is never bundled, so replace that too.
+    if (qEnvironmentVariableIsSet("APPIMAGE")) {
+        const QByteArray theme = qgetenv("QT_QPA_PLATFORMTHEME");
+        if (theme.isEmpty() || theme == "gtk2")
+            qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
     }
 #endif
 
@@ -536,6 +658,9 @@ int main(int argc, char *argv[])
     drift::ReverseProxyCache::instance().sweep(drift::ReverseProxyCache::kDefaultMaxBytes);
 
     qmlRegisterType<PreviewItem>("Drift", 1, 0, "PreviewItem");
+    qmlRegisterType<TimelineViewState>("Drift", 1, 0, "TimelineViewState");
+    qmlRegisterType<TimelineTrackItem>("Drift", 1, 0, "TimelineTrackClips");
+    TimelineTrackItem::installAccessibility();
 
     static AssetLibrary assetLibrary;
     static EditorState editorState(&assetLibrary);
@@ -548,6 +673,7 @@ int main(int argc, char *argv[])
     editorState.setAddonManager(&addonManager);
     marketClient.setAssetLibrary(&assetLibrary);
     editorState.setMarketClient(&marketClient);
+    static DriftAssetStore driftAssets(&marketClient, &assetLibrary, &editorState);
     qmlRegisterSingletonInstance("Drift", 1, 0, "AssetLibrary", &assetLibrary);
     qmlRegisterSingletonInstance("Drift", 1, 0, "BinFolderModel", editorState.binFolderModel());
     qmlRegisterSingletonInstance("Drift", 1, 0, "EditorState", &editorState);
@@ -555,6 +681,7 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("Drift", 1, 0, "FileDialogs", &fileDialogs);
     qmlRegisterSingletonInstance("Drift", 1, 0, "Addons", &addonManager);
     qmlRegisterSingletonInstance("Drift", 1, 0, "Market", &marketClient);
+    qmlRegisterSingletonInstance("Drift", 1, 0, "DriftAssets", &driftAssets);
     qmlRegisterSingletonInstance("Drift", 1, 0, "Updates", &updateChecker);
     qmlRegisterSingletonInstance("Drift", 1, 0, "LayoutMemory", &layoutStore);
     qmlRegisterSingletonInstance("Drift", 1, 0, "Haptics", &haptics);
@@ -609,6 +736,54 @@ int main(int argc, char *argv[])
 
     engine.setInitialProperties({{QStringLiteral("shellPreference"), shellPreference}});
     engine.loadFromModule("Drift", "Shell");
+    drift::perf::install();
+    if (drift::perf::enabled()) {
+        // Frame pacing: the interval between swaps is the frame time the user sees. Windows are
+        // created lazily by the shell, so look for new ones periodically. Emitted on the render
+        // thread; gaps past half a second are idle time, not frames.
+        auto *hookTimer = new QTimer(&app);
+        QObject::connect(hookTimer, &QTimer::timeout, &app, [] {
+            for (QWindow *window : QGuiApplication::topLevelWindows()) {
+                auto *quick = qobject_cast<QQuickWindow *>(window);
+                if (!quick || quick->property("_driftPerfHooked").toBool())
+                    continue;
+                quick->setProperty("_driftPerfHooked", true);
+                // Sync blocks the GUI thread; render is the render thread's own work. Together
+                // with the swap interval they say which thread a slow frame belongs to.
+                auto sync = std::make_shared<QElapsedTimer>();
+                auto render = std::make_shared<QElapsedTimer>();
+                QObject::connect(quick, &QQuickWindow::beforeSynchronizing, quick,
+                                 [sync] { sync->start(); }, Qt::DirectConnection);
+                QObject::connect(quick, &QQuickWindow::afterSynchronizing, quick, [sync] {
+                    drift::perf::record("frame.sync", double(sync->nsecsElapsed()) / 1'000'000.0);
+                }, Qt::DirectConnection);
+                QObject::connect(quick, &QQuickWindow::beforeRendering, quick,
+                                 [render] { render->start(); }, Qt::DirectConnection);
+                QObject::connect(quick, &QQuickWindow::afterRendering, quick, [render] {
+                    drift::perf::record("frame.render", double(render->nsecsElapsed()) / 1'000'000.0);
+                }, Qt::DirectConnection);
+                auto last = std::make_shared<QElapsedTimer>();
+                QObject::connect(quick, &QQuickWindow::frameSwapped, quick, [last] {
+                    if (last->isValid()) {
+                        const double ms = double(last->nsecsElapsed()) / 1'000'000.0;
+                        if (ms < 500.0)
+                            drift::perf::record("frame", ms);
+                    }
+                    last->start();
+                }, Qt::DirectConnection);
+            }
+        });
+        hookTimer->start(1000);
+    }
+
+#ifndef Q_OS_ANDROID
+    // Shell.qml is not a window itself; the shell window it builds is its host.
+    if (!engine.rootObjects().isEmpty()) {
+        auto *host = engine.rootObjects().constFirst()->property("host").value<QObject *>();
+        if (auto *window = qobject_cast<QQuickWindow *>(host))
+            new FirstFrameWatchdog(window);
+    }
+#endif
 
     return app.exec();
 }

@@ -280,6 +280,23 @@ Item {
         }
 
         IconButton {
+            glyph: Theme.icons.chevronDown
+            variant: "text"
+            tooltip: qsTr("Guide sets")
+            anchors.verticalCenter: parent.verticalCenter
+            buttonSize: Theme.iconButtonSize * 0.6
+            iconSize: Theme.iconSizeBase * 0.75
+            active: guidesPopover.visible
+            onClicked: guidesPopover.opened ? guidesPopover.close() : guidesPopover.open()
+
+            GuidesPopover {
+                id: guidesPopover
+                x: parent.width - width
+                y: -height - Theme.spacingMd
+            }
+        }
+
+        IconButton {
             glyph: Theme.icons.mask
             variant: "text"
             tooltip: qsTr("Keep mask handles on the preview while another clip is selected")
@@ -353,6 +370,23 @@ Item {
                 // Leaves the decode mode alone: this is the other way out, not a confirmation.
                 onClicked: {
                     EditorState.preferredGpu = "discrete"
+                    decodeGpuDialog.reject()
+                }
+            }
+
+            ThemedLabel {
+                width: parent.width
+                visible: EditorState.gpuPreferenceInSystemSettings
+                text: qsTr("Set Drift to High performance in Windows Settings > Display > Graphics, "
+                           + "then restart Drift.")
+            }
+
+            ThemedButton {
+                visible: EditorState.gpuPreferenceInSystemSettings
+                text: qsTr("Open graphics settings")
+                variant: "secondary"
+                onClicked: {
+                    Qt.openUrlExternally("ms-settings:display-advancedgraphics")
                     decodeGpuDialog.reject()
                 }
             }

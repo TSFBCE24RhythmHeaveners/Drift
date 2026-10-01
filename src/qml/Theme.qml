@@ -36,6 +36,17 @@ QtObject {
         return sequence
     }
 
+    // Arrow chords are dispatched from the editor FocusScope after the focused
+    // item, not as ApplicationShortcut — that matcher misses Left/Right on some
+    // Wayland compositors, and would steal the keys from text fields if it did fire.
+    function shortcutSequenceUsesArrowKey(sequence) {
+        if (!sequence || sequence.length === 0)
+            return false
+        const parts = sequence.split("+")
+        const key = parts[parts.length - 1]
+        return key === "Left" || key === "Right" || key === "Up" || key === "Down"
+    }
+
     function shortcutDisplay(sequence) {
         if (!sequence || sequence.length === 0)
             return ""
@@ -254,11 +265,26 @@ QtObject {
     readonly property color clipAudio: "#8F5DBA"
     readonly property color clipGraphic: "#BA5D7A"
     readonly property color clipEffect: "#5d93ba"
+    readonly property color clipComposite: "#BA8F5D"
+    // Clips previewing from a low-res proxy: the name band and the "Proxy" pill. Green, so it
+    // stays apart from the yellow selection ring and every clip-type colour above.
+    readonly property color clipProxy: "#3DBE8B"
+    readonly property color clipProxyForeground: "#06261A"
+    readonly property color clipProxyBand: "#D9174A36"
+    // Media converted to an edit-friendly format ("Convert to edit-friendly format").
+    readonly property color clipEditFriendly: "#5AA9E6"
+    readonly property color clipEditFriendlyForeground: "#06203A"
     // Adjustment layers, tinted by what they act on so a glance at the lane says which it is.
     // The video one is clipEffect itself, which is the colour adjustments have always had.
     readonly property color clipAdjustmentVideo: clipEffect
     readonly property color clipAdjustmentAudio: "#9B6BC9"
     readonly property color clipAdjustmentMask: "#BA9B5D"
+    // Transform layers: their clips, the span bracket, the coverage tint and the parent frame.
+    readonly property color clipTransform: "#8FBA5D"
+    // Video in the overview strip only. On the timeline a video clip shows its thumbnails over
+    // clipVideoPlaceholder, which at three pixels tall reads as a hole in the strip — so the
+    // minimap gives footage a neutral slate that stays distinct from the coloured clip types.
+    readonly property color clipVideoOverview: "#6E7A85"
     readonly property color transitionOverlap: "#9B5DE5"
     readonly property color waveformColor: "#ffffffb3" // rgba(255,255,255,0.7) — on dark clip chrome
     // Waveform drawn on panel surfaces (subtitle cue lane, etc.): follows light/dark FG.
@@ -288,6 +314,14 @@ QtObject {
     readonly property color textStylePreviewBg: "#1c1c1c"
     readonly property color textStylePreviewBorder: darkMode ? "#3a3a3a" : "#2a2a2a"
 
+    // --- Colors: 3D transform gizmo (fixed; drawn over footage) --------------
+    // The usual X/Y/Z = red/green/blue, bright enough to hold up on any frame.
+    readonly property color gizmoX: "#f0475a"
+    readonly property color gizmoY: "#5ccf5a"
+    readonly property color gizmoZ: "#4f8ff7"
+    readonly property color gizmoUniform: "#f2f2f2"
+    readonly property color gizmoHot: "#ffd43b"
+
     // --- Colors: keyframe curves (fixed regardless of app theme) -------------
     // One hue per animatable property so overlaid curves, their key diamonds and
     // their gutter chips all read as the same series. Chosen for separation at
@@ -298,6 +332,10 @@ QtObject {
         "width": "#23d160",
         "height": "#e879f9",
         "rotation": "#f43f5e",
+        "rotationX": "#fb923c",
+        "rotationY": "#facc15",
+        "z": "#60a5fa",
+        "perspective": "#94a3b8",
         "opacity": "#a78bfa",
         "volume": "#2dd4bf"
     })
@@ -452,6 +490,9 @@ QtObject {
 
     // --- Layout: timeline ------------------------------------------------------
     readonly property real timelineToolbarHeight: 40
+    // Resolve-style full-project overview strip above the ruler; short enough
+    // to stay out of the way but tall enough to be an easy click target.
+    readonly property real timelineOverviewHeight: 34
     // Tall enough to be an easy seek/scrub hit target (CapCut/Premiere-style).
     readonly property real timelineRulerHeight: 28
     readonly property real timelineBookmarkRowHeight: 18
@@ -517,6 +558,9 @@ QtObject {
     // 800ms platform long-press: the tap it competes with only opens a menu, and a
     // gesture that has to be held for most of a second reads as an unresponsive app.
     readonly property int touchLiftInterval: 320
+    // Upward travel after a lift that counts as heading for a drop target: past this the
+    // asset sheet slides aside even while the finger is still over it.
+    readonly property real touchLiftStepAsideDistance: 56
     // The rail's five slots divide its width, so destinations have no fixed width.
     // The Add button is the one that does: a docked-FAB-sized target in the centre.
     readonly property real androidRailFabSize: 48
@@ -532,7 +576,8 @@ QtObject {
     readonly property real androidPlayheadCentreWidth: 2
     readonly property real androidClipTrimHandleWidth: 20
     readonly property real androidClipEdgeMargin: 22
-    readonly property real androidTrimHotspotExtra: 14
+    // Outside the clip, so with the 20px bar a trim edge offers a 40px+ grab — a fingertip.
+    readonly property real androidTrimHotspotExtra: 20
     // Preview region held between a floor and a ceiling. The pane is sized from the project
     // aspect, but only within this band: below the floor the canvas letterboxes inside the
     // pane instead of the pane shrinking, so the transport row's y stays put between the
@@ -574,11 +619,13 @@ QtObject {
         copyPlus: "copy-plus",
         copy: "copy",
         trash: "trash-2",
+        pipette: "pipette",
         snowflake: "snowflake",
         bookmark: "bookmark",
         repeat: "repeat",
         star: "star",
         layers: "layers",
+        box: "box",
         split: "split",
         magnet: "magnet",
         linkTwo: "link-2",
@@ -588,6 +635,8 @@ QtObject {
         zoomIn: "zoom-in",
         zoomFit: "chevrons-left-right-ellipsis",
         gauge: "gauge",
+        filePlay: "file-play",
+        rabbit: "rabbit",
         play: "play",
         pause: "pause",
         stepBack: "step-back",
@@ -595,6 +644,7 @@ QtObject {
         rewind: "rewind",
         fastForward: "fast-forward",
         maximize: "maximize",
+        group: "group",
         locateFixed: "locate-fixed",
         minimize: "minimize",
         folder: "folder",
@@ -606,6 +656,7 @@ QtObject {
         wand: "wand-sparkles",
         sparkles: "sparkles",
         sliders: "sliders-horizontal",
+        slidersVertical: "sliders-vertical",
         settings: "settings",
         upload: "upload",
         plus: "plus",
@@ -614,9 +665,13 @@ QtObject {
         eye: "eye",
         eyeOff: "eye-off",
         film: "film",
+        panelBottomDashed: "panel-bottom-dashed",
+        panelTop: "panel-top",
         video: "video",
         music: "music",
         audioLines: "audio-lines",
+        mic: "mic",
+        micOff: "mic-off",
         image: "image",
         shapes: "shapes",
         chevronDown: "chevron-down",
@@ -679,6 +734,9 @@ QtObject {
         lock: "lock",
         lockOpen: "lock-open",
         moveHorizontal: "move-horizontal",
+        move3d: "move-3d",
+        rotate3d: "rotate-3d",
+        scale3d: "scale-3d",
         // CapCut-style select/pointer tool (exit cut modes)
         mousePointer: "mouse-pointer",
 

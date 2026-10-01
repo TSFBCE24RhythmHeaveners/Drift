@@ -71,8 +71,21 @@ Item {
             assetsSheet.dismiss()
         if (propertiesSheet.opened)
             propertiesSheet.dismiss()
+        if (fadeSheet.opened)
+            fadeSheet.dismiss()
         if (!moreToolsSheet.opened)
             moreToolsSheet.open()
+    }
+
+    function openFadeSheet() {
+        if (assetsSheet.opened)
+            assetsSheet.dismiss()
+        if (propertiesSheet.opened)
+            propertiesSheet.dismiss()
+        if (moreToolsSheet.opened)
+            moreToolsSheet.dismiss()
+        if (!fadeSheet.opened)
+            fadeSheet.open()
     }
 
     function closeSheets() {
@@ -82,6 +95,8 @@ Item {
             addMenu.dismiss()
         if (moreToolsSheet.opened)
             moreToolsSheet.dismiss()
+        if (fadeSheet.opened)
+            fadeSheet.dismiss()
         if (assetsSheet.opened)
             assetsSheet.dismiss()
         if (propertiesSheet.opened)
@@ -107,6 +122,10 @@ Item {
         }
         if (moreToolsSheet.opened) {
             moreToolsSheet.dismiss()
+            return true
+        }
+        if (fadeSheet.opened) {
+            fadeSheet.dismiss()
             return true
         }
         if (addMenu.opened) {
@@ -364,6 +383,7 @@ Item {
                     anchors.right: parent.right
                     panel: timeline
                     onMoreRequested: root.openMoreTools()
+                    onFadeRequested: root.openFadeSheet()
                 }
 
                 Item {
@@ -388,15 +408,7 @@ Item {
                             // the drop target invisible for the whole gesture.
                             if (TouchDrag.active)
                                 return false
-                            void EditorState.tracks
-                            const tracks = EditorState.tracks
-                            if (!tracks || tracks.length === 0)
-                                return true
-                            for (var i = 0; i < tracks.length; ++i) {
-                                if (tracks[i].clips && tracks[i].clips.length > 0)
-                                    return false
-                            }
-                            return true
+                            return EditorState.clipCount === 0
                         }
                         color: Qt.rgba(Theme.appBackground.r, Theme.appBackground.g,
                                        Theme.appBackground.b, 0.82)
@@ -452,7 +464,13 @@ Item {
 
     AndroidAddMenu {
         id: addMenu
-        onPicked: (tabId) => root.openAssetsTab(tabId)
+        // A transform layer is added straight away; everything else opens its assets tab.
+        onPicked: (tabId) => {
+            if (tabId === "transformLayer")
+                EditorState.addTransformLayerForSelection()
+            else
+                root.openAssetsTab(tabId)
+        }
     }
 
     AndroidProjectSheet {
@@ -463,6 +481,10 @@ Item {
     AndroidMoreToolsSheet {
         id: moreToolsSheet
         panel: timeline
+    }
+
+    AndroidFadeSheet {
+        id: fadeSheet
     }
 
     AndroidBottomSheet {

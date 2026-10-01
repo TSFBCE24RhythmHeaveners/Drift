@@ -32,7 +32,7 @@ private:
     };
 
     ClipRef resolveClip(const QJsonObject &args) const;
-    // "video", "audio", "image", "text", "subtitle", "shape", "adjustment", "vector".
+    // "video", "audio", "image", "text", "subtitle", "shape", "adjustment", "vector", "model3d".
     QString clipKind(const ClipRef &ref) const;
     // type_mismatch unless the clip's kind is one of `kinds`; empty when it is.
     QJsonObject requireKind(const ClipRef &ref, const QStringList &kinds, const char *what) const;
@@ -49,6 +49,12 @@ private:
     QJsonObject opListAssets() const;
     QJsonObject opRenameAsset(const QJsonObject &args);
     QJsonObject opAddTrack(const QJsonObject &args);
+    QJsonObject opMakeTransformLayer(const QJsonObject &args);
+    QJsonObject opSetTransformSpan(const QJsonObject &args);
+    // {end, covers} for the transform layer at `track`.
+    QJsonObject transformSpanJson(int track) const;
+    // The transform layers moving the clip's track, outermost first.
+    QJsonArray transformedBy(int track) const;
     QJsonObject opRemoveTrack(const QJsonObject &args);
     QJsonObject opSetTrack(const QJsonObject &args);
     QJsonObject opPlaceClip(const QJsonObject &args);
