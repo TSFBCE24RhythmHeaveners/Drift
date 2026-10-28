@@ -25,6 +25,48 @@ is closed or Agent access is off, each call comes back as a JSON-RPC error and t
 keeps running, so enabling Agent access is enough to make it work — no need to restart the
 client.
 
+### Several instances
+
+Any number of editors (and headless instances) can run at once. The first takes port 4731;
+the rest bind a free port. Each one with Agent access on registers itself with a file in
+`$XDG_RUNTIME_DIR/drift/mcp-sessions/<pid>.json` (the temp directory where there is no
+runtime directory; `DRIFT_MCP_SESSION_DIR` moves it) holding its port, token, pid, start
+time, whether it is headless, and the open project's path and name. The file is
+owner-only, rewritten when the token rotates or the project changes, and removed when
+Agent access is turned off. Records left by a process that has died are ignored and
+deleted the next time anything reads the registry.
+
+The stdio bridge adds four tools of its own to the homepage, and answers `initialize`,
+`ping` and `tools/list` itself, so they work before any editor is reachable:
+
+| Tool | Does |
+| --- | --- |
+| `instances()` | Lists running instances: `id` (pid), `name` (project name), `project` (path, when saved), `headless`, `isolated` (started by `launch_instance`), `url`, `started`, `attached`. Never the token |
+| `use_instance({id})` | Attaches to that instance; every later call goes to it |
+| `launch_instance({project?, headless?, wait?})` | Starts a new Drift with Agent access on and attaches to it once it is up **and** the requested project has finished opening (up to `wait` seconds, default 60). A failed open comes back as `load_failed` with the reason, still attached to the instance. A window by default; `headless:true` runs `--headless --mcp-port 4731` instead, which keeps running until `close_instance` or a signal stops it |
+| `close_instance({id, discard?})` | Quits an instance that `launch_instance` started (`isolated:true` in `instances()`) and waits for it to exit; its registry record and instance marker go with it. Never the user's own editor (`not_isolated`). Refuses `busy` during a save or load, and `unsaved_changes` when the project is dirty unless `discard:true`. The instance-side op is `quit_instance`, which applies the same checks |
+
+Launched instances run with `--isolated-session` (the GUI also gets `--agent-access`, which
+turns Agent access on for that run only). An isolated instance shares the user's settings
+but not their session: it never reopens the last project or offers crash recovery, opens
+straight into the editor without the start screen, and does not write the recovery file,
+`lastSessionPath` or the recent-projects list, so the user's own editor reopens exactly what
+it would have otherwise.
+
+Every instance, with Agent access or without, also leaves a marker in
+`<AppData>/instances/<pid>` while it runs. The startup sweep that reclaims unpacked project
+media under `<AppData>/projects` only knows what this instance's recents and the recovery
+file name, so it holds back entirely while any other instance is alive.
+
+With exactly one instance running, the bridge attaches to it on the first call. With
+several it refuses to guess: tool calls come back `no_instance` with the list until
+`use_instance` picks one. `drift --mcp-stdio --mcp-instance <pid>` pins it up front.
+
+Once attached, a bridge stays on that instance and follows its token rotations. Opening
+another editor never takes over its next call; if the instance turns Agent access off or
+closes, calls fail with a message naming it until access returns or `use_instance` moves
+the bridge elsewhere.
+
 ## Headless
 
 `drift --headless` runs the editor with no window and serves MCP itself, for servers and
@@ -53,8 +95,8 @@ stdio is a transport, where it goes to stderr instead: the spec allows nothing b
 messages on stdout, and a banner there is exactly what breaks clients.
 
 Without `--mcp-token` (or `$DRIFT_MCP_TOKEN`) a token is generated and shown in the
-banner. Only the HTTP form writes the session file that `--mcp-stdio` reads, so a headless
-instance serving stdio never disturbs a GUI editor running alongside it.
+banner. Only the HTTP form registers a session file for `--mcp-stdio` to find, so a
+headless instance serving only stdio stays out of the registry.
 
 Both forms shut down on SIGINT (Ctrl-C) and SIGTERM.
 
@@ -86,7 +128,7 @@ The `initialize` reply carries a short `instructions` string with the essentials
 5. **`inspect()`** — project summary; `clips:true` adds clip rows, `detail:true` expands them, `clip:<uuid>` / `track:<n>` filter, `since:<revision>` short-circuits.
 6. **`activity()`** — cheap text profile of visual change, motion and loudness over a range; tells you *where* to look.
 7. **`frames()`** — one labelled contact-sheet image of many moments; tells you *what* is there.
-8. **`capture({at})`** — one full-size JPEG still of the composition (use to verify edits).
+8. **`capture({at, view})`** — one full-size JPEG still of the composition (use to verify edits). `view:"editor3d"` shows the preview's free 3D viewpoint instead (see [3D viewport](#3d-viewport)).
 
 Homepage endpoint: `POST /mcp` with `Authorization: Bearer <token>`.
 
@@ -107,11 +149,12 @@ Pinned endpoints (`/mcp/timeline`, `/mcp/project`, …) list that toolbox’s op
 | Effects | `list_effects` / `list_audio_effects` / `list_transitions` are compact by default (`cats:{<cat>:[{id,label}]}`); pass `id`, `cat`, or `q` to get parameters. Ids are accepted with `.` or `_` interchangeably; an unknown id returns `not_found` with the closest matches. Effect stacks live on an **adjustment clip linked to the target**, created on its own lane the first time; `add_effect`/`add_audio_effect` report it as `host:{track,index,clip}`. Keep addressing the original clip in every effect op, and expect that extra lane in `inspect` |
 | Images | `capture`, `frames`, and `get_waveform({image:true})` return a text block (JSON meta) followed by an image block. Times are always in the text block; never rely on burned-in labels alone. Sheets fit one vision image (≤1456 px long edge) |
 | Overlap | Off by default — place/move snap to gaps unless `set_overlap` enables overlap; the reply reports `requested` vs `placed`. With overlap off, moving several clips toward zero must be sequenced **back-to-front**. `set_ripple` / `close_gap` close holes after a delete |
-| Composites | `make_composite` (selection-based) moves the selected clips into a nested timeline and leaves one `composite` clip plus a bin item. `open_composite({clip})` / `({sequence})` makes that timeline the one every op edits; `open_composite({main:true})` returns. Adding content past a composite's end never lengthens placed instances; their trim limit follows the content. One level only: no composites inside composites. `flatten_composite` renders the clip to a video file (async, poll `export_status`) and swaps it in. `export_video` always renders the main timeline |
+| Composites | `make_composite` (selection-based) moves the selected clips into a nested timeline and leaves one `composite` clip plus a bin item. `open_composite({clip})` / `({sequence})` makes that timeline the one every op edits; `open_composite({main:true})` returns. Adding content past a composite's end never lengthens placed instances, and shortening the content never shortens them (or the adjustment clips hosted on them) — trim them with `set_duration`; their trim limit follows the content. `set_clip_speed` retimes a composite as a unit: on an untrimmed instance, `speed = currentDuration / target` makes it end at `target`. `set_speed_curve` also works on composites. One level only: no composites inside composites. `flatten_composite` renders the clip to a video file (async, poll `export_status`) and swaps it in. `export_video` always renders the main timeline |
 | Export | `export_video` is async — poll `inspect().export` or `export_status`. The output path is normalised, so use the `path` echoed back. Named sizes: `list_export_presets` + `export_with_preset` |
 | Atomicity | `apply` is **not** atomic: on failure the ops before it stay applied. The failure reply is `{ok:false, error:"apply_failed", stopped:<index>, tool, failed:<that op's error>, done:[results of the ops that ran]}` — `done` never contains the failed op. An ops array cannot reference an id produced earlier in the same batch — end the batch after `set_speed_curve` |
-| Undo | One batch = one undo step. Linear history (no branches): `list_history({limit})` returns the newest `limit` (default 20) versions as `{index, label, short}` plus the HEAD `hash`/`short` and `total` (index 0 = Origin). `undo_to({index})` or `undo_to({hash})` jumps (a ≥8-char prefix such as `short` works); the next edit drops redo. `take_snapshot` writes compact project JSON named `<hash>.json` (file SHA-256 = history hash). Ops outside the stack (and all read-only ops): `import_media`, `import_media_bytes`, `seek`, `play`, `pause`, `undo`, `redo`, `undo_to`, `take_snapshot`, `restore_snapshot`, `set_overlap`, `set_ripple`, `set_snap`, `set_loop_work_area`, `export_video`, `save_project`, `set_theme`, `set_shortcut`, `reset_shortcuts`, `set_beat_layers`, `detect_beats`, `list_speed_curve`, `list_fade_curve`, `install_addon`, `cancel_addon_install`, `set_acceleration`, `switch_angle`, `end_multicam`, `market_download`, `market_cancel_download`, and the preset-store ops `rename/delete/export/import_user_text_preset`, `rename/delete/export_text_animation_preset`. **`set_beat_layers` changes the user's own snapping and cannot be undone** |
+| Undo | One batch = one undo step. Linear history (no branches): `list_history({limit})` returns the newest `limit` (default 20) versions as `{index, label, short}` plus the HEAD `hash`/`short` and `total` (index 0 = Origin). `undo_to({index})` or `undo_to({hash})` jumps (a ≥8-char prefix such as `short` works); the next edit drops redo. `take_snapshot` writes compact project JSON named `<hash>.json` (file SHA-256 = history hash). Ops outside the stack (and all read-only ops): `import_media`, `import_media_bytes`, `seek`, `play`, `pause`, `undo`, `redo`, `undo_to`, `take_snapshot`, `restore_snapshot`, `set_overlap`, `set_ripple`, `set_snap`, `set_loop_work_area`, `export_video`, `save_project`, `quit_instance`, `set_theme`, `export_theme`, `import_theme`, `select_theme`, `set_preview_view`, `set_shortcut`, `reset_shortcuts`, `set_beat_layers`, `detect_beats`, `list_speed_curve`, `list_fade_curve`, `install_addon`, `cancel_addon_install`, `set_acceleration`, `switch_angle`, `end_multicam`, `market_download`, `market_cancel_download`, and the preset-store ops `rename/delete/export/import_user_text_preset`, `rename/delete/export_text_animation_preset`, `import_effect`, `rename/delete/export/import_effect_preset`. **`set_beat_layers` changes the user's own snapping and cannot be undone** |
 | Errors | `{ok:false, error:<code>, detail:<text>}` — `bad_args`, `not_found`, `type_mismatch`, `unknown_op` (the detail suggests the nearest op names and their toolbox), `unknown_toolbox`, `wrong_endpoint`, `wrong_toolbox`, `apply_failed`, `import_failed`, `import_timeout`, `export_busy`, `export_failed`, `export_timeout`, `capture_failed`, `conflict`, `unsupported` (a build without the vector renderer), and from the market toolbox `market_unavailable`, `consent_required`, `market_error`, `download_failed`. `type_mismatch` is also the answer when an op gets the wrong **kind** of clip (a shape to `apply_text_preset`, a title to `set_shape_style`, an image to `set_clip_orientation`) |
+| UI themes | No op edits theme tokens. `export_theme({path, name, theme?, mode?})` writes a copy (`copy`: every resolved token; `starter`: `extends` + core palette, metrics, typography, motion, window) to a file; edit it with your own file tools, then `import_theme({path, replace:true, select:true})`. Import errors name the bad key; fix and re-import. `list_themes` / `select_theme` switch between installed themes. Built-in ids (`dark`, `light`, `graphite`, `frost`) and `system` are reserved and cannot be imported or removed. Format: `docs/theming.md` |
 | Change detection | Every `inspect` includes `revision`; pass `since:<revision>` to get `{unchanged:true}` when state is current |
 | Media import | Absolute paths or `file://`, or `import_media_bytes` (base64 — always pass an explicit `path`). **No directory listing.** If the user gave a fuzzy name (`GX010023.mp4` in Downloads), glob/search with **your own filesystem tools**, then pass the hits to `import_media` and confirm `missing:[]` is empty |
 
@@ -129,13 +172,13 @@ All return `{started:true}` immediately. Every field below except `export` lives
 | `detect_scenes` | `jobs.sceneDetect.{active, progress, status, clip, scenes}` (also present, inactive, while a scan result is loaded) |
 | `run_segmentation`, `segment_clip`, `apply_denoise`, `detect_faces` | No progress field — re-read `inspect({clips:true, detail:true})` and compare |
 | `stabilize_clip` | Per-clip `stabilizing` / `stabilizeProgress` / `stabilizeStatus` on the detail clip row |
-| `transcribe`, `diarize`, `tts_generate`, `sfx_generate`, `estimate_depth` | Return `{job_id}` instead: poll `get_job({id})` until `active` is false, then read `ok` plus `result` or `error`. `cancel_job({id})` stops one. `inspect({detail:true}).jobs.list` keeps recent jobs, finished ones included |
+| `transcribe`, `diarize`, `tts_generate`, `sfx_generate`, `add_voice`, `voiceover_from_subtitles`, `estimate_depth` | Return `{job_id}` instead: poll `get_job({id})` until `active` is false, then read `ok` plus `result` or `error`. `cancel_job({id})` stops one. `inspect({detail:true}).jobs.list` keeps recent jobs, finished ones included |
 
 ## Toolbox reference
 
 | Toolbox | When to use |
 |---------|-------------|
-| `media` | Import (paths/bytes), list, rename, remove, replace, export still, `set_asset_rotation` (lossless orientation override for a sideways video) |
+| `media` | Import (paths/bytes), list, rename, remove, replace, export still, `set_asset_rotation` (lossless orientation override for a sideways video), PDF clips (`inspect_pdf`, `set_pdf_options`) — see [PDF documents](#pdf-documents) |
 | `timeline` | Tracks, clips, selection, ripple/gap, bookmarks, copy/paste, A/V link |
 | `canvas` | Transform (including 3D tilt, depth and perspective), flip, blend, mask, fade, speed, reverse, animation, stabilisation, `set_clip_orientation` (lossless 0/90/180/270 for a video clip), shape styling (`set_shape_style`: the same shading-layer stack captions have — `layers` / `layer` patches, `add_shape_layer` … — plus geometry knobs; the legacy flat `fill`/`stroke` keys still land on the `fill`/`stroke` layers) — see [Shapes](#shapes) |
 | `playback` | Seek, play, pause, In/Out work area |
@@ -144,9 +187,9 @@ All return `{started:true}` immediately. Every field below except `export` lives
 | `motion` | Lottie animations and SVG drawings as vector clips: add, inspect, swap the document, re-theme through slots or the `svg.*` element overrides |
 | `model3d` | 3D models (glTF binary `.glb`) as model clips: add, inspect, pick the animation, pose and light them — see [3D models](#3d-models) |
 | `subtitles` | Subtitle clips, cues, import/export, Whisper generation |
-| `effects` | Video/audio effects, transitions, templates, effect clipboard |
+| `effects` | Video/audio effects, transitions, templates, effect clipboard, writing new ones into My Effects — see [Custom effects](#custom-effects) |
 | `project` | Open/new/save/package, canvas, background, metadata, export |
-| `keyframes` | Property animation keys and tangents — clip transform, `fx.<i>.<param>`, `mask.<key>`, on text/subtitle clips `text.<key>` (pixelSize, letterSpacing, lineHeight, boxPadding, pathBend) or `text.layer.<id>.<field>` (opacity, offsetX, offsetY, blur, width, spread, trimStart, trimEnd, dashOffset, sketchLength, sketchDeviation, color.r/g/b/a, gradient.angle/offset/scale/center.x/y, gradient.stop.n.pos, effect.<param> for an effect paint's scalar params); the old names outlineWidth, shadowBlur, glowRadius, gradientAngle, color.r… still resolve onto the stroke/shadow/glow/fill layers. On shape clips the same layer fields as `shape.layer.<id>.<field>` (a fresh shape's layers are `fill` and `stroke`) plus `shape.<cornerRadius|points|innerRatio|headSize|thickness|tailX|tailSize>`; on SVG clips `vector.svg.…` (see Motion); on 3D model clips `model3d.<scale\|depth\|rotX\|rotY\|rotZ\|lightYaw\|lightPitch\|lightIntensity\|ambient>` (see 3D models). `set_keyframe` on a property the clip does not have fails `bad_args` |
+| `keyframes` | Property animation keys and tangents — clip transform, `fx.<i>.<param>`, `mask.<key>`, on text/subtitle clips `text.<key>` (pixelSize, letterSpacing, lineHeight, boxPadding, pathBend) or `text.layer.<id>.<field>` (opacity, offsetX, offsetY, blur, width, spread, trimStart, trimEnd, dashOffset, sketchLength, sketchDeviation, color.r/g/b/a, gradient.angle/offset/scale/center.x/y, gradient.stop.n.pos, effect.<param> for an effect paint's scalar params); the old names outlineWidth, shadowBlur, glowRadius, gradientAngle, color.r… still resolve onto the stroke/shadow/glow/fill layers. On shape clips the same layer fields as `shape.layer.<id>.<field>` (a fresh shape's layers are `fill` and `stroke`) plus `shape.<cornerRadius|points|innerRatio|headSize|thickness|tailX|tailSize>`; on SVG clips `vector.svg.…` (see Motion); on PDF clips `pdf.scrollX`, `pdf.scrollY` (page units) and `pdf.zoom` (0.1..10) (see PDF documents); on 3D model clips `model3d.ambient` and `model3d.light<n>_<x\|y\|z\|intensity\|radius\|cone\|aimX\|aimY>` (n 1..4), with the model placed by the clip transform (see 3D models). `set_keyframe` on a property the clip does not have fails `bad_args` |
 | `speed` | Speed ramps; reading custom fade curves (write them with `set_fade_curve` in `canvas`) |
 | `segmentation` | SAM-style cutout (session or one-shot) |
 | `ai` | Denoise, face detection, auto-reframe, depth estimation for the depth effects (`estimate_depth`, `sample_depth`, `clear_depth`) — see [Depth effects](#depth-effects), add-on install |
@@ -156,7 +199,7 @@ All return `{started:true}` immediately. Every field below except `export` lives
 | `multicam` | Multi-camera session: set up, switch at the playhead, save |
 | `market` | Stock media from the Cutwire marketplace: status/consent, search, resolve a link, download into the bin |
 | `transcript` | Word-level transcripts stored on each asset, reading them (`get_transcript`), cutting by words (`cut_words`) or source ranges (`keep_ranges`), building a sequence from an edit list (`assemble`), speaker labels (`diarize`) — see [Editing speech](#editing-speech) |
-| `voice` | ElevenLabs / Fish Audio voiceover (`tts_generate`), ElevenLabs sound effects (`sfx_generate`), `list_voices`, `cloud_provider_status` — see [Cloud voices](#cloud-voices) |
+| `voice` | ElevenLabs / Fish Audio voiceover (`tts_generate`), ElevenLabs sound effects (`sfx_generate`), `list_voices`, `cloud_provider_status` — see [Cloud voices](#cloud-voices); local Chatterbox TTS, voice library and subtitle voiceovers — see [Local voices](#local-voices) |
 
 ### Working to the music
 
@@ -296,6 +339,28 @@ until the user also turns on that provider's consent switch.
   with `place` put it on a free audio lane.
 - Every call is billable. `not_configured` and `consent_required` errors say what to ask the user.
 
+### Local voices
+
+`tts_generate({provider:"local"})` speaks with Chatterbox on this machine: free, no key, no consent
+switch. It needs the `tts-model` addon (`addon_missing` otherwise), and the first run loads the
+model, which takes about a minute.
+
+- **`local_tts_status({warm_up})`** returns `{available, model_loaded, loading, running, addon_id,
+  languages, last_voice, last_language, last_exaggeration}`. `warm_up:true` starts loading the model
+  without waiting.
+- **`tts_generate({provider:"local", text, voice, language, exaggeration, place})`** takes a
+  `list_local_voices` id (default: the last one used), a language code from `local_tts_status`, and
+  an exaggeration of 0.25 to 2. Unlike the cloud providers, `place` defaults to off, so the speech
+  lands in the bin only; `place:true` or `{at, track}` also puts it on the timeline. One local job
+  runs at a time (`busy`). The job result is `{asset, clip?, duration, path}`.
+- **`list_local_voices`**, **`add_voice({name, path | clip, in, out})`**, **`rename_voice`**,
+  **`remove_voice`** manage the voice library. A sample is 3 to 20 seconds of clean speech; `in` and
+  `out` are seconds in the source file, and a clip defaults to its trimmed range. `add_voice` is
+  async and its job result is `{voice, name}`. The built-in `default` voice can't be renamed or removed.
+- **`voiceover_from_subtitles({clip, voice, language, exaggeration})`** speaks every caption of a
+  subtitle clip at its cue time on new audio tracks, as one undo step. Async; the job result is
+  `{placed, longer}`.
+
 ### Understanding the footage
 
 `capture` shows one composited frame. The `scene` toolbox instead builds a **structured index
@@ -430,31 +495,38 @@ places off-canvas becomes visible when the group is scaled down.
 ### 3D models
 
 The `model3d` toolbox puts a glTF binary (`.glb` only — a `.gltf` with sidecar files would not
-survive bundling) on a graphic track as a **model clip**. The clip is a full-canvas layer: the
-model is drawn by its own camera into it, so it is never clipped by a box edge, and it takes
-opacity, fades, blend modes, effects, masks and transitions like any other clip. Track order
-alone decides stacking; `depth` is perspective, never z-order.
+survive bundling) on a graphic track as a **model clip**. A model clip is a 3D layer like any
+other: it sits in the same world as tilted clips, is seen through the scene camera when there is
+one, and takes opacity, fades, blend modes, effects, masks and transitions. Track order decides
+stacking unless its depth occlusion is on (the Transform tab's "Occlude by depth"), in which case
+it sorts by depth against the other occluding 3D layers.
 
 | Call | Effect |
 |---|---|
 | `import_media({paths})` | Also takes `.glb` files; the asset places with `place_clip` like any other (its duration is the first animation's length, 5 s for a static model) |
-| `add_model3d({path, at, track, duration, animation, loop, offset, scale, depth, rotX, rotY, rotZ, lightYaw, lightPitch, lightIntensity, ambient, name})` | Absolute `.glb` path. Returns `{id, track, index, animations:[{name, durationSec}], vertexCount, warning?, model3d:{…}}` |
+| `add_model3d({path, at, track, duration, animation, loop, offset, scale, depth, rotX, rotY, rotZ, ambient, lights, name})` | Absolute `.glb` path. Returns `{id, track, index, animations:[{name, durationSec}], vertexCount, warning?, model3d:{…}}` |
 | `inspect_model3d({path \| clip})` | Read-only. `{animations, vertexCount, primitiveCount, materialCount, textureCount, warning}` — `warning` says what the loader skipped (Draco compression, extra material textures, morph targets) |
-| `set_model3d_source({clip, path})` | Swap the file; position, length, pose, lighting and keyframes stay, the animation index clamps to the new file |
-| `set_model3d_options({clip, animation, loop, offset, scale, depth, rotX, rotY, rotZ, lightYaw, lightPitch, lightIntensity, ambient, name})` | Plain (non-keyed) values; only supplied keys change |
+| `set_model3d_source({clip, path})` | Swap the file; transform, length, lighting and keyframes stay, the animation index clamps to the new file |
+| `set_model3d_options({clip, animation, loop, offset, scale, depth, rotX, rotY, rotZ, ambient, lights, name})` | Plain (non-keyed) values; only supplied keys change |
 
-Placement and pose: the model sits at the clip's `x`/`y` (top-left of the full-canvas layer, so
-`0,0` is centred; move it with `set_transform x/y` or `x`/`y` keyframes — `w`, `h`,
-`rotation` and the 3D clip transform (`rotationX`, `rotationY`, `z`, `perspective`) are ignored for this kind, and `set_transform` still reports the canvas size for
-them). `scale` is the fraction of canvas height the model's largest extent spans; `depth` 0..1
-goes from flat (orthographic) to strong foreshortening without changing the on-screen size.
-`rotX`/`rotY`/`rotZ` are degrees about the **model's own axes** (intrinsic), applied X, then Y,
-then Z, each following the earlier ones: X tilts, Y spins about the model's up axis *as tilted by
-X*, Z rolls about its forward axis after both. So to spin a tilted globe about its own axis, set
-`rotX` for the tilt and keyframe `rotY`; to stand up a model exported on its side, `rotX: -90`
-then turntable it with `rotZ` (its original up). Lighting is one key light
-(`lightYaw`/`lightPitch` degrees, `lightIntensity`) plus `ambient` 0..1. All nine keyframe as
-`model3d.<key>`. Shading is a simple Blinn-Phong on the base colour — normal, roughness and
+Placement: the clip's rect (`x`, `y`, `w`, `h`) is the front face of the model's bounding box,
+`z` pushes it in depth, and `rotationX`/`rotationY`/`rotation` turn it about its centre exactly
+as they turn a tilted clip (intrinsic, X then Y then the in-plane spin, canvas axes: +y down).
+`perspective` is the eye it is seen through when no scene camera is running. Set them with
+`set_transform` or keyframe them like any clip. A new model starts centred with its largest
+extent half the canvas height. `scale`, `depth` and `rotX`/`rotY`/`rotZ` are shorthands kept from
+before models were 3D layers: `scale` resizes the box about its centre to that fraction of the
+canvas height, `depth` 0..1 sets `perspective`, and `rotX`/`rotY`/`rotZ` (degrees about the
+model's glTF axes, +y up) write `rotationX = -rotX`, `rotationY = rotY`, `rotation = -rotZ`; as
+keyframes, `model3d.rotY` and friends key those clip properties. Lighting is `ambient` 0..1
+plus up to four point or spot lights, `lights: [{enabled, x, y, z, color, intensity, radius,
+cone, aimX, aimY}, …]` by index (give only the fields to change). They are placed like 3D
+Relight's: `x`/`y` across the clip's rect (0..1 spans it), `z` in clip heights from the model's
+centre (negative is nearer the viewer), `radius` the reach in clip heights, and a spot (`cone`
+under 180) points at `aimX`/`aimY` on the plane through the model's centre. They follow the
+clip's position and size but not its rotation. The numbers keyframe as `model3d.ambient` and
+`model3d.light<n>_<field>`; the 3D preview draws the lights and drags them. Projects from before
+format 15 had one directional key light, which loads as light 1. Shading is a simple Blinn-Phong on the base colour — normal, roughness and
 occlusion maps are ignored, so a model reads flatter than in a PBR viewer.
 
 An animated file lists its clips in `animations`; `animation` picks one by index, the clip's
@@ -462,6 +534,75 @@ speed/reverse and `offset` remap into it, and `loop` (`loop` default, `hold`, `p
 decides what happens past its end. Node (rigid) animation and skeletal skinning play; morph
 targets do not (reported in `warning`). `capture` / `frames` render model clips like everything
 else.
+
+### 3D viewport
+
+The preview panel has a 2D mode (the camera's picture) and a 3D mode: the world from a free
+viewpoint, with the scene camera body and the stage drawn in it. The viewpoint is editor
+session state, never saved or exported, and its changes are not undoable. `set_preview_view`
+(ui toolbox) drives it; only supplied keys act, in this order:
+
+| Key | Effect |
+|---|---|
+| `mode` | `2d` or `3d` |
+| `reset` | back to the overview viewpoint |
+| `axis` | `front`, `back`, `left`, `right`, `top` or `bottom` view of the current target (leaves look-through) |
+| `frame_selection` | frame the selected clip, or the whole stage when nothing is selected |
+| `orbit` | `[dx, dy]` degrees |
+| `pan` | `[dx, dy]` canvas px |
+| `dolly` | wheel steps; + moves toward the target |
+| `look_through` | `true` views through the scene camera (what exports), `false` returns to the free viewpoint |
+
+It returns `{mode, look_through, target:[x,y,z], yaw, pitch, distance, fov, eye:[x,y,z]}`; a bad
+`mode`, `axis` or array shape is `bad_args`. `inspect` reports `preview_mode` (and `look_through`
+while in 3d). `capture({view:"editor3d"})` renders that viewpoint, or the overview if the view was
+never placed, at the same size rules as a normal capture; the reply adds `view`. `frames` has no
+`view` option, and the selected clip's box is not drawn in the capture.
+
+### Scene camera
+
+`add_camera` puts a Camera clip on the camera lane (the whole sequence, or one clip at `at` for a
+cut); a camera at rest looks exactly like no camera. It is posed by the clip's transform props, all
+keyframable: `x`/`y`/`z` translate it in its own frame (canvas px; +x right so the picture goes
+left, +y down, +z back from the scene), `rotationX`/`rotationY` pitch and yaw (degrees; -`rotationX`
+looks up, +`rotationY` looks left), `rotation` rolls (degrees, clockwise), `perspective` is the
+eye distance (px). A bare rotation orbits the eye about the canvas centre; the tools below turn
+the camera in place by re-solving `x`/`y`/`z` so the eye stays put. World space is canvas px about
+the canvas centre, y down, +z toward the viewer.
+
+| Call | Effect |
+|---|---|
+| `get_camera_state({at?, clip?})` | Read-only. `{active, at, clip, track, x, y, z, rotationX, rotationY, rotation, perspective, eye:[x,y,z]}`; `active:false` when no camera covers `at` (default the playhead) |
+| `reset_camera({clip?})` | Clears pan, dolly, pitch, yaw, roll and their keys; the lens stays. One undo step; `not_found` without a camera |
+| `camera_look_at({target, at?, keyframe?, clip?})` | Aims the camera at a clip id (its centre, with `z`; transform-layer parents ignored) or a world point `{x,y,z}`. Writes `rotationX`/`rotationY` and `x`/`y`/`z` (eye held); keys at `at` with `keyframe:true` or on properties that already animate |
+| `camera_move({move, start, end, amount?, easing?, target?, clip?})` | Start and end keyframes from the pose at `start`; one undo step |
+
+`camera_move` moves and the default `amount`: `dolly_in`/`dolly_out` 300 px along the view;
+`truck_left`/`truck_right` 200 px; `crane_up`/`crane_down` 200 px; `pan_left`/`pan_right` 20 and
+`tilt_up`/`tilt_down` 15 degrees, in place; `orbit_left`/`orbit_right` 45 degrees around `target`
+(clip id or `{x,y,z}`, default the canvas centre) keeping it centred; `push_in`/`pull_out` scale
+`perspective` by `1-amount` / `1+amount` (fraction 0..0.9, default 0.35), which changes perspective
+strength, not framing. `easing` is `ease` (default) or `linear`. Orbit interpolates the pose
+linearly, so a sweep beyond about 90 degrees cuts a chord; split it into several moves. `start`..`end`
+must lie inside the camera clip, and without a camera the tools fail `not_found` ("call add_camera").
+
+### PDF documents
+
+A `.pdf` goes through `import_media` like any file and places with `place_clip` as a **PDF clip**
+on a graphic track (5 s by default). The clip's frame is a fixed viewport; the pages are scrolled
+and zoomed through it. Rendering needs the `pdfium` addon: without it the clip still places but
+`pageCount` is 0 and nothing draws. `inspect_pdf` reports `addonAvailable` and `addonId`; install it
+with `install_addon({id:"pdfium"})` (find it with `list_addons`), after which clips fill in their
+page list on their own.
+
+| Call | Effect |
+|---|---|
+| `inspect_pdf({path \| clip})` | Read-only. `{pageCount, addonAvailable, addonId}`; with `clip` also `firstPage, lastPage, layout, gridColumns, gap, scrollX, scrollY, zoom, keyframes` |
+| `set_pdf_options({clip, firstPage, lastPage, layout, gridColumns, gap})` | Only supplied keys change. `firstPage` 1-based, `lastPage` 0 = through the end (both clamp to the document once probed), `layout` `column` \| `row` \| `grid`, `gridColumns` 1..20, `gap` 0..200 PDF points |
+
+Scroll and zoom are keyframes: `pdf.scrollX`, `pdf.scrollY` and `pdf.zoom` (0.1..10, 1 fits the
+cross axis of the layout). Scroll counts pages (column and row layouts) or rows/columns (grid):
+`pdf.scrollY = 2.5` in a column puts the top of the third page half-scrolled at the viewport top.
 
 ### Depth effects
 
@@ -487,6 +628,47 @@ the clip, 1 = nearest, consistent across the clip) and pass the frame through un
 `inspect({clips:true,detail:true})` reports `hasDepth`. The map is cleared when the clip's pixels
 change (replace source, switch angle, orientation); `clear_depth` removes it by hand. Standalone
 adjustment tracks have no depth of their own, so depth effects there pass through.
+
+### Custom effects
+
+Agents can write new GPU video effects, transitions and audio effects. Each one is an ordinary user
+package under `<AppData>/<effects|transitions|audio-effects>/<slug>/`, the same place an imported
+`.driftfx` lands, so it appears under **My Effects** and works with `add_effect`, `add_transition`
+and `add_audio_effect` as soon as it is created. The format is in
+[custom-effects.md](custom-effects.md).
+
+1. `effect_authoring_guide({kind})` returns the manifest grammar, the parameter types and their
+   inspector controls, and a working example (for audio, also the processors and their params).
+2. `get_effect_source({kind, id})` reads any package, bundled ones included, to fork.
+3. `create_effect({kind, slug, manifest, files})` parses the package and compiles its shaders on
+   the GL thread before installing anything. It fails with `bad_manifest` or
+   `shader_compile_failed` (`errors[]` holds the driver log per pass) and leaves nothing on disk.
+   The id is always `user.<slug>`. Without OpenGL (some headless setups) it installs anyway and
+   reports `shaderCheck:"skipped"`.
+4. `update_effect({kind, id, …})` replaces a user package in place, `delete_effect` removes one
+   (`in_use` unless `force:true` when the project still uses it), and `export_effect({kind, id, path?})`
+   writes a shareable `.driftfx`. Inside flatpak or snap, or without `path`, the file goes to
+   `<AppData>/exports/` and the reply says so with `fellBack` and `reason`.
+
+5. `import_effect({path, overwrite?})` installs a `.driftfx` (from `export_effect` or Drift Forge) into
+   My Effects and returns `{ids:[…], kind, name}`; the id works with `add_effect` / `add_transition` /
+   `add_audio_effect` straight away. Errors: `not_found` (no such file), `bad_package` (not a Drift
+   package), `exists` (that package folder is already installed; pass `overwrite:true` to replace it).
+   It needs the running editor's add-on manager.
+
+`get_effect_source` adds `uses` (how many times the project uses it) for user packages, and
+`list_effects` / `list_transitions` / `list_audio_effects` rows carry `user:true` when the package is
+in My Effects (the key is absent otherwise).
+
+Saved effect stacks (`list_user_effect_presets`, `apply_effect_preset`) are managed like text presets:
+`save_effect_preset({clip, label, effect_index?, audio?})` saves the whole stack, or just one effect
+(`effect_index`, with `audio:true` for the audio stack; a bad index fails `bad_args`),
+`rename_effect_preset({preset, label})`, `delete_effect_preset({preset})`,
+`export_effect_preset({preset, path})` and `import_effect_preset({path})` (returns `{id, label}`). Unknown
+ids fail `not_found`.
+
+Bundled and add-on effects are read-only to these ops (`not_user_effect`). None of them are undoable:
+they change files on disk, not the project.
 
 ### Text looks and animation
 

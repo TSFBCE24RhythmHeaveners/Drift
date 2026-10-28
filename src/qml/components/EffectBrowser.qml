@@ -2,8 +2,6 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Window
 import Drift
-import "assets"
-
 // Browsable effect preset picker: category chips + card grid.
 // Drag a card onto a timeline clip, or click / tap + to apply to the selection.
 Column {
@@ -11,12 +9,23 @@ Column {
     spacing: 0
 
     readonly property string favoritesId: "__favorites__"
-    readonly property var categories: EditorState.effectCategories()
-    readonly property var catalog: EditorState.effectCatalog()
+    readonly property string mineId: "__mine__"
+    // Bumped when an addon changes the effects on disk (an imported .driftfx, a pack install).
+    property int catalogTick: 0
+    readonly property var categories: { void catalogTick; return EditorState.effectCategories() }
+    readonly property var catalog: { void catalogTick; return EditorState.effectCatalog() }
     property string activeCategory: categories.length > 0 ? categories[0].id : ""
     property alias searchText: search.text
     readonly property string query: search.text.trim().toLowerCase()
     property int favoritesTick: 0
+
+    Connections {
+        target: Addons
+        function onKindChanged(kind) {
+            if (kind === "effects")
+                root.catalogTick++
+        }
+    }
 
     Connections {
         target: EditorState
@@ -41,6 +50,8 @@ Column {
                 return EditorState.isAssetFavorite("effects", preset.id)
             })
         }
+        if (root.activeCategory === root.mineId)
+            return root.catalog.filter(function(preset) { return preset.user === true })
         return root.catalog.filter(function(preset) {
             return preset.category === root.activeCategory
         })
@@ -67,7 +78,7 @@ Column {
         title: qsTr("No effects")
         hint: qsTr("Install the Effects pack from Extras to browse presets here.")
         actionText: qsTr("Get extras")
-        onActionTriggered: root.Window.window.openAddonManager()
+        onActionTriggered: ShellBridge.main.openAddonManager()
     }
 
     Column {
@@ -76,47 +87,15 @@ Column {
         height: parent.height
         spacing: 0
 
-        Text {
-            id: browserTip
-            width: parent.width - 24
-            leftPadding: 12
-            rightPadding: 12
-            topPadding: 8
-            bottomPadding: 4
-            wrapMode: Text.WordWrap
-            horizontalAlignment: Text.AlignHCenter
-            text: EditorState.selectedClip >= 0
-                  ? qsTr("Drag a preset onto a clip, or click to apply to the selection")
-                  : qsTr("Click to add as adjustment layer, or drag onto a clip")
-            color: Theme.mutedForeground
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeXs
-        }
-
-        ThemedTextField {
+        AssetSearchBar {
             id: search
-            width: parent.width - 24
-            x: 12
             placeholderText: qsTr("Search effects")
-            font.family: Theme.fontFamily
-        }
 
-        Item {
-            width: 1
-            height: Theme.spacingSm
-        }
-
-        Row {
-            width: parent.width - 24
-            x: 12
-            spacing: Theme.spacingSm
-
-            ThemedButton {
-                width: parent.width
-                text: qsTr("Add adjustment layer")
+            IconButton {
                 glyph: Theme.icons.wand
-                variant: "secondary"
-                tooltip: qsTr("Add an adjustment layer to apply effects across all clips underneath, or drag it to where it should go")
+                variant: "ghost"
+                buttonSize: Theme.controlHeight
+                tooltip: qsTr("Add adjustment layer — click, or drag it onto a track")
                 down: adjustmentDrag.pressed
 
                 // Tap adds at the playhead as before; drag places it on a track.
@@ -130,11 +109,19 @@ Column {
                     onTapped: EditorState.addAdjustmentClip(-1, -1)
                 }
             }
+
+            IconButton {
+                glyph: Theme.icons.download
+                variant: "ghost"
+                buttonSize: Theme.controlHeight
+                tooltip: qsTr("Install a custom effect or transition from a .driftfx file made in Drift Forge")
+                onClicked: ShellBridge.main.importUserPackage("")
+            }
         }
 
         Item {
             width: 1
-            height: Theme.spacingMd
+            height: Theme.spacingSm
         }
 
         AssetCategoryChips {
@@ -142,13 +129,15 @@ Column {
             width: parent.width
             categories: root.categories
             activeCategory: root.activeCategory
+            showMine: true
+            mineLabel: qsTr("My Effects")
             searching: root.query.length > 0
             onCategoryActivated: (categoryId) => root.activeCategory = categoryId
         }
 
         Item {
             width: parent.width
-            height: Math.max(0, parent.height - browserTip.height - search.height - Theme.spacingMd
+            height: Math.max(0, parent.height - search.height - Theme.spacingSm
                              - categoryChips.height)
 
             Text {
@@ -157,15 +146,32 @@ Column {
                 y: 12
                 width: parent.width - 24
                 visible: root.visiblePresets.length === 0
+                         && !(root.activeCategory === root.mineId && root.query.length === 0)
                 text: root.query.length > 0
                       ? qsTr("No effects match “%1”.").arg(search.text.trim())
-                      : (root.activeCategory === root.favoritesId
+                      : (root.activeCategory === root.mineId
+                         ? qsTr("Nothing here yet. Import a .driftfx file to add your own.")
+                         : root.activeCategory === root.favoritesId
                          ? qsTr("No favorites yet. Star presets to save them here.")
                          : qsTr("Nothing in this category."))
-                color: Theme.mutedForeground
+                color: Theme.c.effectBrowser.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeSm
                 wrapMode: Text.WordWrap
+            }
+
+            // Nothing imported yet: the Import call to action sits in the middle of the panel.
+            EmptyState {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - Theme.spacing3xl, 260)
+                visible: root.activeCategory === root.mineId && root.visiblePresets.length === 0
+                         && root.query.length === 0
+                compact: true
+                glyph: Theme.icons.download
+                title: qsTr("%1 is empty").arg(qsTr("My Effects"))
+                hint: qsTr("Import a .driftfx file made in Drift Forge to add your own.")
+                actionText: qsTr("Import")
+                onActionTriggered: ShellBridge.main.importUserPackage("")
             }
 
             FontMetrics {
@@ -206,158 +212,48 @@ Column {
                             + 4 + Math.ceil(badgeMetrics.height) + Theme.assetCardGap
                 model: root.visiblePresets
 
-                delegate: Column {
-                    id: presetCard
-                    required property var modelData
-                    width: presetGrid.cardSize
-                    spacing: 4
-                    // Lift on grab: the card dims and grows slightly, so it reads
-                    // as picked up rather than merely faded.
-                    opacity: presetDrag.active ? 0.85 : 1
-                    scale: presetDrag.active ? 1.04 : 1.0
-
-                    Behavior on opacity {
-                        NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                    }
-                    Behavior on scale {
-                        NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                    }
-
-                    readonly property string thumb: presetCard.modelData.thumbnailPath || ""
-
-                    Drag.active: presetDrag.active
-                    Drag.dragType: Drag.Automatic
-                    Drag.supportedActions: Qt.CopyAction
-                    Drag.keys: ["application/x-drift-effect"]
-                    Drag.mimeData: ({ "application/x-drift-effect": presetCard.modelData.id })
-                    Drag.hotSpot.x: width / 2
-                    Drag.hotSpot.y: presetGrid.cardSize / 2
-
-                    Rectangle {
-                        width: presetGrid.cardSize
-                        height: presetGrid.cardSize
-                        radius: Theme.radiusSm
-                        color: cardHover.hovered ? Theme.panelSecondaryBg : Theme.panelAccent
-                        border.width: presetDrag.active ? 1 : 0
-                        border.color: Theme.primary
-                        clip: true
-                        // Matches the media cards in MediaAssetsTab, which already
-                        // grow and animate on hover; these snapped.
-                        scale: cardHover.hovered ? 1.03 : 1.0
-
-                        Behavior on color {
-                            ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                        }
-                        Behavior on scale {
-                            NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                        }
-                        Behavior on border.width {
-                            NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                        }
-
-                        HoverHandler { id: cardHover }
-
-                        Image {
-                            anchors.fill: parent
-                            visible: presetCard.thumb.length > 0
-                            source: presetCard.thumb.length > 0
-                                    ? EditorState.imageUrl(presetCard.thumb) : ""
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                            sourceSize: Qt.size(Math.ceil(presetGrid.cardSize * Screen.devicePixelRatio), Math.ceil(presetGrid.cardSize * Screen.devicePixelRatio))
-                            smooth: true
-                        }
-
-                        // Fallback when no thumbnail is present yet.
-                        Text {
-                            anchors.centerIn: parent
-                            visible: presetCard.thumb.length === 0
-                            width: parent.width - 12
-                            text: presetCard.modelData.label
-                            color: Theme.mutedForeground
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeCard
-                            font.weight: Font.Medium
-                            wrapMode: Text.WordWrap
-                            horizontalAlignment: Text.AlignHCenter
-                            maximumLineCount: 3
-                            elide: Text.ElideRight
-                        }
-
-                        TapHandler {
-                            // Touch taps arrive through TouchLiftArea below, which
-                            // holds the grab this one would need.
-                            enabled: !presetDrag.active && !Theme.touchUi
-                            onTapped: root.applyPreset(presetCard.modelData.id)
-                        }
-
-                        DragHandler {
-                            id: presetDrag
-                            target: null
-                            // Touch lifts through TouchDrag instead: a platform
-                            // drag has no touch gesture and cannot leave the sheet.
-                            enabled: !Theme.touchUi
-                            acceptedButtons: Qt.LeftButton
-                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
-                        }
-
-                        // Hold to carry the preset onto a specific clip; tap still
-                        // applies it to the selection.
-                        TouchLiftArea {
-                            dragKind: "effect"
-                            payload: presetCard.modelData.id
-                            label: presetCard.modelData.label
-                            thumbnail: presetCard.thumb
-                            glyph: Theme.icons.wand
-                            onLiftTapped: root.applyPreset(presetCard.modelData.id)
-                        }
-
-                        AssetFavoriteButton {
-                            anchors.left: parent.left
-                            anchors.top: parent.top
-                            anchors.margins: 3
-                            tabId: "effects"
-                            itemId: presetCard.modelData.id
-                        }
-
-                        IconButton {
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.margins: 3
-                            glyph: Theme.icons.plus
-                            variant: "ghost"
-                            buttonSize: 18
-                            iconSize: 12
-                            tooltip: qsTr("Apply to selected clip")
-                            enabled: EditorState.selectedClip >= 0
-                            onClicked: root.applyPreset(presetCard.modelData.id)
-                        }
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: presetCard.modelData.label
-                        color: Theme.panelForeground
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeCard
-                        font.weight: Font.Medium
-                        horizontalAlignment: Text.AlignHCenter
-                        elide: Text.ElideRight
-                        maximumLineCount: 2
-                        wrapMode: Text.WordWrap
-                    }
-
-                    Text {
-                        width: parent.width
-                        visible: presetCard.modelData.compositorOnly === true
-                        text: qsTr("Built-in")
-                        color: Theme.mutedForeground
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeXs - 1
-                        horizontalAlignment: Text.AlignHCenter
-                    }
+                delegate: EffectPresetCard {
+                    cardSize: presetGrid.cardSize
+                    onApplyRequested: (effectId) => root.applyPreset(effectId)
+                    onDeleteRequested: (preset) => deleteEffectDialog.openFor(preset)
                 }
             }
         }
         }
+
+    ThemedDialog {
+        id: deleteEffectDialog
+
+        property string effectId: ""
+        property string effectLabel: ""
+        property int uses: 0
+
+        title: qsTr("Delete effect")
+        acceptText: qsTr("Delete")
+        acceptVariant: "destructive"
+        preferredWidth: Theme.dialogWidthSm
+        acceptOnReturn: false
+
+        function openFor(preset) {
+            effectId = preset.id
+            effectLabel = preset.label
+            uses = EditorState.userEffectUses(preset.id)
+            open()
+        }
+
+        onAccepted: EditorState.deleteUserEffect(deleteEffectDialog.effectId)
+
+        contentItem: Text {
+            width: parent ? parent.width : 320
+            wrapMode: Text.WordWrap
+            text: deleteEffectDialog.uses > 0
+                  ? qsTr("Delete “%1” from My Effects? It is used %n time(s) in this project, and those clips will play without it.", "", deleteEffectDialog.uses)
+                        .arg(deleteEffectDialog.effectLabel)
+                  : qsTr("Delete “%1” from My Effects? You can import its .driftfx file again later.")
+                        .arg(deleteEffectDialog.effectLabel)
+            color: Theme.c.effectBrowser.foreground
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontSizeSm
+        }
+    }
 }

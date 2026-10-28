@@ -2,8 +2,6 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Controls.Basic
 import Drift
-import ".."
-
 Item {
     id: root
 
@@ -17,11 +15,11 @@ Item {
     readonly property string clipKind: hasSelection ? (clipData.kind || "") : ""
     readonly property int projectW: {
         void EditorState.tracks
-        return Math.max(1, EditorState.projectWidth())
+        return Math.max(1, EditorState.projectFile.projectWidth())
     }
     readonly property int projectH: {
         void EditorState.tracks
-        return Math.max(1, EditorState.projectHeight())
+        return Math.max(1, EditorState.projectFile.projectHeight())
     }
     readonly property int sourceDisplayW: {
         if (!root.hasSelection)
@@ -41,7 +39,8 @@ Item {
                 || Math.abs(frame.width - 1) > 0.0005
                 || Math.abs(frame.height - 1) > 0.0005
     }
-    readonly property bool showSourceBox: root.clipKind === "video" && root.sourceDisplayW > 0
+    readonly property bool canCrop: root.clipKind === "video" || root.clipKind === "image"
+    readonly property bool showSourceBox: root.canCrop && root.sourceDisplayW > 0
                                       && root.sourceDisplayH > 0
                                       && (root.sourceDisplayW > root.projectW
                                           || root.sourceDisplayH > root.projectH
@@ -100,7 +99,7 @@ Item {
     }
 
     function applySourceBoxPixels(x, y, w, h) {
-        if (!root.hasSelection || root.clipKind !== "video")
+        if (!root.hasSelection || !root.canCrop)
             return
         const sw = Math.max(1, root.sourceDisplayW)
         const sh = Math.max(1, root.sourceDisplayH)
@@ -212,7 +211,7 @@ Item {
             spacing: 4
             Text {
                 text: qsTr("Clip name")
-                color: Theme.mutedForeground
+                color: Theme.c.generalInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -223,7 +222,7 @@ Item {
                     width: parent.width - renameButton.width - parent.spacing
                     anchors.verticalCenter: parent.verticalCenter
                     text: (root.hasSelection && root.clipData.name) || qsTr("Untitled clip")
-                    color: root.hasSelection && root.clipData.name ? Theme.panelForeground : Theme.mutedForeground
+                    color: root.hasSelection && root.clipData.name ? Theme.c.generalInspector.foreground : Theme.c.generalInspector.foregroundMuted
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeBase
                     font.weight: Font.Medium
@@ -245,7 +244,7 @@ Item {
             spacing: 4
             Text {
                 text: qsTr("Type")
-                color: Theme.mutedForeground
+                color: Theme.c.generalInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -253,7 +252,7 @@ Item {
                 // Human label rather than the raw internal id.
                 text: root.clipKind === "adjustment" && root.clipData.adjustmentKind === "transform"
                       ? qsTr("Transform layer") : root.clipKindLabel(root.clipKind)
-                color: Theme.panelForeground
+                color: Theme.c.generalInspector.foreground
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeSm
                 elide: Text.ElideRight
@@ -279,8 +278,8 @@ Item {
                     spacing: Theme.spacingSm
 
                     Text {
-                        text: qsTr("Source frame box")
-                        color: Theme.mutedForeground
+                        text: qsTr("Crop")
+                        color: Theme.c.generalInspector.foregroundMuted
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSizeXs
                         font.weight: Font.Medium
@@ -293,8 +292,8 @@ Item {
                         id: ratioLockButton
                         glyph: root.sourceBoxRatioLocked ? Theme.icons.lock : Theme.icons.lockOpen
                         tooltip: root.sourceBoxRatioLocked
-                                 ? qsTr("Unlock source frame ratio")
-                                 : qsTr("Lock source frame ratio")
+                                 ? qsTr("Unlock crop ratio")
+                                 : qsTr("Lock crop ratio")
                         active: root.sourceBoxRatioLocked
                         buttonSize: 28
                         iconSize: Theme.iconSizeSm
@@ -318,7 +317,7 @@ Item {
                         spacing: 4
                         Text {
                             text: "X"
-                            color: Theme.mutedForeground
+                            color: Theme.c.generalInspector.foregroundMuted
                             font.pixelSize: Theme.fontSizeXs
                             font.family: Theme.fontFamily
                         }
@@ -342,7 +341,7 @@ Item {
                         spacing: 4
                         Text {
                             text: "Y"
-                            color: Theme.mutedForeground
+                            color: Theme.c.generalInspector.foregroundMuted
                             font.pixelSize: Theme.fontSizeXs
                             font.family: Theme.fontFamily
                         }
@@ -371,7 +370,7 @@ Item {
                         spacing: 4
                         Text {
                             text: qsTr("Width")
-                            color: Theme.mutedForeground
+                            color: Theme.c.generalInspector.foregroundMuted
                             font.pixelSize: Theme.fontSizeXs
                             font.family: Theme.fontFamily
                         }
@@ -392,7 +391,7 @@ Item {
                         spacing: 4
                         Text {
                             text: qsTr("Height")
-                            color: Theme.mutedForeground
+                            color: Theme.c.generalInspector.foregroundMuted
                             font.pixelSize: Theme.fontSizeXs
                             font.family: Theme.fontFamily
                         }
@@ -410,9 +409,9 @@ Item {
                 }
             }
             ThemedButton {
-                text: qsTr("Edit source frame…")
-                visible: root.clipKind === "video" && !!root.Window.window.openSourceFrame
-                onClicked: root.Window.window.openSourceFrame(EditorState.selectedTrack, EditorState.selectedClip)
+                text: qsTr("Crop…")
+                visible: root.canCrop && !!ShellBridge.main?.openCrop
+                onClicked: ShellBridge.main.openCrop(EditorState.selectedTrack, EditorState.selectedClip)
             }
         }
 
@@ -425,7 +424,7 @@ Item {
                 spacing: 4
                 Text {
                     text: qsTr("Starts at")
-                    color: Theme.mutedForeground
+                    color: Theme.c.generalInspector.foregroundMuted
                     font.pixelSize: Theme.fontSizeXs
                     font.family: Theme.fontFamily
                 }
@@ -447,7 +446,7 @@ Item {
                 spacing: 4
                 Text {
                     text: qsTr("Duration")
-                    color: Theme.mutedForeground
+                    color: Theme.c.generalInspector.foregroundMuted
                     font.pixelSize: Theme.fontSizeXs
                     font.family: Theme.fontFamily
                 }
@@ -474,8 +473,14 @@ Item {
             Text {
                 text: qsTr("Trim")
                 HoverHandler { id: tipHover1217 }
-                ThemedToolTip { text: qsTr("Which part of the original file this clip plays"); visible: tipHover1217.hovered }
-                color: Theme.mutedForeground
+                TapHandler {
+                    id: tipTap1217
+                    acceptedDevices: PointerDevice.TouchScreen
+                    onLongPressed: tip1217.held = true
+                    onPressedChanged: if (!pressed) tip1217.held = false
+                }
+                ThemedToolTip { id: tip1217; property bool held: false; text: qsTr("Which part of the original file this clip plays"); visible: tipHover1217.hovered || held }
+                color: Theme.c.generalInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -490,8 +495,14 @@ Item {
                     Text {
                         text: qsTr("From")
                         HoverHandler { id: tipHover1231 }
-                        ThemedToolTip { text: qsTr("Seconds into the file where this clip starts"); visible: tipHover1231.hovered }
-                        color: Theme.mutedForeground
+                        TapHandler {
+                            id: tipTap1231
+                            acceptedDevices: PointerDevice.TouchScreen
+                            onLongPressed: tip1231.held = true
+                            onPressedChanged: if (!pressed) tip1231.held = false
+                        }
+                        ThemedToolTip { id: tip1231; property bool held: false; text: qsTr("Seconds into the file where this clip starts"); visible: tipHover1231.hovered || held }
+                        color: Theme.c.generalInspector.foregroundMuted
                         font.pixelSize: Theme.fontSizeXs
                         font.family: Theme.fontFamily
                     }
@@ -513,8 +524,14 @@ Item {
                     Text {
                         text: qsTr("To")
                         HoverHandler { id: tipHover1252 }
-                        ThemedToolTip { text: qsTr("Seconds into the file where this clip ends"); visible: tipHover1252.hovered }
-                        color: Theme.mutedForeground
+                        TapHandler {
+                            id: tipTap1252
+                            acceptedDevices: PointerDevice.TouchScreen
+                            onLongPressed: tip1252.held = true
+                            onPressedChanged: if (!pressed) tip1252.held = false
+                        }
+                        ThemedToolTip { id: tip1252; property bool held: false; text: qsTr("Seconds into the file where this clip ends"); visible: tipHover1252.hovered || held }
+                        color: Theme.c.generalInspector.foregroundMuted
                         font.pixelSize: Theme.fontSizeXs
                         font.family: Theme.fontFamily
                     }
@@ -539,7 +556,7 @@ Item {
 
             Text {
                 text: qsTr("File")
-                color: Theme.mutedForeground
+                color: Theme.c.generalInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -547,7 +564,7 @@ Item {
             Text {
                 id: clipPathLabel
                 text: root.clipData.path || "—"
-                color: Theme.panelForeground
+                color: Theme.c.generalInspector.foreground
                 font.family: Theme.monoFontFamily
                 font.pixelSize: Theme.fontSizeSm
                 width: parent.width
@@ -558,10 +575,18 @@ Item {
                 elide: Text.ElideRight
 
                 HoverHandler { id: pathHover }
+                TapHandler {
+                    id: pathTap
+                    acceptedDevices: PointerDevice.TouchScreen
+                    onLongPressed: pathTip.held = true
+                    onPressedChanged: if (!pressed) pathTip.held = false
+                }
 
                 ThemedToolTip {
+                    id: pathTip
+                    property bool held: false
                     text: root.clipData.path || ""
-                    visible: pathHover.hovered && (root.clipData.path || "").length > 0
+                    visible: (pathHover.hovered || held) && (root.clipData.path || "").length > 0
                 }
             }
         }

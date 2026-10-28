@@ -77,10 +77,18 @@ env:
 
 jobs:
   flatpak:
-    name: Flatpak bundle
-    runs-on: ubuntu-latest
+    name: Flatpak bundle (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     if: inputs.platforms == 'all' || inputs.platforms == 'flatpak'
-    timeout-minutes: 120
+    strategy:
+      # Each arch reports its own result: a failing aarch64 build should not hide x86_64's.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -95,16 +103,20 @@ jobs:
           printf '%s\n' 'Acquire::http::Timeout "10";' 'Acquire::https::Timeout "10";' \
             'Acquire::Retries "2";' 'APT::Acquire::Retries "2";' \
             | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
-          {
-            curl -fsSL --max-time 8 http://mirrors.ubuntu.com/mirrors.txt || true
-            echo "http://us.archive.ubuntu.com/ubuntu/"
-            echo "http://security.ubuntu.com/ubuntu/"
-          } | sed 's:/*$:/:' \
-            | grep -vi 'azure.archive.ubuntu.com' \
-            | grep -viE '^https?://archive\.ubuntu\.com/' \
-            | awk 'NF && !seen[$0]++' \
-            | awk '{ printf "%s\tpriority:%d\n", $0, NR }' \
-            | sudo tee /etc/apt/apt-mirrors.txt
+          # The mirror list is x86 only: arm runners fetch from ports.ubuntu.com, which these
+          # archive mirrors do not carry.
+          if [ "$(uname -m)" = x86_64 ]; then
+            {
+              curl -fsSL --max-time 8 http://mirrors.ubuntu.com/mirrors.txt || true
+              echo "http://us.archive.ubuntu.com/ubuntu/"
+              echo "http://security.ubuntu.com/ubuntu/"
+            } | sed 's:/*$:/:' \
+              | grep -vi 'azure.archive.ubuntu.com' \
+              | grep -viE '^https?://archive\.ubuntu\.com/' \
+              | awk 'NF && !seen[$0]++' \
+              | awk '{ printf "%s\tpriority:%d\n", $0, NR }' \
+              | sudo tee /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update -o Acquire::Retries=3
           sudo apt-get install -y -o Acquire::Retries=3 flatpak flatpak-builder appstream desktop-file-utils
           flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
@@ -120,7 +132,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/share/flatpak
-          key: flatpak-runtimes-${{ hashFiles('flatpak/org.cutwire.Drift.yml') }}
+          key: flatpak-runtimes-${{ matrix.arch }}-${{ hashFiles('flatpak/org.cutwire.Drift.yml') }}
 
       # A nightly bundle installed under org.cutwire.Drift would replace the user's Flathub
       # install, so it gets its own app id — and with it its own .desktop, icon and AppStream id,
@@ -149,22 +161,83 @@ jobs:
         run: |
           mkdir -p dist
           flatpak build-bundle "${{ runner.temp }}/flatpak-repo" \
-            "dist/Drift-${{ env.ASSET_LABEL }}.flatpak" \
-            "${APP_ID}"
+            "dist/Drift-${{ env.ASSET_LABEL }}-${{ matrix.arch }}.flatpak" \
+            "${APP_ID}" --arch="${{ matrix.arch }}"
 
       - name: Upload flatpak bundle
         uses: actions/upload-artifact@v4
         with:
-          name: flatpak-bundle
+          name: flatpak-bundle-${{ matrix.arch }}
           path: dist/*.flatpak
 
   linux:
-    name: Linux AppImage
-    runs-on: ubuntu-22.04
+    name: Linux AppImage (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     if: inputs.platforms == 'all' || inputs.platforms == 'linux'
-    timeout-minutes: 90
+    strategy:
+      # Each arch reports its own result: a failing aarch64 build should not hide x86_64's.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            qt_host: linux
+            qt_arch: linux_gcc_64
+            # Also the ONNX Runtime addon suffix and the build-skia.sh target.
+            target: linux-x64
+            ffmpeg_platform: linux64
+            libdir: /usr/lib/x86_64-linux-gnu
+          # Disabled: the FFmpeg-Builds n7.1 release has no linuxarm64 asset yet.
+          # - arch: aarch64
+          #   runner: ubuntu-22.04-arm
+          #   qt_host: linux_arm64
+          #   qt_arch: linux_gcc_arm64
+          #   target: linux-arm64
+          #   ffmpeg_platform: linuxarm64
+          #   libdir: /usr/lib/aarch64-linux-gnu
     steps:
       - uses: actions/checkout@v4
+
+      # fonts/, emoji-fonts/ and the addon effect catalogue are gitignored addon content; the tests
+      # need them. Same sparse checkout as tests.yml.
+      - name: Check out addon content
+        uses: actions/checkout@v4
+        with:
+          repository: CutWire-Studios/Drift-Addons
+          path: drift-addons
+          sparse-checkout: |
+            staging/fonts-essentials/fonts
+            staging/stickers-harmonyos/emoji-font
+            staging/stickers-harmonyos/stickers
+            staging/effects-core/effects
+
+      # The DeepFilterNet3 and Silero VAD weights and the ONNX Runtime are gitignored in Drift-Addons,
+      # so they come from the public packages release. Unpacked where the tests look for them.
+      - name: Fetch test models and ONNX Runtime
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dl="${RUNNER_TEMP}/driftpkg"
+          mkdir -p "$dl"
+          gh release download packages -R CutWire-Studios/Drift-Addons -D "$dl" \
+            -p deepfilternet.v3-1.0.0.driftpkg -p silero.vad-1.0.0.driftpkg -p onnxruntime.cpu.${{ matrix.target }}-1.0.0.driftpkg
+          python3 scripts/unpack-driftpkg.py "$dl/deepfilternet.v3-1.0.0.driftpkg" "${GITHUB_WORKSPACE}"
+          python3 scripts/unpack-driftpkg.py "$dl/silero.vad-1.0.0.driftpkg" "${GITHUB_WORKSPACE}/drift-addons/staging/silero-vad"
+          python3 scripts/unpack-driftpkg.py "$dl/onnxruntime.cpu.${{ matrix.target }}-1.0.0.driftpkg" "${GITHUB_WORKSPACE}/.ort"
+          test -d "${GITHUB_WORKSPACE}/models/deepfilternet3"
+          test -f "${GITHUB_WORKSPACE}/drift-addons/staging/silero-vad/models/silero-vad/silero_vad.onnx"
+          test -f "${GITHUB_WORKSPACE}/.ort/runtime/lib/libonnxruntime.so"
+
+      - name: Stage addon content where the tests expect it
+        shell: bash
+        run: |
+          cp -r drift-addons/staging/fonts-essentials/fonts fonts
+          cp -r drift-addons/staging/stickers-harmonyos/emoji-font emoji-fonts
+          ln -s "${GITHUB_WORKSPACE}/drift-addons" "${GITHUB_WORKSPACE}/../drift-addons"
+          test -f fonts/anton/Anton-400.ttf
+          test -f emoji-fonts/HarmonyOS_4.0.ttf
+          test -f "${GITHUB_WORKSPACE}/../drift-addons/staging/effects-core/effects/turbulent_displace/effect.json"
 
       # cmake is deliberately not installed from apt: the runner image already carries a newer one
       # on PATH and apt's would only add ambiguity.
@@ -183,19 +256,24 @@ jobs:
           printf '%s\n' 'Acquire::http::Timeout "10";' 'Acquire::https::Timeout "10";' \
             'Acquire::Retries "2";' 'APT::Acquire::Retries "2";' \
             | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
-          {
-            curl -fsSL --max-time 8 http://mirrors.ubuntu.com/mirrors.txt || true
-            echo "http://us.archive.ubuntu.com/ubuntu/"
-            echo "http://security.ubuntu.com/ubuntu/"
-          } | sed 's:/*$:/:' \
-            | grep -vi 'azure.archive.ubuntu.com' \
-            | grep -viE '^https?://archive\.ubuntu\.com/' \
-            | awk 'NF && !seen[$0]++' \
-            | awk '{ printf "%s\tpriority:%d\n", $0, NR }' \
-            | sudo tee /etc/apt/apt-mirrors.txt
+          # The mirror list is x86 only: arm runners fetch from ports.ubuntu.com, which these
+          # archive mirrors do not carry.
+          if [ "$(uname -m)" = x86_64 ]; then
+            {
+              curl -fsSL --max-time 8 http://mirrors.ubuntu.com/mirrors.txt || true
+              echo "http://us.archive.ubuntu.com/ubuntu/"
+              echo "http://security.ubuntu.com/ubuntu/"
+            } | sed 's:/*$:/:' \
+              | grep -vi 'azure.archive.ubuntu.com' \
+              | grep -viE '^https?://archive\.ubuntu\.com/' \
+              | awk 'NF && !seen[$0]++' \
+              | awk '{ printf "%s\tpriority:%d\n", $0, NR }' \
+              | sudo tee /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update -o Acquire::Retries=3
+          # Complex-script text tests need Noto faces.
           sudo apt-get install -y -o Acquire::Retries=3 \
-            build-essential ninja-build pkg-config git xvfb zsync \
+            build-essential ninja-build pkg-config git xvfb zsync fonts-noto-core \
             libgl1-mesa-dev libegl1-mesa-dev libglib2.0-dev libdbus-1-dev \
             libzstd-dev libssl-dev libsoundtouch-dev zlib1g-dev \
             libpulse-dev libasound2-dev \
@@ -212,9 +290,9 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
-          host: linux
+          host: ${{ matrix.qt_host }}
           target: desktop
-          arch: linux_gcc_64
+          arch: ${{ matrix.qt_arch }}
           modules: ${{ env.QT_MODULES }}
           cache: true
           add-tools-to-path: true
@@ -223,7 +301,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .deps
-          key: v2-deps-linux-${{ hashFiles('CMakeLists.txt') }}
+          key: v2-deps-linux-${{ matrix.arch }}-${{ hashFiles('CMakeLists.txt') }}
 
       # Skia is built once per script revision and cached: 15–20 minutes on a miss, seconds on a
       # hit. clang-15 because Skia's GN toolchain files are written for clang and jammy's default
@@ -234,13 +312,13 @@ jobs:
         id: skia-cache
         uses: actions/cache@v4
         with:
-          path: third_party/prebuilt/skia/linux-x64
-          key: v2-skia-linux-x64-${{ hashFiles('third_party/build-skia.sh') }}
+          path: third_party/prebuilt/skia/${{ matrix.target }}
+          key: v2-skia-${{ matrix.target }}-${{ hashFiles('third_party/build-skia.sh') }}
 
       - name: Build Skia
         if: steps.skia-cache.outputs.cache-hit != 'true'
         run: |
-          JOBS="$(nproc)" CC=clang-15 CXX=clang++-15 SKIA_SYSTEM_ICU=0 third_party/build-skia.sh linux-x64
+          JOBS="$(nproc)" CC=clang-15 CXX=clang++-15 SKIA_SYSTEM_ICU=0 third_party/build-skia.sh ${{ matrix.target }}
           rm -rf third_party/src
 
       - name: Fetch pinned FFmpeg
@@ -248,7 +326,7 @@ jobs:
         run: |
           rm -rf "${GITHUB_WORKSPACE}/.deps/ffmpeg"
           mkdir -p "${GITHUB_WORKSPACE}/.deps/ffmpeg"
-          curl -fsSL "https://github.com/${FFMPEG_REPO}/releases/download/${FFMPEG_TAG}/ffmpeg-${FFMPEG_TAG}-linux64-gpl-shared.tar.xz" \
+          curl -fsSL "https://github.com/${FFMPEG_REPO}/releases/download/${FFMPEG_TAG}/ffmpeg-${FFMPEG_TAG}-${{ matrix.ffmpeg_platform }}-gpl-shared.tar.xz" \
             | tar -xJf - --strip-components=1 -C "${GITHUB_WORKSPACE}/.deps/ffmpeg"
 
       # DRIFT_BUNDLE_ONNXRUNTIME=OFF: a packaged build ships no runtime at all. Drift dlopens the
@@ -262,6 +340,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="${QT_ROOT_DIR};${GITHUB_WORKSPACE}/.deps/ffmpeg" \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
             -DDRIFT_BUNDLE_ONNXRUNTIME=OFF \
+            -DDRIFT_BUNDLE_CORE_PACKAGES_ONLY=ON \
             -DDRIFT_WITH_SKIA=ON \
             -DDRIFT_DISTRIBUTION=appimage \
             ${DRIFT_CHANNEL_ARGS}
@@ -283,11 +362,21 @@ jobs:
       # but emits it as DT_RUNPATH, and the loader applies RUNPATH only to the binary's own NEEDED
       # entries — never to a dependency's. libavfilter carries no RUNPATH of its own, so nothing
       # found libpostproc.
+      # The ONNX and sticker tests skip without these two; the workspace paths are where the
+      # fetch and checkout steps above put the files. The pinned FFmpeg's bin/ffmpeg goes on PATH
+      # for the tests that synthesize their clips through it; the runner image has none.
       - name: Test
         id: test
+        env:
+          DRIFT_ONNXRUNTIME_DIR: ${{ github.workspace }}/.ort/runtime
+          DRIFT_STICKERS_DIR: ${{ github.workspace }}/drift-addons/staging/stickers-harmonyos/stickers
         run: |
           export LD_LIBRARY_PATH="${GITHUB_WORKSPACE}/.deps/ffmpeg/lib:${LD_LIBRARY_PATH:-}"
-          QT_QPA_PLATFORM=xcb xvfb-run -a -s "-screen 0 1280x1024x24" ctest --test-dir build --output-on-failure --output-log ctest.log
+          export PATH="${GITHUB_WORKSPACE}/.deps/ffmpeg/bin:${PATH}"
+          test -x "${GITHUB_WORKSPACE}/.deps/ffmpeg/bin/ffmpeg"
+          # Passing suites keep their output so the SKIP lines reach the junit report.
+          QT_QPA_PLATFORM=xcb xvfb-run -a -s "-screen 0 1280x1024x24" ctest --test-dir build --output-on-failure --output-log ctest.log \
+            --output-junit ctest-junit.xml --test-output-size-passed 20000000 --test-output-size-failed 20000000
 
       - name: Summarize test failures
         if: failure() && steps.test.outcome == 'failure'
@@ -299,6 +388,21 @@ jobs:
             sed -n '/^The following tests FAILED:/,/^Errors while running CTest/p' ctest.log | grep -v '^Errors while running CTest'
             echo
             grep -E -A1 '^(FAIL!|QFATAL)' ctest.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A suite that QSKIPs still passes, so the failure summary never shows what did not run.
+      - name: Summarize skipped tests
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: |
+          skipped="$(grep -ho 'SKIP   : [^<]*' build/ctest-junit.xml 2>/dev/null \
+            | sed -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' \
+            | sort | uniq)"
+          {
+            echo '### Skipped tests'
+            echo '```'
+            if [ -n "$skipped" ]; then echo "$skipped"; else echo none; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -328,9 +432,12 @@ jobs:
       - name: Build AppImage
         shell: bash
         run: |
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage -O linuxdeploy.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage -O linuxdeploy-plugin-qt.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage -O linuxdeploy.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${{ matrix.arch }}.AppImage -O linuxdeploy-plugin-qt.AppImage
           chmod +x linuxdeploy.AppImage linuxdeploy-plugin-qt.AppImage
+          # The arm64 runner image is not guaranteed to have libfuse2, which the tool AppImages
+          # need to mount themselves.
+          export APPIMAGE_EXTRACT_AND_RUN=1
           export QMAKE="${QT_ROOT_DIR}/bin/qmake"
           export VERSION="${{ inputs.version }}"
           # Update information for AppImageUpdate and friends: appimagetool embeds it and writes
@@ -338,11 +445,11 @@ jobs:
           # The .zsync points at the AppImage by basename, so LDAI_OUTPUT has to be the final
           # asset name rather than renaming afterwards.
           if [ "${{ inputs.channel }}" = "nightly" ]; then
-            export LDAI_UPDATE_INFORMATION="gh-releases-zsync|${GITHUB_REPOSITORY/\//|}|nightly|Drift-nightly-x86_64.AppImage.zsync"
+            export LDAI_UPDATE_INFORMATION="gh-releases-zsync|${GITHUB_REPOSITORY/\//|}|nightly|Drift-nightly-${{ matrix.arch }}.AppImage.zsync"
           else
-            export LDAI_UPDATE_INFORMATION="gh-releases-zsync|${GITHUB_REPOSITORY/\//|}|latest|Drift-*-x86_64.AppImage.zsync"
+            export LDAI_UPDATE_INFORMATION="gh-releases-zsync|${GITHUB_REPOSITORY/\//|}|latest|Drift-*-${{ matrix.arch }}.AppImage.zsync"
           fi
-          export LDAI_OUTPUT="Drift-${{ env.ASSET_LABEL }}-x86_64.AppImage"
+          export LDAI_OUTPUT="Drift-${{ env.ASSET_LABEL }}-${{ matrix.arch }}.AppImage"
           # Drift's own QML is compiled into the binary, but the Qt Quick modules it imports are
           # not: without QML_SOURCES_PATHS the qt plugin has nothing to scan and ships an AppImage
           # whose every import fails at startup.
@@ -376,40 +483,102 @@ jobs:
           # A host with no libva at all is handled in code, not here: FFmpeg reaches VA-API
           # through implib-gen stubs whose generated dlopen failure path is assert(0), so
           # hwaccel::deviceAvailable() dlopens libva.so.2 and libva-drm.so.2 itself before
-          # letting FFmpeg near VAAPI. See vaapiLoadable() in src/engine/HwAccel.cpp.
+          # letting FFmpeg near VAAPI. See vaapiLoadable() in src/engine/decode/hw/HwAccel.cpp.
           ./linuxdeploy.AppImage --appdir AppDir --plugin qt --output appimage \
             -d "${{ steps.appimage_meta.outputs.desktop }}" \
             -i "${{ steps.appimage_meta.outputs.icon }}" \
             -e AppDir/usr/bin/drift \
-            -l /usr/lib/x86_64-linux-gnu/libssl.so.3 \
-            -l /usr/lib/x86_64-linux-gnu/libcrypto.so.3
+            -l ${{ matrix.libdir }}/libssl.so.3 \
+            -l ${{ matrix.libdir }}/libcrypto.so.3
           test -f "${LDAI_OUTPUT}.zsync"
           mv "${LDAI_OUTPUT}" "${LDAI_OUTPUT}.zsync" dist/
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-appimage
+          name: linux-appimage-${{ matrix.arch }}
           path: |
             dist/*.AppImage
             dist/*.AppImage.zsync
 
   windows:
-    name: Windows installer
-    runs-on: windows-2022
+    name: Windows installer (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     if: inputs.platforms == 'all' || inputs.platforms == 'windows'
-    # 180, not 120: a cold vcpkg binary cache now also compiles Skia and a static ICU.
-    timeout-minutes: 180
+    strategy:
+      # Each arch reports its own result: a failing arm64 build should not hide x64's.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2022
+            qt_host: windows
+            qt_arch: win64_msvc2022_64
+            cmake_arch: x64
+            ffmpeg_platform: win64
+          # Disabled: vcpkg's skia[gl] is unsupported on arm64-windows.
+          # - arch: arm64
+          #   runner: windows-11-arm
+          #   # Native arm64 host kit: Qt 6.10 ships win64_msvc2022_arm64 for windows_arm64, so
+          #   # moc/rcc/qmlcachegen run natively and no desktop host Qt (autodesktop) is needed.
+          #   qt_host: windows_arm64
+          #   qt_arch: win64_msvc2022_arm64
+          #   cmake_arch: ARM64
+          #   ffmpeg_platform: winarm64
     steps:
       - uses: actions/checkout@v4
+
+      # fonts/, emoji-fonts/ and the addon effect catalogue are gitignored addon content; the tests
+      # need them. Same sparse checkout as tests.yml.
+      - name: Check out addon content
+        uses: actions/checkout@v4
+        with:
+          repository: CutWire-Studios/Drift-Addons
+          path: drift-addons
+          sparse-checkout: |
+            staging/fonts-essentials/fonts
+            staging/stickers-harmonyos/emoji-font
+            staging/stickers-harmonyos/stickers
+            staging/effects-core/effects
+
+      # The DeepFilterNet3 and Silero VAD weights and the ONNX Runtime are gitignored in Drift-Addons,
+      # so they come from the public packages release. Unpacked before the staging copy below, so
+      # the copy of drift-addons carries Silero too.
+      - name: Fetch test models and ONNX Runtime
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dl="${RUNNER_TEMP}/driftpkg"
+          mkdir -p "$dl"
+          gh release download packages -R CutWire-Studios/Drift-Addons -D "$dl" \
+            -p deepfilternet.v3-1.0.0.driftpkg -p silero.vad-1.0.0.driftpkg -p onnxruntime.cpu.win-${{ matrix.arch }}-1.0.0.driftpkg
+          python "scripts/unpack-driftpkg.py" "$dl/deepfilternet.v3-1.0.0.driftpkg" "${GITHUB_WORKSPACE}"
+          python "scripts/unpack-driftpkg.py" "$dl/silero.vad-1.0.0.driftpkg" "drift-addons/staging/silero-vad"
+          python "scripts/unpack-driftpkg.py" "$dl/onnxruntime.cpu.win-${{ matrix.arch }}-1.0.0.driftpkg" "${GITHUB_WORKSPACE}/.ort"
+          test -d models/deepfilternet3
+          test -f drift-addons/staging/silero-vad/models/silero-vad/silero_vad.onnx
+          test -f .ort/runtime/lib/onnxruntime.dll
+
+      # Effects resolve through <src>/../drift-addons, which sits outside the workspace where the
+      # checkout cannot write, so it is a copy here; the symlink the Linux lanes use needs elevation.
+      - name: Stage addon content where the tests expect it
+        shell: bash
+        run: |
+          cp -r drift-addons/staging/fonts-essentials/fonts fonts
+          cp -r drift-addons/staging/stickers-harmonyos/emoji-font emoji-fonts
+          cp -r drift-addons ../drift-addons
+          test -f fonts/anton/Anton-400.ttf
+          test -f emoji-fonts/HarmonyOS_4.0.ttf
+          test -f ../drift-addons/staging/effects-core/effects/turbulent_displace/effect.json
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
-          host: windows
+          host: ${{ matrix.qt_host }}
           target: desktop
-          arch: win64_msvc2022_64
+          arch: ${{ matrix.qt_arch }}
           modules: ${{ env.QT_MODULES }}
           cache: true
           add-tools-to-path: true
@@ -422,9 +591,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}\vcpkg_bincache
-          key: vcpkg-bincache-win-${{ hashFiles('CMakeLists.txt', '.github/workflows/package.yml') }}
+          key: vcpkg-bincache-win-${{ matrix.arch }}-${{ hashFiles('CMakeLists.txt', '.github/workflows/package.yml') }}
           restore-keys: |
-            vcpkg-bincache-win-
+            vcpkg-bincache-win-${{ matrix.arch }}-
 
       # zstd (addon package decompression), openssl (addon signature verification), soundtouch
       # (voice-effect pitch shifting) and zlib (the project-file importers' inflate) are the
@@ -448,12 +617,12 @@ jobs:
             git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
             .\vcpkg\bootstrap-vcpkg.bat
           }
-          .\vcpkg\vcpkg.exe install zstd openssl soundtouch --triplet x64-windows
+          .\vcpkg\vcpkg.exe install zstd openssl soundtouch --triplet ${{ matrix.arch }}-windows
           # Skia comes from vcpkg here rather than third_party/build-skia.sh: the port pins the
           # same Skia commit, and its static build turns Skottie/SVG/SkParagraph on by default.
-          # x64-windows-static-md, not x64-windows: Skottie needs a static Skia
+          # <arch>-windows-static-md, not <arch>-windows: Skottie needs a static Skia
           # (skia_enable_skottie = !is_component_build), and -md keeps the dynamic CRT Qt uses.
-          .\vcpkg\vcpkg.exe install zlib "skia[gl,harfbuzz,icu,freetype,png]" --triplet x64-windows-static-md
+          .\vcpkg\vcpkg.exe install zlib "skia[gl,harfbuzz,icu,freetype,png]" --triplet ${{ matrix.arch }}-windows-static-md
 
       # Save even when a later step fails so the vcpkg build is not repeated on
       # the next run (actions/cache only saves on job success).
@@ -462,7 +631,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}\vcpkg_bincache
-          key: vcpkg-bincache-win-${{ hashFiles('CMakeLists.txt', '.github/workflows/package.yml') }}
+          key: vcpkg-bincache-win-${{ matrix.arch }}-${{ hashFiles('CMakeLists.txt', '.github/workflows/package.yml') }}
 
       - name: Cache FetchContent dependencies
         uses: actions/cache@v4
@@ -477,7 +646,7 @@ jobs:
         run: |
           Remove-Item -Recurse -Force .deps\ffmpeg, .deps\ffmpeg_extracted -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path .deps\ffmpeg | Out-Null
-          Invoke-WebRequest -Uri "https://github.com/$env:FFMPEG_REPO/releases/download/$env:FFMPEG_TAG/ffmpeg-$env:FFMPEG_TAG-win64-gpl-shared.zip" -OutFile ffmpeg.zip
+          Invoke-WebRequest -Uri "https://github.com/$env:FFMPEG_REPO/releases/download/$env:FFMPEG_TAG/ffmpeg-$env:FFMPEG_TAG-${{ matrix.ffmpeg_platform }}-gpl-shared.zip" -OutFile ffmpeg.zip
           Expand-Archive -Path ffmpeg.zip -DestinationPath .deps\ffmpeg_extracted -Force
           $extractedRoot = (Get-ChildItem .deps\ffmpeg_extracted)[0].FullName
           Copy-Item -Path "$extractedRoot\*" -Destination .deps\ffmpeg -Recurse -Force
@@ -485,14 +654,15 @@ jobs:
       - name: Configure
         shell: pwsh
         run: |
-          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+          cmake -B build -G "Visual Studio 17 2022" -A ${{ matrix.cmake_arch }} `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}\vcpkg\scripts\buildsystems\vcpkg.cmake `
-            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }};${{ github.workspace }}\.deps\ffmpeg;${{ github.workspace }}\vcpkg\installed\x64-windows-static-md" `
+            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }};${{ github.workspace }}\.deps\ffmpeg;${{ github.workspace }}\vcpkg\installed\${{ matrix.arch }}-windows-static-md" `
             -DFETCHCONTENT_BASE_DIR=${{ env.FETCHCONTENT_BASE_DIR }} `
-            -DZLIB_INCLUDE_DIR=${{ github.workspace }}\vcpkg\installed\x64-windows-static-md\include `
-            -DZLIB_LIBRARY=${{ github.workspace }}\vcpkg\installed\x64-windows-static-md\lib\zs.lib `
+            -DZLIB_INCLUDE_DIR=${{ github.workspace }}\vcpkg\installed\${{ matrix.arch }}-windows-static-md\include `
+            -DZLIB_LIBRARY=${{ github.workspace }}\vcpkg\installed\${{ matrix.arch }}-windows-static-md\lib\zs.lib `
             -DDRIFT_BUNDLE_ONNXRUNTIME=OFF `
+            -DDRIFT_BUNDLE_CORE_PACKAGES_ONLY=ON `
             -DDRIFT_WITH_SKIA=ON `
             -DDRIFT_DISTRIBUTION=windows `
             ${{ env.DRIFT_CHANNEL_ARGS }}
@@ -510,6 +680,30 @@ jobs:
         shell: pwsh
         run: cmake --build build --config Release --parallel 2
 
+      # Test-only. The runner's Mesa is OpenGL 3.0, so ~110 GPU tests skip; llvmpipe provides 4.5.
+      # The DLLs sit beside each test exe because opengl32.dll is in System32 and PATH cannot
+      # override it, while the application directory is searched first. Not shipped: Stage runtime
+      # files copies only drift.exe and its deploy set, never anything under build\tests.
+      # mesa-dist-win ships no arm64 build (the 7z has x64 and x86 only), and an arm64 process
+      # cannot load x64 DLLs, so the arm64 lane runs the suite on whatever GL the runner has.
+      - name: Install Mesa llvmpipe for the GPU tests
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        env:
+          MESA_WIN_VERSION: "26.2.4"
+        run: |
+          $archive = "mesa.7z"
+          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_WIN_VERSION/mesa3d-$env:MESA_WIN_VERSION-release-msvc.7z" -OutFile $archive
+          & "$env:ProgramFiles\7-Zip\7z.exe" x $archive -omesa -y | Out-Null
+          # Only the GL pair: the archive also carries d3d10warp.dll, va.dll and EGL/GLES, which
+          # would shadow the system copies the D3D11 and decode tests rely on.
+          $dlls = Get-Item mesa\${{ matrix.arch }}\opengl32.dll, mesa\${{ matrix.arch }}\libgallium_wgl.dll
+          $testDirs = Get-ChildItem build -Recurse -Filter "tst_*.exe" | ForEach-Object { $_.DirectoryName } | Sort-Object -Unique
+          if (-not $testDirs) { throw "no tst_*.exe under build; the GPU tests would run on the system Mesa" }
+          foreach ($dir in $testDirs) {
+            Copy-Item $dlls.FullName $dir -Force
+          }
+
       # Visual Studio is a multi-config generator, hence -C Release.
       #
       # .deps\ffmpeg\bin goes on PATH ahead of Qt's: Qt ships its own avcodec/avformat DLLs under
@@ -517,9 +711,8 @@ jobs:
       # against, not Qt's copy. It also supplies the ffmpeg.exe that the tests which synthesize
       # their clips through QProcess look for.
       #
-      # Addon content (fonts, emoji font, effect catalogue) is deliberately not staged here the
-      # way tests.yml does it — that staging needs a symlink outside the workspace, which needs
-      # elevation on Windows. Roughly 16 tests QSKIP as a result; the rest is what this covers.
+      # Addon content is staged by a copy rather than the symlink the Linux and macOS lanes use,
+      # since creating a symlink outside the workspace needs elevation on Windows.
       #
       # Serial, not ctest -j: the suites share QStandardPaths::AppDataLocation test-mode state.
       #
@@ -528,14 +721,21 @@ jobs:
       # no console attached (qplaintestlogger.cpp) — which is exactly ctest's pipe. Without it a
       # failing suite reports only "***Failed" with not one FAIL! line to say which case or why,
       # and qWarning/qFatal go the same way, so even a fatal startup error is invisible.
+      # GALLIUM_DRIVER selects the llvmpipe copied in by the Mesa step. The ONNX and sticker tests
+      # skip without DRIFT_ONNXRUNTIME_DIR and DRIFT_STICKERS_DIR.
       - name: Test
         id: test
         shell: pwsh
         env:
           QT_FORCE_STDERR_LOGGING: 1
+          GALLIUM_DRIVER: llvmpipe
+          DRIFT_ONNXRUNTIME_DIR: ${{ github.workspace }}/.ort/runtime
+          DRIFT_STICKERS_DIR: ${{ github.workspace }}/drift-addons/staging/stickers-harmonyos/stickers
         run: |
           $env:PATH = "${{ github.workspace }}\.deps\ffmpeg\bin;${{ env.QT_ROOT_DIR }}\bin;$env:PATH"
-          ctest --test-dir build -C Release --output-on-failure --output-log ctest.log
+          # Passing suites keep their output so the SKIP lines reach the junit report.
+          ctest --test-dir build -C Release --output-on-failure --output-log ctest.log `
+            --output-junit ctest-junit.xml --test-output-size-passed 20000000 --test-output-size-failed 20000000
 
       - name: Summarize test failures
         if: failure() && steps.test.outcome == 'failure'
@@ -550,6 +750,21 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # A suite that QSKIPs still passes, so the failure summary never shows what did not run.
+      - name: Summarize skipped tests
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: |
+          skipped="$(grep -ho 'SKIP   : [^<]*' build/ctest-junit.xml 2>/dev/null \
+            | sed -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' \
+            | sort | uniq)"
+          {
+            echo '### Skipped tests'
+            echo '```'
+            if [ -n "$skipped" ]; then echo "$skipped"; else echo none; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Stage runtime files
         shell: pwsh
         run: |
@@ -561,16 +776,18 @@ jobs:
           # provides OpenGL 3.0 — below the 3.3 the compositor needs. Whenever Qt chose
           # it, Qt Quick came up on it and the preview then stayed black (issue #139),
           # and users were fixing that by deleting the DLL by hand. Do not ship it.
-          # main.cpp sets QT_NO_OPENGL_BUGLIST so Qt stops picking it over a perfectly
+          # app/main.cpp sets QT_NO_OPENGL_BUGLIST so Qt stops picking it over a perfectly
           # good card in the first place; keep the two together.
           & "${{ env.QT_ROOT_DIR }}\bin\windeployqt.exe" --release --no-translations `
             --no-opengl-sw --qmldir src\qml dist\bin\drift.exe
-          Copy-Item vcpkg\installed\x64-windows\bin\*.dll dist\bin -Force
+          Copy-Item vcpkg\installed\${{ matrix.arch }}-windows\bin\*.dll dist\bin -Force
           Copy-Item .deps\ffmpeg\bin\*.dll dist\bin -Force
           # Bundled effect/transition/template packages: a POST_BUILD step already put them beside
           # the exe, and the app resolves them relative to it.
           foreach ($dir in "effects", "transitions", "effect-templates", "audio-effects") {
-            Copy-Item "build\Release\$dir" dist\bin -Recurse -Force
+            if (Test-Path "build\Release\$dir") {
+              Copy-Item "build\Release\$dir" dist\bin -Recurse -Force
+            }
           }
 
       # The one part of this package that can break silently. QAudioSink gets its devices from Qt's
@@ -619,6 +836,7 @@ jobs:
           options: |
             /DMyAppVersion=${{ inputs.version }}
             /DMyAppSource=${{ github.workspace }}\dist\bin
+            ${{ matrix.arch == 'arm64' && '/DArm64' || '' }}
             ${{ inputs.channel == 'nightly' && '/DNightly' || '' }}
 
       # Wildcard rather than a fixed name: the nightly channel's OutputBaseFilename differs, and
@@ -628,12 +846,12 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $built = Get-ChildItem installer\windows\output\*.exe
-          Copy-Item $built.FullName "dist\Drift-Setup-${{ env.ASSET_LABEL }}-x64.exe" -Force
+          Copy-Item $built.FullName "dist\Drift-Setup-${{ env.ASSET_LABEL }}-${{ matrix.arch }}.exe" -Force
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
+          name: windows-installer-${{ matrix.arch }}
           path: dist/*.exe
 
       # The same staged tree the installer wraps, minus the install: a zip holding a single Drift\
@@ -653,29 +871,139 @@ jobs:
           New-Item -ItemType Directory -Force -Path "portable\$env:FOLDER", dist\portable | Out-Null
           Copy-Item dist\bin\* "portable\$env:FOLDER" -Recurse -Force
           & "$env:ProgramFiles\7-Zip\7z.exe" a -tzip -mx=9 `
-            "dist\portable\Drift-Portable-${{ env.ASSET_LABEL }}-x64.zip" ".\portable\$env:FOLDER"
+            "dist\portable\Drift-Portable-${{ env.ASSET_LABEL }}-${{ matrix.arch }}.zip" ".\portable\$env:FOLDER"
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-portable
+          name: windows-portable-${{ matrix.arch }}
           path: dist/portable/*.zip
 
   macos:
-    name: macOS disk image
-    # Apple Silicon only: Homebrew bottles are single-architecture.
-    runs-on: macos-15
+    name: macOS disk image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     if: inputs.platforms == 'all' || inputs.platforms == 'macos'
-    timeout-minutes: 120
+    strategy:
+      # Separate per-arch images, not a universal one: Homebrew bottles are single-architecture.
+      # Each arch reports its own result: a failing x86_64 build should not hide arm64's.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-26
+            skia_target: mac-arm64
+            ort_pkg: onnxruntime.cpu.osx-arm64-1.0.0.driftpkg
+            homebrew_qt: true
+          # Homebrew no longer bottles anything for Intel macOS, so its Qt would be built from
+          # source (past the 6 h job limit). Intel takes the official Qt and the pinned FFmpeg
+          # instead, the way the Windows job does.
+          # Disabled: the FFmpeg-Builds n7.1 release has no macos64 asset yet.
+          # - arch: x86_64
+          #   runner: macos-15-intel
+          #   skia_target: mac-x64
+          #   ort_pkg: onnxruntime.cpu.osx-x64-1.0.0.driftpkg
+          #   homebrew_qt: false
+          #   ffmpeg_platform: macos64
     steps:
       - uses: actions/checkout@v4
 
       # Homebrew, not install-qt-action: its Qt links the same FFmpeg Drift does, so unlike the
       # other jobs there is no second libavcodec in the process to keep ABI-compatible.
       - name: Install dependencies
+        if: matrix.homebrew_qt
         run: |
           brew update
           brew install qt ffmpeg zstd openssl@3 sound-touch ninja
+
+      # No brew update: the runner image's formula versions are the ones that still have bottles,
+      # and an update would turn every installed formula into a source build.
+      - name: Install dependencies (Intel)
+        if: ${{ !matrix.homebrew_qt }}
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        run: brew install zstd openssl@3 sound-touch ninja
+
+      - name: Install Qt
+        if: ${{ !matrix.homebrew_qt }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          modules: ${{ env.QT_MODULES }}
+          cache: true
+
+      # Built by CutWire-Studios/CI-Builder's ffmpeg-macos64 workflow and mirrored to the n7.1
+      # release. Same pin and reason as the Linux and Windows jobs (see FFMPEG_TAG): Qt's FFmpeg
+      # backend brings its own libavcodec under the same names.
+      - name: Fetch pinned FFmpeg
+        if: ${{ !matrix.homebrew_qt }}
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}/.deps/ffmpeg"
+          mkdir -p "${GITHUB_WORKSPACE}/.deps/ffmpeg"
+          curl -fsSL "https://github.com/${FFMPEG_REPO}/releases/download/${FFMPEG_TAG}/ffmpeg-${FFMPEG_TAG}-${{ matrix.ffmpeg_platform }}-gpl-shared.tar.xz" \
+            | tar -xJf - --strip-components=1 -C "${GITHUB_WORKSPACE}/.deps/ffmpeg"
+          test -x "${GITHUB_WORKSPACE}/.deps/ffmpeg/bin/ffmpeg"
+
+      # Same content, same reason, same layout as the tests.yml macOS job.
+      - name: Check out addon content
+        uses: actions/checkout@v4
+        with:
+          repository: CutWire-Studios/Drift-Addons
+          path: drift-addons
+          sparse-checkout: |
+            staging/fonts-essentials/fonts
+            staging/stickers-harmonyos/emoji-font
+            staging/stickers-harmonyos/stickers
+            staging/effects-core/effects
+
+      - name: Stage addon content where the tests expect it
+        run: |
+          cp -r drift-addons/staging/fonts-essentials/fonts "${GITHUB_WORKSPACE}/fonts"
+          cp -r drift-addons/staging/stickers-harmonyos/emoji-font "${GITHUB_WORKSPACE}/emoji-fonts"
+          ln -s "${GITHUB_WORKSPACE}/drift-addons" "${GITHUB_WORKSPACE}/../drift-addons"
+          test -f "${GITHUB_WORKSPACE}/fonts/anton/family.json"
+          test -f "${GITHUB_WORKSPACE}/emoji-fonts/HarmonyOS_4.0.ttf"
+          test -f "${GITHUB_WORKSPACE}/../drift-addons/staging/effects-core/effects/turbulent_displace/effect.json"
+
+      # The DeepFilterNet3 and Silero VAD weights and the ONNX Runtime are gitignored in Drift-Addons,
+      # so they come from the public packages release. Unpacked where the tests look for them.
+      - name: Fetch test models and ONNX Runtime
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dl="${RUNNER_TEMP}/driftpkg"
+          mkdir -p "$dl"
+          gh release download packages -R CutWire-Studios/Drift-Addons -D "$dl" \
+            -p deepfilternet.v3-1.0.0.driftpkg -p silero.vad-1.0.0.driftpkg -p ${{ matrix.ort_pkg }}
+          python3 scripts/unpack-driftpkg.py "$dl/deepfilternet.v3-1.0.0.driftpkg" "${GITHUB_WORKSPACE}"
+          python3 scripts/unpack-driftpkg.py "$dl/silero.vad-1.0.0.driftpkg" "${GITHUB_WORKSPACE}/drift-addons/staging/silero-vad"
+          python3 scripts/unpack-driftpkg.py "$dl/${{ matrix.ort_pkg }}" "${GITHUB_WORKSPACE}/.ort"
+          test -d "${GITHUB_WORKSPACE}/models/deepfilternet3"
+          test -f "${GITHUB_WORKSPACE}/drift-addons/staging/silero-vad/models/silero-vad/silero_vad.onnx"
+          test -f "${GITHUB_WORKSPACE}/.ort/runtime/lib/libonnxruntime.dylib"
+
+      # Homebrew's Qt has no FFmpeg multimedia backend on macOS; the script builds it against the
+      # Homebrew Qt and FFmpeg just installed, so the cache is keyed on both versions.
+      - name: Resolve Qt FFmpeg plugin cache key
+        if: matrix.homebrew_qt
+        id: qt-ffmpeg-key
+        run: |
+          echo "key=v1-qt-ffmpeg-plugin-${{ matrix.arch }}-$(brew list --versions qtmultimedia | awk '{print $NF}')-ffmpeg-$(brew list --versions ffmpeg | awk '{print $NF}')-${{ hashFiles('third_party/build-qt-ffmpeg-plugin.sh') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Qt FFmpeg plugin
+        if: matrix.homebrew_qt
+        uses: actions/cache@v4
+        with:
+          path: third_party/prebuilt/qt-ffmpeg-plugin/${{ matrix.arch }}
+          key: ${{ steps.qt-ffmpeg-key.outputs.key }}
+
+      - name: Build Qt FFmpeg plugin
+        if: matrix.homebrew_qt
+        run: third_party/build-qt-ffmpeg-plugin.sh
 
       # Skia for macOS is compiled here from the pinned commit (Homebrew has no Skia) and cached
       # by script revision. HarfBuzz/ICU/FreeType are compiled in rather than taken from Homebrew,
@@ -684,22 +1012,28 @@ jobs:
         id: skia-cache
         uses: actions/cache@v4
         with:
-          path: third_party/prebuilt/skia/mac-arm64
-          key: v2-skia-mac-arm64-${{ hashFiles('third_party/build-skia.sh') }}
+          path: third_party/prebuilt/skia/${{ matrix.skia_target }}
+          key: v2-skia-${{ matrix.skia_target }}-${{ hashFiles('third_party/build-skia.sh') }}
 
       - name: Build Skia
         if: steps.skia-cache.outputs.cache-hit != 'true'
         run: |
-          JOBS="$(sysctl -n hw.ncpu)" third_party/build-skia.sh mac-arm64
+          JOBS="$(sysctl -n hw.ncpu)" third_party/build-skia.sh ${{ matrix.skia_target }}
           rm -rf third_party/src
 
       - name: Configure
         run: |
+          if [ "${{ matrix.homebrew_qt }}" = true ]; then
+            qt_ffmpeg="$(brew --prefix qt)"
+          else
+            qt_ffmpeg="${QT_ROOT_DIR};${GITHUB_WORKSPACE}/.deps/ffmpeg"
+          fi
           cmake -B build-macos -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix openssl@3);$(brew --prefix)" \
+            -DCMAKE_PREFIX_PATH="${qt_ffmpeg};$(brew --prefix openssl@3);$(brew --prefix)" \
             -DFETCHCONTENT_BASE_DIR="${FETCHCONTENT_BASE_DIR}" \
             -DDRIFT_BUNDLE_ONNXRUNTIME=OFF \
+            -DDRIFT_BUNDLE_CORE_PACKAGES_ONLY=ON \
             -DDRIFT_WITH_SKIA=ON \
             -DDRIFT_DISTRIBUTION=macos \
             ${DRIFT_CHANNEL_ARGS}
@@ -707,9 +1041,23 @@ jobs:
       - name: Build
         run: cmake --build build-macos --parallel
 
+      # The ONNX and sticker tests skip without these two; the workspace paths are where the
+      # fetch and checkout steps above put the files.
       - name: Test
         id: test
-        run: ctest --test-dir build-macos --output-on-failure --output-log ctest.log
+        env:
+          DRIFT_ONNXRUNTIME_DIR: ${{ github.workspace }}/.ort/runtime
+          DRIFT_STICKERS_DIR: ${{ github.workspace }}/drift-addons/staging/stickers-harmonyos/stickers
+        # Passing suites keep their output so the SKIP lines reach the junit report. On Intel the
+        # pinned FFmpeg is put ahead of the copy in Qt's lib dir, which has the same install names,
+        # and supplies the ffmpeg binary the clip-synthesizing tests run.
+        run: |
+          if [ "${{ matrix.homebrew_qt }}" != true ]; then
+            export DYLD_LIBRARY_PATH="${GITHUB_WORKSPACE}/.deps/ffmpeg/lib"
+            export PATH="${GITHUB_WORKSPACE}/.deps/ffmpeg/bin:${PATH}"
+          fi
+          ctest --test-dir build-macos --output-on-failure --output-log ctest.log \
+            --output-junit ctest-junit.xml --test-output-size-passed 20000000 --test-output-size-failed 20000000
 
       - name: Summarize test failures
         if: failure() && steps.test.outcome == 'failure'
@@ -721,6 +1069,21 @@ jobs:
             sed -n '/^The following tests FAILED:/,/^Errors while running CTest/p' ctest.log | grep -v '^Errors while running CTest'
             echo
             grep -E -A1 '^(FAIL!|QFATAL)' ctest.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A suite that QSKIPs still passes, so the failure summary never shows what did not run.
+      - name: Summarize skipped tests
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: |
+          skipped="$(grep -ho 'SKIP   : [^<]*' build-macos/ctest-junit.xml 2>/dev/null \
+            | sed -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' \
+            | sort | uniq)"
+          {
+            echo '### Skipped tests'
+            echo '```'
+            if [ -n "$skipped" ]; then echo "$skipped"; else echo none; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -743,6 +1106,9 @@ jobs:
           # --channel has to match the Configure step: it is how the script knows the bundle is
           # "Drift Nightly.app" rather than "Drift.app".
           CHANNEL_ARGS=(--channel "${{ inputs.channel }}" --build-id "${{ inputs.build_id }}")
+          if [ "${{ matrix.homebrew_qt }}" != true ]; then
+            CHANNEL_ARGS+=(--qt-prefix "$QT_ROOT_DIR" --ffmpeg-dir "${GITHUB_WORKSPACE}/.deps/ffmpeg")
+          fi
 
           package_adhoc() {
             scripts/package-macos.sh --build-dir build-macos --skip-build "${CHANNEL_ARGS[@]}"
@@ -803,7 +1169,7 @@ jobs:
       # nightly is renamed to the channel-constant asset name here.
       - name: Name the artifact for this release
         run: |
-          want="dist/Drift-${{ env.ASSET_LABEL }}-arm64.dmg"
+          want="dist/Drift-${{ env.ASSET_LABEL }}-${{ matrix.arch }}.dmg"
           for f in dist/Drift-*.dmg; do
             [ "$f" = "$want" ] || mv "$f" "$want"
           done
@@ -811,18 +1177,64 @@ jobs:
       - name: Upload disk image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-dmg
+          name: macos-dmg-${{ matrix.arch }}
           path: dist/*.dmg
 
   arch:
-    name: Arch package
-    runs-on: ubuntu-24.04
+    name: Arch package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     if: inputs.platforms == 'all' || inputs.platforms == 'arch'
-    timeout-minutes: 60
-    container:
-      image: archlinux:base-devel
+    strategy:
+      # Each arch reports its own result: a failing aarch64 build should not hide x86_64's.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            # Also the ONNX Runtime addon suffix.
+            target: linux-x64
+          # Disabled: pacman's sandbox (Landlock/alpm user) fails in the Arch Linux ARM container.
+          # - arch: aarch64
+          #   runner: ubuntu-24.04-arm
+          #   target: linux-arm64
+    # Arch Linux ARM publishes no Docker image, so on aarch64 the job runs on the bare runner
+    # and every step is routed into a container imported from the official rootfs (the
+    # "Start Arch Linux ARM container" step) by defaults.run.shell. x86_64 keeps the job-level
+    # container, which is why its steps are unchanged.
+    container: ${{ matrix.arch == 'x86_64' && 'archlinux:base-devel' || null }}
+    defaults:
+      run:
+        shell: ${{ matrix.arch == 'aarch64' && 'bash scripts/ci/docker-exec-shell.sh {0}' || 'bash -e {0}' }}
+    env:
+      CI_CONTAINER: archarm
     steps:
       - uses: actions/checkout@v4
+
+      # The rootfs is imported rather than pulled, and the runner's workspace parent (which also
+      # holds _temp, where step scripts and $GITHUB_OUTPUT/$GITHUB_STEP_SUMMARY live) is mounted
+      # at the same path so every step sees the same files as the host-side actions do.
+      - name: Start Arch Linux ARM container
+        if: matrix.arch == 'aarch64'
+        shell: bash
+        run: |
+          curl -fsSL http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz \
+            | docker import - archlinuxarm
+          docker run -d --name "${CI_CONTAINER}" \
+            -v "$(dirname "${RUNNER_WORKSPACE}"):$(dirname "${RUNNER_WORKSPACE}")" \
+            archlinuxarm sleep infinity
+
+      # fonts/, emoji-fonts/ and the addon effect catalogue are gitignored addon content; the tests
+      # need them. Same sparse checkout as tests.yml.
+      - name: Check out addon content
+        uses: actions/checkout@v4
+        with:
+          repository: CutWire-Studios/Drift-Addons
+          path: drift-addons
+          sparse-checkout: |
+            staging/fonts-essentials/fonts
+            staging/stickers-harmonyos/emoji-font
+            staging/stickers-harmonyos/stickers
+            staging/effects-core/effects
 
       # makepkg refuses to run as root, and archlinux:base-devel's default
       # user is root — create an unprivileged builder with passwordless sudo
@@ -831,11 +1243,37 @@ jobs:
       # installs the PKGBUILD's own makedepends.
       - name: Set up builder user
         run: |
-          pacman -Syu --noconfirm
-          pacman -S --needed --noconfirm python
+          if [ "$(uname -m)" = aarch64 ]; then
+            # The imported rootfs has an empty keyring. CheckSpace cannot map mount points
+            # inside a container and aborts every transaction.
+            sed -i 's/^CheckSpace/#CheckSpace/' /etc/pacman.conf
+            pacman-key --init
+            pacman-key --populate archlinuxarm
+            pacman -Syu --noconfirm --needed base-devel sudo
+          else
+            pacman -Syu --noconfirm
+          fi
+          pacman -S --needed --noconfirm python noto-fonts zstd
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder "${GITHUB_WORKSPACE}"
+
+      # The container has no gh, so these come from the release's public download URLs. The
+      # unpacker needs python and zstd, both installed above. Unpacked where the tests look.
+      - name: Fetch test models and ONNX Runtime
+        run: |
+          base="https://github.com/CutWire-Studios/Drift-Addons/releases/download/packages"
+          dl="${RUNNER_TEMP}/driftpkg"
+          mkdir -p "$dl"
+          curl -fsSL -o "$dl/deepfilternet.v3-1.0.0.driftpkg" "$base/deepfilternet.v3-1.0.0.driftpkg"
+          curl -fsSL -o "$dl/silero.vad-1.0.0.driftpkg" "$base/silero.vad-1.0.0.driftpkg"
+          curl -fsSL -o "$dl/onnxruntime.cpu.${{ matrix.target }}-1.0.0.driftpkg" "$base/onnxruntime.cpu.${{ matrix.target }}-1.0.0.driftpkg"
+          python3 scripts/unpack-driftpkg.py "$dl/deepfilternet.v3-1.0.0.driftpkg" "${GITHUB_WORKSPACE}"
+          python3 scripts/unpack-driftpkg.py "$dl/silero.vad-1.0.0.driftpkg" "${GITHUB_WORKSPACE}/drift-addons/staging/silero-vad"
+          python3 scripts/unpack-driftpkg.py "$dl/onnxruntime.cpu.${{ matrix.target }}-1.0.0.driftpkg" "${GITHUB_WORKSPACE}/.ort"
+          test -d "${GITHUB_WORKSPACE}/models/deepfilternet3"
+          test -f "${GITHUB_WORKSPACE}/drift-addons/staging/silero-vad/models/silero-vad/silero_vad.onnx"
+          test -f "${GITHUB_WORKSPACE}/.ort/runtime/lib/libonnxruntime.so"
 
       # Arch is the one platform where the two channels are not co-installable — both packages
       # own /usr/bin/drift — so the nightly takes a distinct package name and declares the
@@ -853,9 +1291,41 @@ jobs:
       # environment first, so pin it to the exact commit that triggered this
       # workflow instead of the tag.
       - name: Build package
+        id: build
         env:
           PKGDIR: ${{ inputs.channel == 'nightly' && 'packaging/arch/nightly' || 'packaging/arch' }}
-        run: su builder -c "cd '${GITHUB_WORKSPACE}/${PKGDIR}' && _commit='${{ github.sha }}' makepkg -s --noconfirm"
+        # Extract first, then drop the addon fonts into the extracted tree for check() and
+        # build without re-extracting.
+        run: |
+          su builder -c "cd '${GITHUB_WORKSPACE}/${PKGDIR}' && _commit='${{ github.sha }}' makepkg -so --noconfirm"
+          SRC="$(echo "${GITHUB_WORKSPACE}/${PKGDIR}"/src/drift*/)"
+          cp -r drift-addons/staging/fonts-essentials/fonts "${SRC}fonts"
+          cp -r drift-addons/staging/stickers-harmonyos/emoji-font "${SRC}emoji-fonts"
+          # The tests resolve <src>/models and <src>/../drift-addons, the latter being the sibling
+          # of the extracted tree, so the copies go to the same places the tests look.
+          mkdir -p "${SRC}models"
+          cp -r models/deepfilternet3 "${SRC}models/deepfilternet3"
+          cp -r drift-addons "${SRC}../drift-addons"
+          chown -R builder:builder "${SRC}" "${SRC}../drift-addons" "${GITHUB_WORKSPACE}/.ort"
+          su builder -c "cd '${GITHUB_WORKSPACE}/${PKGDIR}' && _commit='${{ github.sha }}' DRIFT_ONNXRUNTIME_DIR='${GITHUB_WORKSPACE}/.ort/runtime' DRIFT_STICKERS_DIR='${GITHUB_WORKSPACE}/drift-addons/staging/stickers-harmonyos/stickers' makepkg -se --noconfirm"
+
+      # A suite that QSKIPs still passes, so check() never shows what did not run. makepkg
+      # extracts into src/$pkgname, which is drift or drift-nightly.
+      - name: Summarize skipped tests
+        if: always() && steps.build.outcome != 'skipped'
+        shell: bash
+        env:
+          PKGDIR: ${{ inputs.channel == 'nightly' && 'packaging/arch/nightly' || 'packaging/arch' }}
+        run: |
+          skipped="$(grep -ho 'SKIP   : [^<]*' "${PKGDIR}"/src/drift*/build/ctest-junit.xml 2>/dev/null \
+            | sed -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' \
+            | sort | uniq)"
+          {
+            echo '### Skipped tests'
+            echo '```'
+            if [ -n "$skipped" ]; then echo "$skipped"; else echo none; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # makepkg's own filename carries the version, which for a nightly changes every night and
       # would leave the previous night's asset behind on the one rewritten pre-release. Stable
@@ -866,7 +1336,7 @@ jobs:
         run: |
           mkdir -p dist
           if [ "${{ inputs.channel }}" = "nightly" ]; then
-            cp "${PKGDIR}"/*.pkg.tar.zst dist/drift-nightly-x86_64.pkg.tar.zst
+            cp "${PKGDIR}"/*.pkg.tar.zst dist/drift-nightly-${{ matrix.arch }}.pkg.tar.zst
           else
             cp "${PKGDIR}"/*.pkg.tar.zst dist/
           fi
@@ -874,8 +1344,13 @@ jobs:
       - name: Upload Arch package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: arch-package
+          name: arch-package-${{ matrix.arch }}
           path: dist/*.pkg.tar.zst
+
+      - name: Hand the workspace back to the runner user
+        if: always() && matrix.arch == 'aarch64'
+        shell: bash
+        run: docker exec "${CI_CONTAINER}" chown -R "$(id -u):$(id -g)" "$(dirname "${RUNNER_WORKSPACE}")"
 
   # Multi-ABI APKs. Push-time compile coverage is android.yml (arm64, no packaging); this job is
   # what build.yml and release.yml call for installable artifacts.
@@ -883,7 +1358,6 @@ jobs:
     name: Android APK (${{ matrix.abi }})
     runs-on: ubuntu-24.04
     if: inputs.platforms == 'all' || inputs.platforms == 'android'
-    timeout-minutes: 240
     strategy:
       # Every ABI reports its own result: one failing arch should not hide whether the
       # other two compile.

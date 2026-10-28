@@ -1,15 +1,27 @@
-#include "engine/AddonPackage.h"
-#include "engine/AddonRegistry.h"
-#include "engine/GpuPackageParse.h"
+#include "engine/addons/AddonPackage.h"
+#include "engine/addons/AddonRegistry.h"
+#include "engine/packages/GpuPackageParse.h"
+#include "engine/packages/audio/AudioEffectCatalog.h"
+#include "engine/packages/effects/EffectPackageLoader.h"
+#include "engine/addons/PackageSearchPaths.h"
+#include "engine/audio/dsp/AudioEffectRack.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMap>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QtTest>
 
 #include <QScopeGuard>
+
+#include <cmath>
 
 using namespace drift::addon;
 
@@ -32,10 +44,25 @@ private slots:
     void leavesNoStagingBehindOnFailure();
     void reportsCancellation();
     void installedAddonOutranksBundledContent();
+    void installsForgeAudioEffectPackage();
+    void installsForgeAudioGraphPackage();
+    void parsesForgeInputFixtures();
+    void refusesUnknownNextFeature();
+    void parsesNewParamTypeDefaults();
+    void refusesAudioScalarCollision();
+    void refusesReservedSamplerName();
+    void writesUserPackageThatInstalls();
+    void classifiesSignatures();
+    void installsUnverifiedWhenAllowed();
+    void parsesFolderManifest();
 
 private:
     // Copy the fixture and flip one byte at `offset` (negative counts back from the end).
     QString corruptedCopy(const QString &name, qint64 offset) const;
+    // Installs a Forge fixture and returns its effect folder. The fixtures target Drift 0.9.0, which
+    // this build predates, so the copy's minAppVersion is lowered and the copy re-sealed. A user
+    // container has no signature, only the digest of everything before it, so the re-seal is exact.
+    void installForgeEffect(const QString &name, QString *packageDir);
 
     QString m_fixture;
     QTemporaryDir m_tmp;
@@ -46,6 +73,35 @@ void TestAddonPackage::initTestCase()
     m_fixture = QStringLiteral(DRIFT_TEST_DATA_DIR "/test.fixture-1.2.3.driftpkg");
     QVERIFY2(QFile::exists(m_fixture), qPrintable(m_fixture));
     QVERIFY(m_tmp.isValid());
+}
+
+namespace {
+
+void writeText(const QString &path, const QByteArray &text)
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly))
+        file.write(text);
+}
+
+} // namespace
+
+void TestAddonPackage::installForgeEffect(const QString &name, QString *packageDir)
+{
+    QFile source(QStringLiteral(DRIFT_TEST_DATA_DIR "/") + name + QStringLiteral(".driftfx"));
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QByteArray bytes = source.readAll();
+    bytes.replace(R"("minAppVersion":"0.9.0")", R"("minAppVersion":"0.8.0")");
+    bytes.chop(32);
+    bytes.append(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256));
+
+    const QString path = m_tmp.filePath(name + QStringLiteral(".driftfx"));
+    writeText(path, bytes);
+    const QString dest = m_tmp.filePath(name + QStringLiteral("-installed"));
+    QString error;
+    QVERIFY2(install(path, dest, {}, nullptr, &error, Container::User), qPrintable(error));
+    *packageDir = dest + QStringLiteral("/effects/") + name;
 }
 
 QString TestAddonPackage::corruptedCopy(const QString &name, qint64 offset) const
@@ -80,6 +136,165 @@ void TestAddonPackage::readsManifestWithoutVerifying()
     QCOMPARE(info->provides.first().kind, QStringLiteral("fonts"));
     QCOMPARE(info->provides.first().root, QStringLiteral("fonts"));
     QCOMPARE(info->files.size(), 3);
+}
+
+// tests/data/forge_fixture_echo.driftfx was exported by Drift Forge's audio editor, so this is the
+// contract between the two repos: the user layout check, the install, and the audio catalog.
+void TestAddonPackage::installsForgeAudioGraphPackage()
+{
+    // Exported by Drift Forge (scripts/make-drift-fixtures.ts): a filter swept by an LFO and followed
+    // by an envelope, then a blend into a convolution room (its IR shipped in the package) and a
+    // delay with a slider-bound footswitch.
+    const QString path = QStringLiteral(DRIFT_TEST_DATA_DIR "/forge_fixture_rack.driftfx");
+    QString error;
+    const auto manifest = readManifest(path, &error, Container::User);
+    QVERIFY2(manifest.has_value(), qPrintable(error));
+    QCOMPARE(manifest->minAppVersion, QStringLiteral("0.8.0"));
+
+    const QString dest = m_tmp.filePath(QStringLiteral("forge-graph"));
+    PackageInfo info;
+    QVERIFY2(install(path, dest, {}, &info, &error, Container::User), qPrintable(error));
+    const QString root = dest + QStringLiteral("/audio-effects");
+    QVERIFY(QFile::exists(root + QStringLiteral("/forge_fixture_rack/ir/room.wav")));
+
+    reloadAudioEffectCatalog({root});
+    const auto restore = qScopeGuard([] { reloadAudioEffectCatalog(); });
+    const AudioEffectEntry *entry = audioEffectDefForId(QStringLiteral("forge_fixture_rack"));
+    QVERIFY(entry);
+    QCOMPARE(entry->processorId, QStringLiteral("graph"));
+    QVERIFY(entry->graph);
+    QCOMPARE(entry->graph->chain.size(), size_t(2));
+    QCOMPARE(entry->graph->modulators.size(), size_t(2));
+    const auto &lane = entry->graph->chain[1].lanes[1];
+    QCOMPARE(lane.front().type, std::string("convolution"));
+    QVERIFY(lane.front().ir && lane.front().ir->frames > 30000);
+    QVERIFY(entry->prerollMs >= 700); // the room's tail, measured by Drift itself
+
+    QStringList keys;
+    for (const drift::EffectParamSpec &p : entry->parameters)
+        keys << p.key;
+    QCOMPARE(keys, (QStringList{QStringLiteral("tone"), QStringLiteral("space"), QStringLiteral("echo_off")}));
+
+    // And it plays: through the same rack the mixer uses, loud enough to hear and never broken.
+    drift::Effect effect;
+    effect.catalogId = entry->id;
+    const QVector<drift::AudioEffectSpec> specs = audioEffectSpecsFor({effect});
+    drift::AudioEffectRack rack;
+    QVERIFY(rack.configure(specs, 48000));
+    rack.reset(0);
+    QVector<float> audio(48000 * 2);
+    for (int i = 0; i < 48000; ++i)
+        audio[i * 2] = audio[i * 2 + 1] = 0.4f * float(std::sin(2.0 * M_PI * 440.0 * i / 48000.0));
+    rack.process(audio.data(), 48000, 0);
+    float peak = 0.0f;
+    for (float v : audio) {
+        QVERIFY(std::isfinite(v));
+        peak = std::max(peak, std::abs(v));
+    }
+    QVERIFY2(peak > 0.01f, qPrintable(QString::number(peak)));
+}
+
+void TestAddonPackage::installsForgeAudioEffectPackage()
+{
+    const QString path = QStringLiteral(DRIFT_TEST_DATA_DIR "/forge_fixture_echo.driftfx");
+    QString error;
+    const auto manifest = readManifest(path, &error, Container::User);
+    QVERIFY2(manifest.has_value(), qPrintable(error));
+    QCOMPARE(manifest->provides.size(), 1);
+    QCOMPARE(manifest->provides.first().kind, QStringLiteral("audio-effects"));
+
+    const QString dest = m_tmp.filePath(QStringLiteral("forge-audio"));
+    PackageInfo info;
+    QVERIFY2(install(path, dest, {}, &info, &error, Container::User), qPrintable(error));
+    const QString root = dest + QStringLiteral("/audio-effects");
+    QVERIFY(QFile::exists(root + QStringLiteral("/forge_fixture_echo/audio-effect.json")));
+
+    reloadAudioEffectCatalog({root});
+    const AudioEffectEntry *entry = audioEffectDefForId(QStringLiteral("forge_fixture_echo"));
+    QVERIFY(entry);
+    QCOMPARE(entry->processorId, QStringLiteral("echo"));
+    QCOMPARE(entry->parameters.first().defaultValue, 120.0);
+    reloadAudioEffectCatalog();
+}
+
+void TestAddonPackage::writesUserPackageThatInstalls()
+{
+    const QString src = m_tmp.filePath(QStringLiteral("authored/tint"));
+    QVERIFY(QDir().mkpath(src + QStringLiteral("/sub")));
+    const QByteArray json = R"({"id":"user.tint","backend":"gpu"})";
+    const QByteArray frag = "void main() {}\n";
+    QFile a(src + QStringLiteral("/effect.json"));
+    QVERIFY(a.open(QIODevice::WriteOnly));
+    a.write(json);
+    a.close();
+    QFile b(src + QStringLiteral("/sub/main.frag"));
+    QVERIFY(b.open(QIODevice::WriteOnly));
+    b.write(frag);
+    b.close();
+
+    const QString out = m_tmp.filePath(QStringLiteral("tint.driftfx"));
+    QString error;
+    QVERIFY2(writeUserPackage(src, QStringLiteral("effects"),
+                              QJsonObject{{QStringLiteral("id"), QStringLiteral("user.tint")},
+                                          {QStringLiteral("name"), QStringLiteral("Tint")},
+                                          {QStringLiteral("version"), QStringLiteral("1.0.0")}},
+                              out, &error),
+             qPrintable(error));
+    QVERIFY(!QFile::exists(out + QStringLiteral(".partial")));
+
+    const auto manifest = readManifest(out, &error, Container::User);
+    QVERIFY2(manifest.has_value(), qPrintable(error));
+    QCOMPARE(manifest->id, QStringLiteral("user.tint"));
+    QCOMPARE(manifest->files.size(), 2);
+
+    const QString dest = m_tmp.filePath(QStringLiteral("authored-install"));
+    QVERIFY2(install(out, dest, {}, nullptr, &error, Container::User), qPrintable(error));
+    QFile installed(dest + QStringLiteral("/effects/tint/sub/main.frag"));
+    QVERIFY(installed.open(QIODevice::ReadOnly));
+    QCOMPARE(installed.readAll(), frag);
+}
+
+void TestAddonPackage::classifiesSignatures()
+{
+    QString error;
+    QCOMPARE(checkSignature(m_fixture, &error), SignatureCheck::Official);
+
+    const QString sig = corruptedCopy(QStringLiteral("classify-sig.driftpkg"), -8);
+    QCOMPARE(checkSignature(sig, &error), SignatureCheck::Unverified);
+
+    const QString payload = corruptedCopy(QStringLiteral("classify-payload.driftpkg"), -160);
+    QCOMPARE(checkSignature(payload, &error), SignatureCheck::Corrupt);
+    QVERIFY(!error.isEmpty());
+}
+
+void TestAddonPackage::installsUnverifiedWhenAllowed()
+{
+    const QString sig = corruptedCopy(QStringLiteral("allowed-sig.driftpkg"), -8);
+    const QString dest = m_tmp.filePath(QStringLiteral("allowed-sig"));
+    QString error;
+    QVERIFY2(install(sig, dest, {}, nullptr, &error, Container::Signed, false), qPrintable(error));
+    QVERIFY(QFile::exists(dest + QStringLiteral("/fonts/testfamily/family.json")));
+
+    // Lifting the signature requirement must not lift the content checks.
+    const QString payload = corruptedCopy(QStringLiteral("allowed-payload.driftpkg"), -160);
+    QVERIFY(!install(payload, m_tmp.filePath(QStringLiteral("allowed-payload")), {}, nullptr, &error,
+                     Container::Signed, false));
+}
+
+void TestAddonPackage::parsesFolderManifest()
+{
+    QString error;
+    const auto info = parseFolderManifest(
+        R"({"schema":1,"id":"my.fonts","version":"1.0.0","provides":[{"kind":"fonts","root":"fonts"}]})", &error);
+    QVERIFY2(info.has_value(), qPrintable(error));
+    QCOMPARE(info->id, QStringLiteral("my.fonts"));
+    QVERIFY(info->files.isEmpty());
+    QVERIFY(!hasNativeCode(*info));
+
+    QVERIFY(!parseFolderManifest(
+        R"({"schema":1,"id":"../escape","version":"1.0.0","provides":[{"kind":"fonts","root":"fonts"}]})", &error));
+    QVERIFY(!parseFolderManifest(
+        R"({"schema":1,"id":"a/b","version":"1.0.0","provides":[{"kind":"fonts","root":"fonts"}]})", &error));
 }
 
 void TestAddonPackage::installsAndVerifies()
@@ -191,7 +406,7 @@ void TestAddonPackage::installedAddonOutranksBundledContent()
     QVERIFY2(recordInstalledAddon(info, &error), qPrintable(error));
     reloadAddonRegistry();
 
-    const QStringList roots = GpuPackageParse::defaultSearchPaths(
+    const QStringList roots = PackageSearchPaths::defaultSearchPaths(
         QStringLiteral("DRIFT_UNSET_FOR_TEST"), QStringLiteral("fonts"), QStringLiteral("fonts"));
 
     const QString addonRoot = QDir(installDir).filePath(QStringLiteral("fonts"));
@@ -207,6 +422,152 @@ void TestAddonPackage::installedAddonOutranksBundledContent()
     QVERIFY2(forgetInstalledAddon(QStringLiteral("test.fixture"), &error), qPrintable(error));
     QDir(installDir).removeRecursively();
     reloadAddonRegistry();
+}
+
+// Each Forge fixture is an effect exported with one kind of input block. They prove the parser
+// accepts what Forge writes, and that the masks/depth/face requirements come through.
+void TestAddonPackage::parsesForgeInputFixtures()
+{
+    struct Case
+    {
+        QString name;
+        QStringList params; // "identifier:type"
+        bool needsMask;
+        bool needsDepth;
+        bool needsFace;
+    };
+    const QList<Case> cases{
+        {QStringLiteral("forge_fixture_track_matte"),
+         {QStringLiteral("otherClip:track"), QStringLiteral("trackMask:trackMask")}, false, false, false},
+        {QStringLiteral("forge_fixture_audio_bars"), {QStringLiteral("audio:audio")}, false, false, false},
+        {QStringLiteral("forge_fixture_depth_mask"), {}, true, true, false},
+        {QStringLiteral("forge_fixture_face"), {QStringLiteral("faceIndex:float")}, false, false, true},
+    };
+    for (const Case &c : cases) {
+        QString dir;
+        installForgeEffect(c.name, &dir);
+        QVERIFY(!dir.isEmpty());
+
+        QString error;
+        const EffectPresetEntry entry = EffectPackageLoader::loadPackage(dir, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(c.name + QStringLiteral(": ") + error));
+        QVERIFY(entry.isGpu);
+
+        QStringList params;
+        for (const drift::EffectParamSpec &spec : entry.meta.parameters)
+            params << spec.key + QLatin1Char(':') + spec.typeName();
+        QCOMPARE(params, c.params);
+        QCOMPARE(entry.needsMask, c.needsMask);
+        QCOMPARE(entry.needsDepth, c.needsDepth);
+        QCOMPARE(entry.needsFace, c.needsFace);
+    }
+}
+
+void TestAddonPackage::refusesUnknownNextFeature()
+{
+    const QString dir = m_tmp.filePath(QStringLiteral("hologram"));
+    writeText(dir + QStringLiteral("/effect.json"),
+              R"({"id":"hologram","backend":"compositor","nextFeatures":["param:int","param:hologram"]})");
+
+    QString error;
+    EffectPackageLoader::loadPackage(dir, &error);
+    QVERIFY2(error.contains(QLatin1String("param:hologram")), qPrintable(error));
+    QVERIFY2(error.contains(QLatin1String("needs a newer Drift")), qPrintable(error));
+}
+
+void TestAddonPackage::parsesNewParamTypeDefaults()
+{
+    const QString dir = m_tmp.filePath(QStringLiteral("inputs"));
+    writeText(dir + QStringLiteral("/pic.png"), "png");
+
+    const QJsonArray params = QJsonDocument::fromJson(R"([
+        {"identifier":"seed","type":"seed","defaultValue":42},
+        {"identifier":"box","type":"region","shape":"ellipse","defaultValue":[0.1,0.2,0.3,0.4]},
+        {"identifier":"pic","type":"image","defaultValue":"pic.png"},
+        {"identifier":"grad","type":"gradient","defaultValue":[
+            {"position":1,"color":"#00ff0080"},{"position":0,"color":"#ff0000"}]},
+        {"identifier":"curve","type":"curve","defaultValue":[{"x":0,"y":0,"ease":"smooth"},{"x":1,"y":1}]},
+        {"identifier":"src","type":"track"},
+        {"identifier":"mask","type":"trackMask"},
+        {"identifier":"sound","type":"audio"}
+    ])").array();
+    QList<drift::EffectParamSpec> specs;
+    QString error;
+    QVERIFY2(GpuPackageParse::parseParameters(params, &specs, true, &error, dir), qPrintable(error));
+    QCOMPARE(specs.size(), 8);
+
+    QMap<QString, QVariant> values;
+    for (const drift::EffectParamSpec &spec : std::as_const(specs))
+        spec.insertDefault(values);
+
+    QCOMPARE(specs.at(0).typeName(), QStringLiteral("seed"));
+    QCOMPARE(values.value(QStringLiteral("seed")).toDouble(), 42.0);
+
+    QCOMPARE(specs.at(1).typeName(), QStringLiteral("region"));
+    QCOMPARE(specs.at(1).regionShape, QStringLiteral("ellipse"));
+    QCOMPARE(values.value(QStringLiteral("box.x")).toDouble(), 0.1);
+    QCOMPARE(values.value(QStringLiteral("box.y")).toDouble(), 0.2);
+    QCOMPARE(values.value(QStringLiteral("box.w")).toDouble(), 0.3);
+    QCOMPARE(values.value(QStringLiteral("box.h")).toDouble(), 0.4);
+    QVERIFY(!values.contains(QStringLiteral("box")));
+
+    QCOMPARE(specs.at(2).defaultString, QDir(dir).filePath(QStringLiteral("pic.png")));
+    QCOMPARE(values.value(QStringLiteral("pic")).toString(), QDir(dir).filePath(QStringLiteral("pic.png")));
+
+    const QJsonArray stops = QJsonDocument::fromJson(specs.at(3).defaultString.toUtf8()).array();
+    QCOMPARE(stops.size(), 2);
+    QCOMPARE(stops.at(0).toObject().value(QStringLiteral("position")).toDouble(), 1.0);
+    QCOMPARE(stops.at(0).toObject().value(QStringLiteral("color")).toString(), QStringLiteral("#00ff0080"));
+    QCOMPARE(stops.at(1).toObject().value(QStringLiteral("color")).toString(), QStringLiteral("#ff0000ff"));
+
+    const QJsonArray keys = QJsonDocument::fromJson(specs.at(4).defaultString.toUtf8()).array();
+    QCOMPARE(keys.size(), 2);
+    QCOMPARE(keys.at(0).toObject().value(QStringLiteral("ease")).toString(), QStringLiteral("smooth"));
+    QCOMPARE(keys.at(1).toObject().value(QStringLiteral("ease")).toString(), QStringLiteral("linear"));
+
+    QCOMPARE(values.value(QStringLiteral("src")).toString(), QString());
+    QCOMPARE(values.value(QStringLiteral("mask")).toString(), QString());
+    QCOMPARE(values.value(QStringLiteral("sound")).toString(), QString());
+
+    QList<drift::EffectParamSpec> bad;
+    QVERIFY(!GpuPackageParse::parseParameters(
+        QJsonDocument::fromJson(R"([{"identifier":"pic","type":"image","defaultValue":"nope.png"}])").array(),
+        &bad, true, &error, dir));
+    QVERIFY2(error.contains(QLatin1String("nope.png")), qPrintable(error));
+    QVERIFY(!GpuPackageParse::parseParameters(
+        QJsonDocument::fromJson(R"([{"identifier":"box","type":"region","shape":"hexagon","defaultValue":[0,0,1,1]}])")
+            .array(),
+        &bad, true, &error, dir));
+    QVERIFY2(error.contains(QLatin1String("hexagon")), qPrintable(error));
+}
+
+void TestAddonPackage::refusesAudioScalarCollision()
+{
+    QList<drift::EffectParamSpec> specs;
+    QString error;
+    QVERIFY(!GpuPackageParse::parseParameters(
+        QJsonDocument::fromJson(R"([
+            {"identifier":"beat","type":"audio"},
+            {"identifier":"beat_level","type":"float"}
+        ])").array(),
+        &specs, true, &error));
+    QVERIFY2(error.contains(QLatin1String("beat_level")), qPrintable(error));
+
+    specs.clear();
+    QVERIFY2(GpuPackageParse::parseParameters(
+                 QJsonDocument::fromJson(R"([{"identifier":"beat","type":"audio"}])").array(),
+                 &specs, true, &error),
+             qPrintable(error));
+}
+
+void TestAddonPackage::refusesReservedSamplerName()
+{
+    QList<drift::EffectParamSpec> specs;
+    QString error;
+    QVERIFY(!GpuPackageParse::parseParameters(
+        QJsonDocument::fromJson(R"([{"identifier":"u_audioBeat","type":"track"}])").array(),
+        &specs, true, &error));
+    QVERIFY2(error.contains(QLatin1String("reserved")), qPrintable(error));
 }
 
 QTEST_MAIN(TestAddonPackage)

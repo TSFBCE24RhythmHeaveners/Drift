@@ -3,9 +3,6 @@ import QtQuick.Controls.Basic
 import QtQuick.Shapes
 import QtQuick.Window
 import Drift
-import ".."
-import "."
-
 // Masks tab. A mask is a Mask-kind adjustment clip on a nested lane, so adding one is the same
 // gesture as adding an effect: drag a card onto a clip, or onto empty track space to mask
 // everything that track shows over that span. Editing one is what the properties panel is for,
@@ -62,7 +59,7 @@ Item {
             text: root.hasVisualSelection
                   ? qsTr("Click to apply to the selection, or drag onto a clip")
                   : qsTr("Select a clip, or drag a mask onto one")
-            color: Theme.mutedForeground
+            color: Theme.c.masksTab.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
         }
@@ -79,18 +76,18 @@ Item {
             // or a DRIFT_*_MODEL_DIR override, so ask the engine rather than the addon registry.
             // That answer is not a binding, hence the reset below when an addon of either kind
             // appears.
-            property bool segmentReady: EditorState.segmentationAvailable()
+            property bool segmentReady: EditorState.segmentation.available()
             property bool runtimeReady: Addons.runtimeAvailable()
             // Either cutout model unlocks the window, so the download prompt below points at
             // RVM — the smaller one — and SAM2 is offered separately as an extra capability.
-            property bool hasSam2: EditorState.segmentationBackends().indexOf("sam2") >= 0
+            property bool hasSam2: EditorState.segmentation.backends().indexOf("sam2") >= 0
 
             Connections {
                 target: Addons
                 function onKindChanged(kind) {
                     if (kind === "sam2-model" || kind === "rvm-model") {
-                        segmentSection.segmentReady = EditorState.segmentationAvailable()
-                        segmentSection.hasSam2 = EditorState.segmentationBackends().indexOf("sam2") >= 0
+                        segmentSection.segmentReady = EditorState.segmentation.available()
+                        segmentSection.hasSam2 = EditorState.segmentation.backends().indexOf("sam2") >= 0
                     } else if (kind === "onnxruntime") {
                         segmentSection.runtimeReady = Addons.runtimeAvailable()
                     }
@@ -100,7 +97,7 @@ Item {
             Text {
                 width: parent.width
                 text: qsTr("Subject")
-                color: Theme.mutedForeground
+                color: Theme.c.masksTab.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -109,13 +106,13 @@ Item {
                 visible: segmentSection.segmentReady && segmentSection.runtimeReady
                 width: parent.width
                 text: qsTr("Cut out subject…")
-                enabled: !EditorState.segmenting && root.clipKind === "video"
+                enabled: !EditorState.segmentation.running && root.clipKind === "video"
                 tooltip: root.clipKind === "video"
                          ? qsTr("Trace the subject and pin the result as a mask layer")
                          : qsTr("Select a video clip first")
                 onClicked: {
                     const data = EditorState.selectedClipData
-                    root.Window.window.openSegmentation(
+                    ShellBridge.main.openSegmentation(
                         EditorState.selectedTrack, EditorState.selectedClip,
                         data.start !== undefined ? data.start : 0,
                         data.duration !== undefined ? data.duration : 0)
@@ -129,7 +126,7 @@ Item {
                       ? qsTr("Download people cutout (about 20 MB)")
                       : qsTr("Install AI engine first")
                 variant: "primary"
-                onClicked: root.Window.window.openAddonManager(
+                onClicked: ShellBridge.main.openAddonManager(
                     segmentSection.runtimeReady ? "rvm-model" : "onnxruntime")
             }
 
@@ -142,7 +139,7 @@ Item {
                 width: parent.width
                 variant: "secondary"
                 text: qsTr("Add click-to-pick cutout (about 190 MB)")
-                onClicked: root.Window.window.openAddonManager("sam2-model")
+                onClicked: ShellBridge.main.openAddonManager("sam2-model")
             }
 
             ThemedButton {
@@ -193,100 +190,10 @@ Item {
 
                 Repeater {
                     model: root.masks
-                    delegate: Column {
-                        id: maskCard
-                        required property var modelData
-                        width: maskGrid.cardSize
-                        spacing: Theme.spacingSm
-
-                        // Lift on grab: the card dims and grows slightly, so it reads as picked
-                        // up rather than merely faded.
-                        opacity: maskDrag.active ? 0.85 : 1
-                        scale: maskDrag.active ? 1.04 : (maskDrag.pressed ? 0.97 : 1.0)
-
-                        Behavior on opacity {
-                            NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                        }
-                        Behavior on scale {
-                            NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                        }
-
-                        Rectangle {
-                            width: maskGrid.cardSize
-                            height: maskGrid.cardSize
-                            radius: Theme.radiusSm
-                            color: maskDrag.hovered ? Theme.popoverHover : Theme.panelAccent
-                            border.width: maskDrag.active ? 1 : 0
-                            border.color: Theme.primary
-                            clip: true
-
-                            Behavior on color {
-                                ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                            }
-                            Behavior on border.width {
-                                NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                            }
-
-                            // The coverage the mask actually produces, drawn from the same path
-                            // the compositor rasterizes: white shows through, the rest is cut.
-                            Item {
-                                anchors.fill: parent
-                                anchors.margins: Theme.spacingSm
-
-                                readonly property real side: Math.min(width, height)
-
-                                Item {
-                                    width: 100
-                                    height: 100
-                                    anchors.centerIn: parent
-                                    scale: parent.side / 100
-
-                                    Shape {
-                                        anchors.fill: parent
-                                        antialiasing: true
-
-                                        ShapePath {
-                                            strokeColor: Theme.onMedia
-                                            strokeWidth: 1
-                                            fillColor: Theme.clipAdjustmentMask
-                                            PathSvg { path: EditorState.maskShapeSvgPath(maskCard.modelData.id) }
-                                        }
-                                    }
-                                }
-                            }
-
-                            ThemedToolTip {
-                                text: root.hasVisualSelection
-                                      ? qsTr("%1 — click to apply, or drag onto a clip").arg(maskCard.modelData.label)
-                                      : qsTr("%1 — drag onto a clip").arg(maskCard.modelData.label)
-                                visible: maskDrag.hovered && !maskDrag.active
-                            }
-
-                            AssetDragSource {
-                                id: maskDrag
-                                anchors.fill: parent
-                                kind: "mask"
-                                payload: maskCard.modelData.id
-                                label: maskCard.modelData.label
-                                glyph: Theme.icons.mask
-                                onTapped: {
-                                    if (root.hasVisualSelection)
-                                        root.applyMask(maskCard.modelData.id)
-                                    else
-                                        Toasts.info(qsTr("Select a clip first, or drag the mask onto one"))
-                                }
-                            }
-                        }
-
-                        Text {
-                            width: parent.width
-                            text: maskCard.modelData.label
-                            color: Theme.mutedForeground
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeCard
-                            horizontalAlignment: Text.AlignHCenter
-                            elide: Text.ElideRight
-                        }
+                    delegate: MaskPresetCard {
+                        cardSize: maskGrid.cardSize
+                        hasVisualSelection: root.hasVisualSelection
+                        onApplyRequested: (maskId) => root.applyMask(maskId)
                     }
                 }
             }

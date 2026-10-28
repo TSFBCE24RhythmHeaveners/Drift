@@ -9,16 +9,38 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CutWire-Studios/Drift/releases/latest"><img src="https://img.shields.io/github/v/release/CutWire-Studios/Drift?label=release" alt="Latest release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="License: GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-lightgrey" alt="Platform: Linux | Windows | macOS | Android">
+  <a href="https://github.com/CutWire-Studios/Drift/releases/latest"><img src="https://img.shields.io/github/v/release/CutWire-Studios/Drift?label=release&style=flat&labelColor=28272f&color=feb504" alt="Latest release" height="24"></a>
+  <a href="https://github.com/CutWire-Studios/Drift/releases"><img src="https://img.shields.io/github/downloads/CutWire-Studios/Drift/total?label=GitHub%20downloads&style=flat&labelColor=28272f&color=feb504" alt="GitHub downloads" height="24"></a>
+  <a href="https://flathub.org/apps/org.cutwire.Drift"><img src="https://img.shields.io/flathub/downloads/org.cutwire.Drift?label=Flathub%20installs&style=flat&labelColor=28272f&color=feb504" alt="Flathub installs" height="24"></a>
+  <a href="https://discord.gg/J5ANFz6Z3y"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FJ5ANFz6Z3y%3Fwith_counts%3Dtrue&query=%24.approximate_member_count&suffix=%20members&logo=discord&logoColor=F8F8F8&label=Discord&color=feb504&labelColor=28272f&style=flat" alt="Join Drift Discord" height="24"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/CutWire-Studios/Drift?style=flat&labelColor=28272f&color=feb504" alt="License: GPL-3.0" height="24"></a>
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-feb504?style=flat&labelColor=28272f" alt="Platform: Linux | Windows | macOS | Android" height="24">
 </p>
 
 <p align="center">
-  <a href="https://github.com/CutWire-Studios/Drift">GitHub</a> ·
-  <a href="https://github.com/CutWire-Studios/Drift/releases/latest">Download</a> ·
-  <a href="https://github.com/CutWire-Studios/Drift/issues">Issues</a> ·
-  <a href="LICENSE">License</a>
+  <a href="https://www.opensourcealternatives.to"><img src="https://www.opensourcealternatives.to/badge-osa.svg" alt="Listed on Open Source Alternatives"></a>
+</p>
+
+<p align="center">
+  <a href="https://cutwire.org/drift"><strong>cutwire.org/drift</strong></a>
+</p>
+
+<p align="center">
+  Translations:
+  <a href="README-i18n/README.ar.md">العربية</a> ·
+  <a href="README-i18n/README.bn.md">বাংলা</a> ·
+  <a href="README-i18n/README.es.md">Español</a> ·
+  <a href="README-i18n/README.fr.md">Français</a> ·
+  <a href="README-i18n/README.it.md">Italiano</a> ·
+  <a href="README-i18n/README.ja.md">日本語</a> ·
+  <a href="README-i18n/README.ko.md">한국어</a> ·
+  <a href="README-i18n/README.pl.md">Polski</a> ·
+  <a href="README-i18n/README.pt.md">Português</a> ·
+  <a href="README-i18n/README.ru.md">Русский</a> ·
+  <a href="README-i18n/README.si.md">සිංහල</a> ·
+  <a href="README-i18n/README.tl.md">Tagalog</a> ·
+  <a href="README-i18n/README.vi.md">Tiếng Việt</a> ·
+  <a href="README-i18n/README.zh-Hans.md">简体中文</a>
 </p>
 
 Drift is a desktop video editor from CutWire Studios. Drop in clips, add effects, captions, stickers,
@@ -34,7 +56,13 @@ What you see in the preview is what you export. One compositor, one look, no sur
 
 <p align="center">
   <a href="https://flathub.org/apps/org.cutwire.Drift">
-    <img src="https://flathub.org/api/badge?locale=en" alt="Get it on Flathub" width="240">
+    <img src="https://flathub.org/api/badge?locale=en" alt="Get it on Flathub" height="80">
+  </a>
+  <a href="https://apps.microsoft.com/detail/9PHHBZ07FRSZ">
+    <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" width="293">
+  </a>
+  <a href="https://play.google.com/store/apps/details?id=org.cutwire.drift">
+    <img src="docs/btn-gplay-en.png" alt="Get it on Google Play" height="80">
   </a>
 </p>
 
@@ -50,7 +78,7 @@ flatpak run org.cutwire.Drift
 brew install --cask cutwire-studios/tap/drift
 ```
 
-> **First launch on macOS:** Drift is signed ad-hoc. If Gatekeeper blocks opening it, run:
+> **First launch on macOS:** Drift is signed ad-hoc (not notarized by Apple). The quarantine attribute is automatically removed when installing via Homebrew. If you install manually via `.dmg` or if Gatekeeper still blocks opening it, run:
 > ```bash
 > xattr -dr com.apple.quarantine /Applications/Drift.app
 > ```
@@ -60,150 +88,83 @@ Or grab a build for your platform from the
 
 | Platform | Package |
 |----------|---------|
-| Linux | [Flathub](https://flathub.org/apps/org.cutwire.Drift) · [AppImage](https://github.com/CutWire-Studios/Drift/releases/latest) |
-| Windows | [Installer (.exe)](https://github.com/CutWire-Studios/Drift/releases/latest) · [Portable zip](https://github.com/CutWire-Studios/Drift/releases/latest) |
-| macOS | [Homebrew Tap](https://github.com/CutWire-Studios/homebrew-tap) · [Disk image (.dmg, Apple Silicon)](https://github.com/CutWire-Studios/Drift/releases/latest) |
-| Android | [APK (arm64-v8a)](https://github.com/CutWire-Studios/Drift/releases/latest) · [APK (armeabi-v7a)](https://github.com/CutWire-Studios/Drift/releases/latest) · [APK (x86_64)](https://github.com/CutWire-Studios/Drift/releases/latest) |
+| Linux | [Flathub](https://flathub.org/apps/org.cutwire.Drift) · [AppImage (x86_64, aarch64)](https://github.com/CutWire-Studios/Drift/releases/latest) |
+| Windows | [Microsoft Store](https://apps.microsoft.com/detail/9PHHBZ07FRSZ) · [Installer (.exe, x64 / arm64)](https://github.com/CutWire-Studios/Drift/releases/latest) · [Portable zip (x64 / arm64)](https://github.com/CutWire-Studios/Drift/releases/latest) |
+| macOS | [Homebrew Tap](https://github.com/CutWire-Studios/homebrew-tap) · [Disk image (.dmg, Apple Silicon / Intel)](https://github.com/CutWire-Studios/Drift/releases/latest) |
+| Android | [Google Play (closed testing)](docs/play-testing.md) · [APK (arm64-v8a)](https://github.com/CutWire-Studios/Drift/releases/latest) · [APK (armeabi-v7a)](https://github.com/CutWire-Studios/Drift/releases/latest) · [APK (x86_64)](https://github.com/CutWire-Studios/Drift/releases/latest) |
 
-On a phone, grab `Drift-*-arm64-v8a.apk` from the latest release and install it (or `adb install Drift-*-arm64-v8a.apk`). Use `x86_64` for emulators.
+On a phone, join [closed testing on Google Play](docs/play-testing.md), or grab `Drift-*-arm64-v8a.apk` from the latest release and install it (or `adb install Drift-*-arm64-v8a.apk`). Use `x86_64` for emulators.
 
 See [all releases](https://github.com/CutWire-Studios/Drift/releases) for previous versions and full changelogs.
 
-## Screenshots
+## Screenshot
 
 <p align="center">
-  <img src="docs/screenshots/main-window.png" alt="The Drift editor: media bin on the left, video preview in the centre, clip inspector on the right, timeline below" width="900">
+  <img src="docs/screenshots/main-window.png" alt="The Drift editor: media bin on the left, 3D camera in the preview, text inspector on the right, multi-track timeline below" width="900">
 </p>
 
-<p align="center"><em>Everything in one window — media, preview, inspector, and timeline</em></p>
+## Features
 
-<p align="center">
-  <img src="docs/screenshots/timeline.png" alt="Timeline with four stacked tracks: two image overlays, a title, and a video track showing filmstrip thumbnails" width="900">
-</p>
+**An agent can edit the open project.** Import, cut, grade, and export in the project you have open.
+The same editor can run with no window.
 
-<p align="center"><em>A real multi-track timeline, with overlays, titles, and filmstrip thumbnails</em></p>
+**3D on the timeline.** Tilt clips in space, light them, and park a title behind the subject. Drop
+in a 3D model and it plays in the same cut.
 
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/effects-panel.png" alt="Effects browser showing live thumbnail previews of glitch and distortion presets" width="380"><br>
-      <strong>Effects that sell the look</strong><br>
-      Every preset is previewed on a real frame
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/transitions-panel.png" alt="Transitions browser with animated previews of crossfade, wipe, and push presets" width="380"><br>
-      <strong>Transitions that feel expensive</strong><br>
-      Drop one where two clips overlap
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/stickers-panel.png" alt="Sticker browser with emoji grouped into categories" width="380"><br>
-      <strong>Stickers and emoji on demand</strong><br>
-      Search, drag, and drop them onto the canvas
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/text-styles.png" alt="Text style presets including neon, karaoke pop, word background, and handwritten" width="380"><br>
-      <strong>Titles that actually get watched</strong><br>
-      Neon, karaoke, highlights, and punchy word styles
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/templates-panel.png" alt="Template browser showing multi-effect looks such as Beat Drop and Glitch Cut" width="380"><br>
-      <strong>Look templates in one click</strong><br>
-      Music-synced stacks like Beat Drop and Glitch Cut
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/audio-effects.png" alt="Audio effect browser with EQ, compressor, limiter, noise gate, de-esser, and voice leveler" width="380"><br>
-      <strong>Audio that sounds intentional</strong><br>
-      EQ, compressor, gate, de-esser, and voice tools
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/speed-fade.png" alt="Speed and fade inspector with speed presets, reverse, and fade in/out sliders" width="380"><br>
-      <strong>Speed, reverse, and fades</strong><br>
-      Slow-mo, ramps, reverse, and clean in/out
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/subtitle-editor.png" alt="Subtitle editor listing timed caption lines, with the line at the playhead highlighted" width="380"><br>
-      <strong>Captions from the speech itself</strong><br>
-      Generate them, then edit every line
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/subject-cutout.png" alt="Subject cutout dialog with a click marker on the person and the isolated subject highlighted" width="380"><br>
-      <strong>Click the subject. Keep only that.</strong><br>
-      Isolate a person or object onto its own clip
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/export-dialog.png" alt="Export dialog with downscale presets and advanced encoder settings" width="420"><br>
-      <strong>Export that matches the preview</strong><br>
-      Simple presets up front, extra control when you want it
-    </td>
-  </tr>
-</table>
+**Lottie animations.** Motion graphics and vector art stay sharp at any size. Recolour or reword
+them in place.
 
-## Features that actually ship in the edit
+**Advanced keyframing.** Animate position, scale, rotation, opacity, and effect parameters over
+time. Draw the curve yourself.
 
-**A timeline that behaves like a real editor.** Trim, split, snap, ripple, mute or hide tracks, and
-undo anything. Stack overlays, titles, and B-roll instead of fighting a one-track toy.
+**150+ transitions and 40+ effects.** Every look previews on your footage. One click can drop a
+whole stack — Beat Drop, Glitch Cut, Neon Cutout. Trails of earlier frames, and grades that stick
+to one clip.
 
-**Looks in seconds, not hours.** GPU effects, stylish transitions, and reusable look templates — so
-a clip can go from raw footage to a finished vibe without opening another app.
+**On this machine.** Click a subject and lift it off the shot. Add depth of field and lights that
+belong to the clip. Automatic captions, video upscale, and live face retouch — all on your
+computer.
 
-**Text, stickers, emoji, and shapes on the canvas.** Neon titles, karaoke-style captions, reaction
-stickers, and callouts stay in the same editor as the cut.
+**Edit the words.** Speech becomes text on the clip. Cut phrases, drop fillers, strip silence, pick
+the best takes, label speakers, and build captions from those times.
 
-**Auto captions you can actually fix.** Speech becomes timed subtitle lines. Edit the wording, tweak
-the timing, and export with captions that match how people watch on mute.
+**Titles with a real look.** Thirty-three packs — karaoke, Hormozi-style, neon, chrome, holographic,
+handwritten. Copy one style onto every subtitle on the track.
 
-**Cutouts, masks, and green screen.** Click a subject and lift it onto its own clip. Mask parts of a
-shot, or key out a green screen when you need a cleaner composite.
+**Move a whole stack at once.** One layer can drag, scale, rotate, tilt, and fade everything under
+it. Nest layers, or open a composite when the stack needs its own timeline.
 
-**Motion that hits the beat.** Speed ramps, reverse, fades, and edits that snap to the music — the
-kind of pacing that makes a clip feel designed, not dumped.
+**Cut to the music.** The timeline snaps to the beat. Clips split and land on the bar. Music ducks
+under speech and comes back to its own level. Reframe a landscape take into a vertical video that
+follows the face.
 
-**Audio tools that clean up the mix.** Volume, fades, EQ, compression, noise cleanup, and voice
-effects, so narration and music sit together instead of fighting.
+**A timeline that behaves.** Multi-track filmstrips, ripple, snap, masks, freeze frame, bookmarks,
+a mixer. Split a clip and the grade stays. A crash leaves the last save intact.
 
-**Multicam when one camera is not enough.** Watch every angle at once, punch between cameras, and
-save the take as a clean cut — without rebuilding the timeline by hand.
+**Audio that sounds finished.** Clean up speech, meter loudness, EQ and compress, keep pitch when
+you change speed, record a voiceover.
 
-**Project bundles for sharing and backup.** Package a project with its media so the whole edit moves
-with you, instead of breaking the moment a file path changes.
+**Find shots. Switch cameras.** Search footage for what’s on screen. Watch every angle at once and
+punch the cut.
 
-**Export that looks like the preview.** MP4 with quality presets, GIF loops, and ranged export from
-an In/Out work area. What you signed off on is what you get.
+**Stabilise, export, take the project with you.** Smooth shaky clips, upscale, play heavy files
+smoothly. MP4, GIF, audio-only, or just a range. Pack the media with the edit so paths stay whole.
 
-## Agent access — let an AI edit with you
+**Android is the same editor.** Timeline, effects, and export on the phone. Share straight from the
+app.
 
-Drift has a built-in **MCP server** for local AI tools. Turn on Agent access and Cursor, Claude Code,
-or another compatible agent can work in the open project: import media, place and trim clips, change
-effects, capture a still of the composition, and export.
-
-This is a real editor hook, not a chatbot bolted onto a webpage. The agent sees the timeline and can
-make edits you can undo.
-
-Agent access stays **off until you enable it**, and it only listens on your own computer. Full setup
-and safety notes live in the [MCP guide](docs/MCP.md).
-
-## Addons, without bloating the install
-
-Fonts, stickers, extra effects, and speech models download inside Drift when you need them. Keep the
-app light, then grab only the packs that match the video you are making.
-
-Open the Addon Manager from the header, or follow the install prompt when a feature needs a pack.
+**Stock, voices, and a small install.** Search stock into the bin. Generate voiceover and sound
+effects. Fonts, stickers, and extra models download when you use them. UI in Arabic, Bengali, Spanish (Spain
+and Colombia), French (Canada), Italian, Japanese, Portuguese (Brazil and Portugal), Russian,
+Sinhala, Tagalog, Vietnamese, and Simplified Chinese.
 
 ## Why people pick Drift
 
 Most “free” editors want an account, a watermark, or a subscription the moment the video starts
 looking good. Drift is the opposite: **yours, on your computer, GPLv3, no login wall.**
 
-It is fast enough for a 30-second social cut and deep enough for a real project — captions, effects,
-audio, cutouts, multicam, and an AI-assisted timeline if you want one.
+It is fast enough for a 30-second social cut and deep enough for a real project — an agent on the
+timeline, 3D and Lottie, captions, effects, audio, cutouts, and multicam.
 
 ## Help us translate Drift
 
@@ -216,13 +177,26 @@ Build, packaging, architecture, and agent protocol live in `docs/`:
 - [Building, testing, packaging, and architecture](docs/BUILDING.md)
 - [GPU effects](docs/gpu-effects.md)
 - [GPU transitions](docs/gpu-transitions.md)
-- [Time Echo architecture](docs/time-echo-architecture.md)
 - [Agent access / MCP](docs/MCP.md)
 
 ## Help and feedback
 
 Found a bug or have an idea? Open an
 [issue on GitHub](https://github.com/CutWire-Studios/Drift/issues).
+
+## Contributing
+
+[CONTRIBUTING.md](./CONTRIBUTING.md) is the pull-request guide: open an issue before a large change, keep each request to one change, run the tests, and license the work under GPLv3.
+
+Effects, transitions, templates, and audio effects are addons. Send those to [Drift-Addons](https://github.com/CutWire-Studios/Drift-Addons). Changes to the engine that runs them stay in this repository.
+
+Installing a [release](https://github.com/CutWire-Studios/Drift/releases) and editing a real project is enough to help; file what broke, or what should work better. On [Discord](https://discord.gg/J5ANFz6Z3y), people who have contributed can ask for the `@Contributor` role.
+
+## Contributors
+
+<a href="https://github.com/CutWire-Studios/Drift/graphs/contributors">
+  <img alt="Contributors" src="https://contrib.rocks/image?repo=CutWire-Studios/Drift">
+</a>
 
 ## License
 

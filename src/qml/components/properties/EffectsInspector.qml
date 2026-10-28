@@ -2,8 +2,6 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Window
 import Drift
-import ".."
-
 Item {
     id: root
 
@@ -33,144 +31,6 @@ Item {
     implicitHeight: contentCol.height
 
     function refreshFields() {}
-
-    // Depth status and controls for one clip: estimate (draft or high quality), progress, cancel,
-    // clear, and the download when the model is missing. Used for the selected clip's own depth
-    // effects and, on the Behind Subject card, for the clip that layer sits inside.
-    component DepthPanel: Column {
-        id: panel
-        property int targetTrack: -1
-        property int targetClip: -1
-        // Where the depth job is keyed, so progress can be followed.
-        property string targetId: ""
-        property bool hasDepth: false
-        property bool canDepth: true
-        property string cannotText: ""
-        property string missingText: ""
-
-        // Asked of the engine rather than the addon registry, and reset when an addon lands:
-        // the model can equally come from DRIFT_DEPTH_MODEL_DIR.
-        property bool runtimeReady: Addons.runtimeAvailable()
-        property bool depthReady: EditorState.depthAvailable() && Addons.runtimeAvailable()
-        property bool highQuality: false
-        property int jobRevision: 0
-        readonly property var job: {
-            void panel.jobRevision
-            return panel.targetId ? EditorState.depthJob(panel.targetId) : ({})
-        }
-        readonly property bool running: job.active === true
-
-        spacing: Theme.spacingSm
-
-        Connections {
-            target: EditorState
-            function onDepthJobChanged(clipId) {
-                if (clipId === panel.targetId)
-                    panel.jobRevision++
-            }
-        }
-        Connections {
-            target: Addons
-            function onKindChanged(kind) {
-                if (kind !== "depth-model" && kind !== "onnxruntime")
-                    return
-                panel.runtimeReady = Addons.runtimeAvailable()
-                panel.depthReady = EditorState.depthAvailable() && panel.runtimeReady
-            }
-        }
-
-        Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            visible: !panel.canDepth && panel.cannotText !== ""
-            text: panel.cannotText
-            color: Theme.warning
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeXs
-        }
-
-        // The effect is in the stack and doing nothing; without this the preview gives no clue why.
-        Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            visible: panel.canDepth && panel.depthReady && !panel.hasDepth && !panel.running
-            text: panel.missingText
-            color: Theme.warning
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeXs
-        }
-
-        Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            visible: !panel.running && !!panel.job.error
-            text: panel.job.error || ""
-            color: Theme.destructive
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeXs
-        }
-
-        ThemedChip {
-            visible: panel.canDepth && panel.depthReady && !panel.running
-            text: qsTr("High quality")
-            tooltip: qsTr("Sharper depth edges, about twice as slow")
-            selected: panel.highQuality
-            onClicked: panel.highQuality = !panel.highQuality
-        }
-
-        ThemedButton {
-            visible: panel.canDepth && panel.depthReady && !panel.running
-            width: parent.width
-            text: panel.hasDepth ? qsTr("Re-estimate depth") : qsTr("Estimate depth")
-            variant: panel.hasDepth ? "ghost" : "secondary"
-            onClicked: EditorState.estimateDepthForClip(panel.targetTrack, panel.targetClip,
-                                                        panel.highQuality)
-        }
-
-        ThemedButton {
-            visible: panel.canDepth && panel.hasDepth && !panel.running
-            width: parent.width
-            text: qsTr("Clear depth")
-            variant: "ghost"
-            onClicked: EditorState.clearDepth(panel.targetTrack, panel.targetClip)
-        }
-
-        Text {
-            width: parent.width
-            wrapMode: Text.WordWrap
-            visible: panel.running
-            text: panel.job.status || ""
-            color: Theme.mutedForeground
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeXs
-        }
-
-        ThemedProgressBar {
-            visible: panel.running
-            width: parent.width
-            value: panel.job.progress || 0
-        }
-
-        ThemedButton {
-            visible: panel.running
-            width: parent.width
-            text: qsTr("Cancel")
-            variant: "ghost"
-            onClicked: EditorState.cancelDepthEstimation(panel.targetId)
-        }
-
-        ThemedButton {
-            visible: panel.canDepth && !panel.depthReady
-            width: parent.width
-            text: panel.runtimeReady
-                  ? qsTr("Download depth estimation (about 160 MB)")
-                  : qsTr("Install AI engine first")
-            variant: "primary"
-            // Inline components cannot see the file's ids, so not root.Window.
-            onClicked: panel.Window.window.openAddonManager(
-                panel.runtimeReady ? "depth-model" : "onnxruntime")
-        }
-    }
 
     // An eyedropper aimed at the preview would otherwise sample this effect's own output, which
     // for a chroma key is the very colour already keyed out. Undone by cancelPreviewDrag.
@@ -208,277 +68,19 @@ Item {
         id: contentCol
         width: root.width
         spacing: Theme.spacingXl
-
-        // The face warp effects follow baked landmarks and pass the frame through untouched
-        // without them, so the scan is offered here — beside the stack that needs it — rather
-        // than as a step on every clip. Adding a face effect starts the scan by itself
-        // (AppController::addEffect); this is what is left to say when that could not happen:
-        // the model is missing, the scan was cancelled, or the track predates what the effect
-        // reads. Hidden entirely when no face effect is in the stack.
-        Column {
-            id: faceSection
-            // Present whenever a face effect is, so re-detecting and clearing stay reachable;
-            // it is the warnings below that appear only when the track is missing or too old.
-            visible: faceSection.usesFaceEffect
+        EffectsFaceSection {
             width: parent.width
-            spacing: Theme.spacingSm
-
-            // The model is an addon, but it can equally come from a bundled models/face or
-            // DRIFT_FACE_MODEL_DIR, so ask the engine rather than the addon registry. That answer
-            // is not a binding, hence the reset below when an addon of this kind appears.
-            // Folded together because every control below is gated on the same answer;
-            // runtimeReady is kept apart only to say which half is missing.
-            property bool runtimeReady: Addons.runtimeAvailable()
-            property bool faceReady: EditorState.faceDetectionAvailable()
-                                     && Addons.runtimeAvailable()
-
-            // Landmarks are baked onto the media clip, and the selection here is the adjustment
-            // pinned to it — clipToMap reports the linked clip's state for exactly this.
-            property bool canTrack: {
-                void root.clipDataRevision
-                const data = EditorState.selectedClipData
-                return data && data.canFaceTrack === true
-            }
-            property bool hasTrack: {
-                void root.clipDataRevision
-                const data = EditorState.selectedClipData
-                return data && data.hasFaceTrack === true
-            }
-            // A track baked before contours existed still drives the warps, so it is not stale in
-            // general — only the Beauty effects have nothing to work with, and they pass through.
-            property bool trackHasContours: {
-                void root.clipDataRevision
-                const data = EditorState.selectedClipData
-                return data && data.faceTrackHasContours === true
-            }
-            // Same idea as contours: a pre-mesh track still drives warps and makeup, but the 3D
-            // Face Mesh effect has nothing to warp until the clip is scanned again.
-            property bool trackHasMesh: {
-                void root.clipDataRevision
-                const data = EditorState.selectedClipData
-                return data && data.faceTrackHasMesh === true
-            }
-
-            readonly property var beautyIds: ["face_lipstick", "face_blush", "face_teeth_whiten",
-                                              "face_eyeliner", "face_eyeshadow", "face_brow_tint",
-                                              "face_eye_color", "face_beautify"]
-
-            // One pass over the stack for all three answers: whether anything here needs a track
-            // at all, and whether what needs it needs a *newer* one.
-            readonly property var faceUse: {
-                void root.clipDataRevision
-                const effects = EditorState.selectedClipEffects || []
-                let any = false
-                let beauty = false
-                let mesh = false
-                for (let i = 0; i < effects.length; i++) {
-                    const id = effects[i].catalogId || ""
-                    if (id.indexOf("face_") !== 0)
-                        continue
-                    any = true
-                    if (faceSection.beautyIds.indexOf(id) >= 0)
-                        beauty = true
-                    if (id === "face_mesh_3d")
-                        mesh = true
-                }
-                return { any: any, beauty: beauty, mesh: mesh }
-            }
-            readonly property bool usesFaceEffect: faceUse.any
-
-            Connections {
-                target: Addons
-                function onKindChanged(kind) {
-                    if (kind !== "face-model" && kind !== "onnxruntime")
-                        return
-                    faceSection.runtimeReady = Addons.runtimeAvailable()
-                    faceSection.faceReady = EditorState.faceDetectionAvailable()
-                                            && faceSection.runtimeReady
-                }
-            }
-
-            Text {
-                width: parent.width
-                text: qsTr("Face tracking")
-                color: Theme.mutedForeground
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeXs
-            }
-
-            // A standalone adjustment layer covers everything below it, so there is no one clip
-            // whose faces could be traced. The effect is inert here and no scan would fix it.
-            Text {
-                width: parent.width
-                wrapMode: Text.WordWrap
-                visible: !faceSection.canTrack
-                text: qsTr("Face effects follow one clip's faces. Add this to a clip rather than to an adjustment layer.")
-                color: Theme.warning
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeXs
-            }
-
-            // The effect is in the stack and doing nothing. Said as a warning, not a hint: the
-            // preview looks untouched and there is no other clue why.
-            Text {
-                width: parent.width
-                wrapMode: Text.WordWrap
-                visible: faceSection.canTrack && faceSection.faceReady && !faceSection.hasTrack
-                         && !EditorState.faceDetecting
-                text: qsTr("These effects follow a face, so the clip has to be scanned before they do anything.")
-                color: Theme.warning
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeXs
-            }
-
-            // The Beauty effects need the lip and eyelid contours, which tracks baked by older
-            // builds do not carry. They pass the frame through untouched in that case, so without
-            // this the effect reads as broken rather than as needing one more scan.
-            Text {
-                width: parent.width
-                wrapMode: Text.WordWrap
-                visible: faceSection.canTrack && faceSection.faceReady && faceSection.hasTrack
-                         && !faceSection.trackHasContours && faceSection.faceUse.beauty
-                         && !EditorState.faceDetecting
-                text: qsTr("This clip was scanned before makeup was supported. Re-detect faces to enable the Beauty effects.")
-                color: Theme.warning
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeXs
-            }
-
-            // The 3D Face Mesh effect needs the 468-vertex blob, which tracks baked by older
-            // builds do not carry. It skips drawing in that case, so without this the effect
-            // reads as broken rather than as needing one more scan.
-            Text {
-                width: parent.width
-                wrapMode: Text.WordWrap
-                visible: faceSection.canTrack && faceSection.faceReady && faceSection.hasTrack
-                         && !faceSection.trackHasMesh && faceSection.faceUse.mesh
-                         && !EditorState.faceDetecting
-                text: qsTr("This clip was scanned before 3D face mesh was supported. Re-detect faces to enable the 3D Face Mesh effect.")
-                color: Theme.warning
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeXs
-            }
-
-            ThemedButton {
-                visible: faceSection.canTrack && faceSection.faceReady && !EditorState.faceDetecting
-                width: parent.width
-                text: faceSection.hasTrack ? qsTr("Re-detect faces") : qsTr("Scan for faces…")
-                variant: faceSection.hasTrack ? "ghost" : "secondary"
-                onClicked: EditorState.detectFacesForClip(
-                               EditorState.selectedTrack, EditorState.selectedClip)
-            }
-
-            ThemedButton {
-                visible: faceSection.canTrack && faceSection.faceReady && faceSection.hasTrack
-                         && !EditorState.faceDetecting
-                width: parent.width
-                text: qsTr("Clear face track")
-                variant: "ghost"
-                onClicked: EditorState.clearFaceTrack(
-                               EditorState.selectedTrack, EditorState.selectedClip)
-            }
-
-            Text {
-                width: parent.width
-                wrapMode: Text.WordWrap
-                visible: EditorState.faceDetecting
-                text: EditorState.faceDetectStatus
-                color: Theme.mutedForeground
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeXs
-            }
-
-            ThemedProgressBar {
-                visible: EditorState.faceDetecting
-                width: parent.width
-                value: EditorState.faceDetectProgress
-            }
-
-            ThemedButton {
-                visible: EditorState.faceDetecting
-                width: parent.width
-                text: qsTr("Cancel")
-                variant: "ghost"
-                onClicked: EditorState.cancelFaceDetection()
-            }
-
-            ThemedButton {
-                visible: faceSection.canTrack && !faceSection.faceReady
-                width: parent.width
-                text: faceSection.runtimeReady
-                      ? qsTr("Download face detection (about 5 MB)")
-                      : qsTr("Install AI engine first")
-                variant: "primary"
-                onClicked: root.Window.window.openAddonManager(
-                    faceSection.runtimeReady ? "face-model" : "onnxruntime")
-            }
+            clipDataRevision: root.clipDataRevision
         }
 
-        // The depth effects read the clip's estimated depth and pass the frame through without it.
-        // Estimating takes minutes on a CPU, so unlike the face scan it never starts by itself:
-        // it is offered here, beside the effects that need it. Hidden when none are in the stack.
-        // Behind Subject reads another clip's depth, so it carries its own panel on its card.
-        Column {
-            id: depthSection
-            visible: depthSection.usesDepthEffect
+        EffectsDepthSection {
             width: parent.width
-            spacing: Theme.spacingSm
-
-            readonly property var hostData: {
-                void root.clipDataRevision
-                return EditorState.selectedClipData || ({})
-            }
-            readonly property bool usesDepthEffect: {
-                void root.clipDataRevision
-                const effects = EditorState.selectedClipEffects || []
-                for (let i = 0; i < effects.length; i++) {
-                    if (effects[i].needsDepth === true)
-                        return true
-                }
-                return false
-            }
-
-            Text {
-                width: parent.width
-                text: qsTr("Depth")
-                color: Theme.mutedForeground
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeXs
-            }
-
-            DepthPanel {
-                width: parent.width
-                // The media clip the depth belongs to; the selection may be the adjustment pinned
-                // to it, which estimateDepthForClip redirects through.
-                targetTrack: EditorState.selectedTrack
-                targetClip: EditorState.selectedClip
-                targetId: depthSection.hostData.depthClipId || ""
-                hasDepth: depthSection.hostData.hasDepth === true
-                canDepth: depthSection.hostData.canDepth === true
-                cannotText: qsTr("Depth effects follow one clip's depth. Add this to a clip rather than to an adjustment layer.")
-                missingText: qsTr("These effects need the clip's depth, so it has to be estimated first. It runs in the background and takes roughly half a second per frame.")
-            }
+            clipDataRevision: root.clipDataRevision
         }
 
-        Column {
+        EffectsAutoKeyHint {
             width: parent.width
-            spacing: 10
-            visible: root.selectedEffects.length > 0
-
-            Text {
-                width: parent.width
-                wrapMode: Text.WordWrap
-                text: qsTr("Move to a time, set a value, then click the diamond to add a keyframe. With Auto keyframes on, dragging a slider also creates them.")
-                color: Theme.mutedForeground
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeXs
-            }
-
-            ThemedChip {
-                text: qsTr("Auto keyframes")
-                selected: EditorState.autoKeyEnabled
-                onClicked: EditorState.autoKeyEnabled = !EditorState.autoKeyEnabled
-            }
+            inspector: root
         }
 
         // Has a CTA now: the copy told the user to go to the
@@ -507,7 +109,8 @@ Item {
                 spacing: 6
 
                 // Which parameter groups are unfolded. Only the first group starts open, so a
-                // package with several lights shows one and keeps the rest a click away.
+                // package with several lights shows one and keeps the rest a click away. A group
+                // declared "groupCollapsed" starts folded even when it comes first.
                 property var openGroups: ({})
                 readonly property string firstGroup: {
                     for (let i = 0; i < effectParams.length; i++) {
@@ -520,7 +123,13 @@ Item {
                     if (group === "")
                         return true
                     const state = openGroups[group]
-                    return state === undefined ? group === firstGroup : state
+                    if (state !== undefined)
+                        return state
+                    for (let i = 0; i < effectParams.length; i++) {
+                        if (effectParams[i].group === group && effectParams[i].groupCollapsed)
+                            return false
+                    }
+                    return group === firstGroup
                 }
                 function toggleGroup(group) {
                     const next = Object.assign({}, openGroups)
@@ -528,113 +137,9 @@ Item {
                     openGroups = next
                 }
 
-                Rectangle {
-                    width: parent.width
-                    height: effectHeader.implicitHeight + 8
-                    radius: Theme.radiusSm
-                    color: Theme.panelAccent
-
-                    // Save-as-preset lives here rather than in the header row: a fifth ghost
-                    // button already crowds a 22px row at panel width, and a sixth would leave
-                    // the label permanently elided.
-                    TapHandler {
-                        acceptedButtons: Qt.RightButton
-                        onTapped: effectCardMenu.popup()
-                    }
-                    ThemedContextMenu {
-                        id: effectCardMenu
-                        ThemedMenuItem {
-                            text: qsTr("Copy this effect")
-                            icon.name: Theme.icons.copy
-                            onTriggered: EditorState.copyEffectToClipboard(
-                                             EditorState.selectedTrack, EditorState.selectedClip,
-                                             effectCard.index)
-                        }
-                        ThemedMenuItem {
-                            text: qsTr("Save as preset…")
-                            icon.name: Theme.icons.save
-                            onTriggered: root.saveEffectPresetRequested(effectCard.index)
-                        }
-                    }
-
-                    Row {
-                        id: effectHeader
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 4
-                        spacing: 2
-
-                        Text {
-                            // An effect from an addon that is not installed has no catalog entry,
-                            // so it renders with no params at all; saying so beats a blank card.
-                            text: effectCard.effectData.missing
-                                  ? qsTr("%1 (not installed)").arg(effectCard.effectData.label)
-                                  : effectCard.effectData.label
-                            color: effectCard.effectEnabled
-                                   ? Theme.panelForeground : Theme.mutedForeground
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeSm
-                            font.weight: Font.Medium
-                            width: parent.width - 22 * 5 - 8
-                            elide: Text.ElideRight
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        IconButton {
-                            glyph: Theme.icons.chevronUp
-                            variant: "ghost"
-                            buttonSize: 22
-                            iconSize: 12
-                            enabled: effectCard.index > 0
-                            tooltip: qsTr("Move effect up")
-                            onClicked: EditorState.moveEffect(
-                                           EditorState.selectedTrack, EditorState.selectedClip,
-                                           effectCard.index, effectCard.index - 1)
-                        }
-                        IconButton {
-                            glyph: Theme.icons.chevronDown
-                            variant: "ghost"
-                            buttonSize: 22
-                            iconSize: 12
-                            enabled: effectCard.index < root.selectedEffects.length - 1
-                            tooltip: qsTr("Move effect down")
-                            onClicked: EditorState.moveEffect(
-                                           EditorState.selectedTrack, EditorState.selectedClip,
-                                           effectCard.index, effectCard.index + 1)
-                        }
-                        IconButton {
-                            glyph: effectCard.effectEnabled ? Theme.icons.eye : Theme.icons.eyeOff
-                            variant: "ghost"
-                            buttonSize: 22
-                            iconSize: 12
-                            tooltip: effectCard.effectEnabled
-                                     ? qsTr("Disable effect") : qsTr("Enable effect")
-                            onClicked: EditorState.setEffectEnabled(
-                                           EditorState.selectedTrack, EditorState.selectedClip,
-                                           effectCard.index, !effectCard.effectEnabled)
-                        }
-                        IconButton {
-                            glyph: Theme.icons.copy
-                            variant: "ghost"
-                            buttonSize: 22
-                            iconSize: 12
-                            tooltip: qsTr("Copy this effect")
-                            onClicked: EditorState.copyEffectToClipboard(
-                                           EditorState.selectedTrack, EditorState.selectedClip,
-                                           effectCard.index)
-                        }
-                        IconButton {
-                            glyph: Theme.icons.x
-                            variant: "ghost"
-                            buttonSize: 22
-                            iconSize: 12
-                            tooltip: qsTr("Remove effect")
-                            onClicked: EditorState.removeEffect(
-                                           EditorState.selectedTrack, EditorState.selectedClip,
-                                           effectCard.index)
-                        }
-                    }
+                EffectsEffectHeader {
+                    card: effectCard
+                    inspector: root
                 }
 
                 Loader {
@@ -675,31 +180,11 @@ Item {
                                     || ((effectCard.effectParams[index - 1] || {}).group || "") !== group)
                             readonly property bool groupOpen: effectCard.isGroupOpen(group)
 
-                            Rectangle {
+                            EffectsParamGroupHeader {
                                 visible: paramRow.groupStart
-                                width: parent.width
-                                height: groupLabel.implicitHeight + 8
-                                radius: Theme.radiusSm
-                                color: groupMouse.containsMouse ? Theme.panelAccent : "transparent"
-
-                                Text {
-                                    id: groupLabel
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 4
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: (paramRow.groupOpen ? "▾  " : "▸  ") + paramRow.group
-                                    color: Theme.panelForeground
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSizeXs
-                                    font.weight: Font.Medium
-                                }
-                                MouseArea {
-                                    id: groupMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: effectCard.toggleGroup(paramRow.group)
-                                }
+                                groupOpen: paramRow.groupOpen
+                                groupTitle: paramRow.group
+                                onToggled: effectCard.toggleGroup(paramRow.group)
                             }
 
                             Column {
@@ -707,220 +192,66 @@ Item {
                                 spacing: 4
                                 visible: paramRow.group === "" || paramRow.groupOpen
 
-                                // Booleans have nothing to interpolate, so they keep the
-                                // plain switch and stay off the keyframe strip.
-                                Row {
-                                    visible: paramRow.paramData.type === "bool"
-                                    width: parent.width
-                                    spacing: 8
-                                    Text {
-                                        width: parent.width - 48
-                                        elide: Text.ElideRight
-                                        text: paramRow.paramData.label
-                                        color: Theme.mutedForeground
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSizeXs
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    Text {
-                                        width: 40
-                                        horizontalAlignment: Text.AlignRight
-                                        text: paramRow.paramData.value ? qsTr("On") : qsTr("Off")
-                                        color: Theme.panelForeground
-                                        font.family: Theme.monoFontFamily
-                                        font.pixelSize: Theme.fontSizeXs
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
+                                EffectsBoolParam {
+                                    row: paramRow
+                                    effectIndex: effectCard.index
                                 }
 
-                                ThemedSwitch {
-                                    visible: paramRow.paramData.type === "bool"
-                                    checked: !!paramRow.paramData.value
-                                    onToggled: EditorState.setEffectParam(
-                                                   EditorState.selectedTrack, EditorState.selectedClip,
-                                                   effectCard.index, paramRow.paramData.key, checked ? 1 : 0)
+                                EffectsColorParam {
+                                    row: paramRow
+                                    effectIndex: effectCard.index
+                                    inspector: root
                                 }
 
-                                // A shade is picked, not dialled, so colours get the swatch and stay
-                                // off the keyframe strip — the track type is double all the way down.
-                                Row {
-                                    visible: paramRow.paramData.type === "color"
-                                    width: parent.width
-                                    spacing: 8
-                                    Text {
-                                        width: parent.width - 148
-                                        elide: Text.ElideRight
-                                        text: paramRow.paramData.label
-                                        color: Theme.mutedForeground
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSizeXs
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    ColorSwatchField {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        hex: paramRow.paramData.value || "#ffffff"
-                                        tooltip: qsTr("Choose %1").arg(paramRow.paramData.label)
-                                        onEyedropperStarted: root.bypassForEyedropper(effectCard.index)
-                                        onEyedropperEnded: EditorState.cancelPreviewDrag()
-                                        onEdited: value => EditorState.setEffectColorParam(
-                                                      EditorState.selectedTrack, EditorState.selectedClip,
-                                                      effectCard.index, paramRow.paramData.key, value)
-                                    }
+                                EffectsClipParam {
+                                    row: paramRow
+                                    effectIndex: effectCard.index
+                                    inspector: root
                                 }
 
-                                // Clip params: which clip on the timeline the effect works with — Behind
-                                // Subject's clip to sit inside. Picked from the clips beneath this
-                                // one; the first entry leaves the choice to the effect.
-                                Column {
-                                    id: clipParam
-                                    visible: paramRow.paramData.type === "clip"
-                                    width: parent.width
-                                    spacing: 4
-                                    readonly property var candidates: {
-                                        void root.clipDataRevision
-                                        return paramRow.paramData.type === "clip"
-                                            ? EditorState.effectClipCandidates(EditorState.selectedTrack,
-                                                                               EditorState.selectedClip)
-                                            : []
-                                    }
-
-                                    Text {
-                                        width: parent.width
-                                        elide: Text.ElideRight
-                                        text: paramRow.paramData.label
-                                        color: Theme.mutedForeground
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSizeXs
-                                    }
-                                    ThemedComboBox {
-                                        width: parent.width
-                                        model: [qsTr("Automatic (clip beneath)")].concat(
-                                                   clipParam.candidates.map(c => c.name))
-                                        currentIndex: {
-                                            const id = paramRow.paramData.value || ""
-                                            for (let i = 0; i < clipParam.candidates.length; i++) {
-                                                if (clipParam.candidates[i].id === id)
-                                                    return i + 1
-                                            }
-                                            return 0
-                                        }
-                                        onActivated: (index) => EditorState.setEffectClipParam(
-                                            EditorState.selectedTrack, EditorState.selectedClip,
-                                            effectCard.index, paramRow.paramData.key,
-                                            index === 0 ? "" : clipParam.candidates[index - 1].id)
-                                    }
+                                EffectsFileParam {
+                                    row: paramRow
+                                    effectIndex: effectCard.index
                                 }
 
-                                // File paths (face-prop .glb): basename + Choose / Clear. Not keyframed.
-                                Row {
-                                    visible: paramRow.paramData.type === "file"
-                                    width: parent.width
-                                    spacing: 8
-                                    Text {
-                                        width: parent.width - 148
-                                        elide: Text.ElideMiddle
-                                        text: {
-                                            const p = paramRow.paramData.value || ""
-                                            if (!p)
-                                                return paramRow.paramData.label + qsTr(": (none)")
-                                            const parts = String(p).split(/[/\\]/)
-                                            return parts[parts.length - 1] || p
-                                        }
-                                        color: paramRow.paramData.missing ? Theme.destructive
-                                                                         : Theme.mutedForeground
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSizeXs
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    IconButton {
-                                        glyph: Theme.icons.folder
-                                        variant: "ghost"
-                                        buttonSize: 22
-                                        iconSize: 12
-                                        tooltip: qsTr("Choose file")
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        onClicked: {
-                                            const filters = paramRow.paramData.fileFilters || ["All files (*)"]
-                                            const url = FileDialogs.openFile(
-                                                qsTr("Choose %1").arg(paramRow.paramData.label), filters)
-                                            if (!url || url.toString() === "")
-                                                return
-                                            EditorState.setEffectStringParam(
-                                                EditorState.selectedTrack, EditorState.selectedClip,
-                                                effectCard.index, paramRow.paramData.key, url)
-                                        }
-                                    }
-                                    IconButton {
-                                        glyph: Theme.icons.x
-                                        variant: "ghost"
-                                        buttonSize: 22
-                                        iconSize: 12
-                                        tooltip: qsTr("Clear")
-                                        enabled: !!(paramRow.paramData.value)
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        onClicked: EditorState.setEffectStringParam(
-                                                       EditorState.selectedTrack, EditorState.selectedClip,
-                                                       effectCard.index, paramRow.paramData.key, "")
-                                    }
+                                EffectsCurveParam {
+                                    row: paramRow
+                                    effectIndex: effectCard.index
                                 }
 
-                                // Hue params get a swatch as well as the slider: picking the backdrop
-                                // colour is how a chroma key is actually set up, and the slider stays
-                                // for nudging and keyframing. The swatch writes the way the slider's
-                                // drag does (previewSetClipKeyframe, force off), not setClipKeyframe:
-                                // that one always drops a key at the playhead, so two picks at
-                                // different times would quietly animate the key colour.
-                                Row {
-                                    id: hueRow
-                                    visible: paramRow.paramData.type === "float"
-                                             && paramRow.paramData.hue === true
+                                EffectsLookParam {
+                                    row: paramRow
+                                    effectIndex: effectCard.index
+                                }
+
+                                Vec2Param {
+                                    visible: paramRow.paramData.type === "vec2"
                                     width: parent.width
-                                    spacing: 8
+                                    paramData: paramRow.paramData
+                                    effectIndex: effectCard.index
+                                }
 
-                                    function currentHue() {
-                                        const data = paramRow.paramData
-                                        const keys = (data.keyframes && data.keyframes.points) || []
-                                        const deg = keys.length === 0
-                                            ? Number(data.value)
-                                            : EditorState.propertyValueAt(
-                                                  EditorState.selectedTrack, EditorState.selectedClip,
-                                                  data.prop, EditorState.playheadSeconds, data.value)
-                                        return isNaN(deg) ? 0 : deg
-                                    }
+                                EffectsEnumParam {
+                                    row: paramRow
+                                    effectIndex: effectCard.index
+                                }
 
-                                    Text {
-                                        width: parent.width - 148
-                                        elide: Text.ElideRight
-                                        text: qsTr("Pick %1").arg(paramRow.paramData.label)
-                                        color: Theme.mutedForeground
-                                        font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSizeXs
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    ColorSwatchField {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        hex: root.hueToHex(hueRow.currentHue())
-                                        tooltip: qsTr("Choose %1").arg(paramRow.paramData.label)
-                                        onEyedropperStarted: root.bypassForEyedropper(effectCard.index)
-                                        onEyedropperEnded: EditorState.cancelPreviewDrag()
-                                        onEdited: value => {
-                                            const deg = root.hexToHue(value)
-                                            // Grey has no hue; and the hex field re-emits its own
-                                            // value on focus-out, which must not become an undo step.
-                                            if (isNaN(deg) || Math.abs(deg - hueRow.currentHue()) < 0.01)
-                                                return
-                                            EditorState.beginPreviewDrag(
-                                                qsTr("Edit %1").arg(paramRow.paramData.label))
-                                            EditorState.previewSetClipKeyframe(
-                                                EditorState.selectedTrack, EditorState.selectedClip,
-                                                paramRow.paramData.prop, EditorState.playheadSeconds, deg)
-                                            EditorState.commitPreviewDrag()
-                                        }
-                                    }
+                                EffectsHueParam {
+                                    row: paramRow
+                                    effectIndex: effectCard.index
+                                    inspector: root
+                                }
+
+                                EffectsFaceIndexParam {
+                                    row: paramRow
+                                    effectIndex: effectCard.index
+                                    inspector: root
                                 }
 
                                 PropertyKeyframeRow {
-                                    visible: paramRow.paramData.type === "float"
+                                    visible: paramRow.paramData.type === "int"
+                                              || (paramRow.paramData.type === "float"
+                                                  && paramRow.paramData.key !== "faceIndex")
                                     width: parent.width
                                     // `def` is the param's static value, which the row falls
                                     // back to whenever the track holds no keys.
@@ -930,90 +261,34 @@ Item {
                                         key: paramRow.paramData.prop || "",
                                         label: paramRow.paramData.label,
                                         def: paramRow.paramData.value,
-                                        decimals: Math.abs(paramRow.paramData.max
-                                                           - paramRow.paramData.min) >= 10 ? 1 : 2
+                                        decimals: paramRow.paramData.type === "int" ? 0
+                                                  : (paramRow.paramData.step || 0) >= 1 ? 0
+                                                  : Math.abs(paramRow.paramData.max
+                                                             - paramRow.paramData.min) >= 10 ? 1 : 2
                                     })
                                     keyframeList: (paramRow.paramData.keyframes
                                                    && paramRow.paramData.keyframes.points) || []
                                     useSlider: true
+                                    editableWhilePlaying: true
                                     sliderFrom: paramRow.paramData.min
                                     sliderTo: paramRow.paramData.max
+                                    sliderStep: paramRow.paramData.step || 0
                                 }
                             }
                         }
                     }
                 }
 
-                // Behind Subject reads the depth of the clip it sits inside, not of this layer, so
-                // that clip's depth is estimated from here.
-                Column {
-                    id: occludeSection
-                    readonly property bool isOcclude: effectCard.effectData.catalogId === "depth.occlude"
-                    visible: isOcclude
-                    width: parent.width
-                    spacing: Theme.spacingSm
-                    opacity: effectCard.effectEnabled ? 1 : 0.45
-                    readonly property var target: {
-                        void root.clipDataRevision
-                        if (!occludeSection.isOcclude)
-                            return ({})
-                        void EditorState.inspectorPlayheadSeconds
-                        return EditorState.effectClipTarget(EditorState.selectedTrack,
-                                                            EditorState.selectedClip,
-                                                            effectCard.index, "target")
-                    }
-                    readonly property string targetName: target.name || ""
-
-                    Text {
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        visible: !!occludeSection.target.id
-                        text: occludeSection.target.explicit
-                              ? qsTr("Anything in “%1” nearer than Distance passes in front of this layer.")
-                                    .arg(occludeSection.targetName)
-                              : qsTr("Anything in “%1” (the clip beneath at the playhead) nearer than Distance passes in front of this layer.")
-                                    .arg(occludeSection.targetName)
-                        color: Theme.mutedForeground
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeXs
-                    }
-
-                    DepthPanel {
-                        width: parent.width
-                        targetTrack: occludeSection.target.track !== undefined ? occludeSection.target.track : -1
-                        targetClip: occludeSection.target.clip !== undefined ? occludeSection.target.clip : -1
-                        targetId: occludeSection.target.id || ""
-                        hasDepth: occludeSection.target.hasDepth === true
-                        canDepth: !!occludeSection.target.id
-                        cannotText: qsTr("Place this layer above a video or image clip. It goes behind whatever in that clip is nearer than Distance.")
-                        missingText: qsTr("“%1” needs its depth estimated before anything in it can pass in front. It runs in the background and takes roughly half a second per frame.")
-                                         .arg(occludeSection.targetName)
-                    }
+                EffectsOccludeSection {
+                    card: effectCard
+                    inspector: root
                 }
             }
         }
 
-        // Paste is offered even with an empty clipboard: checking costs a synchronous round-trip
-        // to whichever process owns the selection, so the button asks only when it is pressed.
-        Row {
-            visible: root.hasSelection
+        EffectsStackActions {
             width: parent.width
-            spacing: Theme.spacingSm
-
-            ThemedButton {
-                text: qsTr("Paste effects")
-                glyph: Theme.icons.clipboardPaste
-                variant: "secondary"
-                onClicked: EditorState.pasteEffectsFromClipboard(
-                               EditorState.selectedTrack, EditorState.selectedClip)
-            }
-            ThemedButton {
-                text: qsTr("Save as preset…")
-                glyph: Theme.icons.save
-                variant: "secondary"
-                visible: root.selectedEffects.length > 0
-                onClicked: root.saveEffectPresetRequested(-1)
-            }
+            inspector: root
         }
 
     }

@@ -1,0 +1,34 @@
+{
+  "id": "color",
+  "name": "Color",
+  "builtin": true,
+  "order": 7,
+  "windows": [
+    {
+      "id": "main",
+      "root": {
+        "split": "v",
+        "sizes": [0.6, 0.4],
+        "children": [
+          {
+            "split": "h",
+            "sizes": [0.22, 0.53, 0.25],
+            "children": [
+              { "panels": [ { "type": "looks" } ], "active": 0 },
+              { "panels": [ { "type": "preview" } ], "active": 0 },
+              { "panels": [ { "type": "scopes" } ], "active": 0 }
+            ]
+          },
+          {
+            "split": "h",
+            "sizes": [0.45, 0.55],
+            "children": [
+              { "panels": [ { "type": "color" }, { "type": "properties.effects" } ], "active": 0 },
+              { "panels": [ { "type": "timeline" } ], "active": 0 }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

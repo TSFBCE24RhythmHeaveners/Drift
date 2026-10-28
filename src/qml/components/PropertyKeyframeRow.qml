@@ -10,10 +10,9 @@ Column {
 
     required property var propDef       // {key, label, def, decimals}
     required property var keyframeList  // [{seconds, value}, ...] for this property
-    // Easing is a property of the key at the playhead, not of the whole track. Hand-dragged
-    // tangents match no preset, which is what leaves every chip unlit.
-    readonly property string interpolationMode:
-        (activeKey && !activeKey.custom) ? (activeKey.easing || "linear") : ""
+    property string linkedPropKey: ""   // partner property whose keyframes stay in lockstep (e.g. x with y)
+    // The phone shell opens easing in a bottom sheet instead of the popup.
+    property bool useSheet: ShellBridge.phoneShell
 
     // When true, the value is edited through a slider + readout instead of a
     // numeric text field. Drags are coalesced into a single undo entry via
@@ -21,6 +20,11 @@ Column {
     property bool useSlider: false
     property real sliderFrom: 0
     property real sliderTo: 1
+    // Snaps the slider to multiples of this (whole-number effect params); 0 is continuous.
+    property real sliderStep: 0
+    // Static values can be dragged during playback. Keyed ones (or any with Auto keyframes on)
+    // stay locked: the write lands at the moving playhead, dropping a key per move.
+    property bool editableWhilePlaying: false
     property bool percent: false
     property string unit: "" // e.g. "°" — appended to the numeric readout
     // Show the slider readout in decibels with the percentage after it, for gain properties
@@ -156,6 +160,58 @@ Column {
         return best
     }
 
+    // Value per pixel of scrub and per arrow/wheel nudge. A continuous slider crosses its range
+    // in about 200 px; a typed field moves by its last displayed digit.
+    readonly property real scrubStep: {
+        const precision = percent ? 0.01 : Math.pow(10, -propDef.decimals)
+        if (!useSlider)
+            return precision
+        return sliderStep > 0 ? sliderStep : Math.max(precision, (sliderTo - sliderFrom) / 200)
+    }
+    readonly property bool scrubLocked: EditorState.playing
+                                        && (!editableWhilePlaying || animated || EditorState.autoKeyEnabled)
+    property real scrubStart: 0
+
+    function limitValue(v) {
+        if (useSlider) {
+            v = Math.max(sliderFrom, Math.min(sliderTo, v))
+            if (sliderStep > 0)
+                v = sliderFrom + Math.round((v - sliderFrom) / sliderStep) * sliderStep
+        }
+        return Number(v.toFixed(percent ? 2 : propDef.decimals))
+    }
+
+    function beginScrub() {
+        editing = true
+        liveValue = currentValue
+        scrubStart = currentValue
+        EditorState.showKeyframeGraphProperty(propDef.key)
+        EditorState.beginPreviewDrag(qsTr("Edit %1").arg(propDef.label))
+    }
+
+    function scrubTo(steps) {
+        liveValue = limitValue(scrubStart + steps * scrubStep)
+        if (!useSlider)
+            valueField.text = formatValue(liveValue)
+        EditorState.previewSetClipKeyframe(EditorState.selectedTrack, EditorState.selectedClip,
+                                           propDef.key, EditorState.playheadSeconds, liveValue)
+    }
+
+    function endScrub() {
+        EditorState.commitPreviewDrag()
+        editing = false
+        syncEditors()
+    }
+
+    // Arrow keys and the wheel while a field is focused: step from what is typed and commit.
+    function nudge(field, steps) {
+        const typed = parseInput(field.text)
+        const v = limitValue((isNaN(typed) ? currentValue : typed) + steps * scrubStep)
+        liveValue = v
+        field.text = formatValue(v)
+        commitValue(v)
+    }
+
     function commitValue(v) {
         if (isNaN(v))
             return
@@ -165,10 +221,38 @@ Column {
             EditorState.playheadSeconds, v)
     }
 
-    function setInterpolation(mode) {
+    // Read from the engine: the segment's easing is not a field on the key, and the preset
+    // match is what the button's tooltip names.
+    readonly property var easingState: {
+        void valueRevision
+        if (!activeKey || keyframeList.length < 2)
+            return ({})
+        return EditorState.keyframeSegmentEasing(EditorState.selectedTrack, EditorState.selectedClip,
+                                                 propDef.key, activeKey.seconds)
+    }
+    readonly property string easingLabel: {
+        void valueRevision
+        const id = easingState.presetId
+        if (!id)
+            return qsTr("Custom")
+        const presets = EditorState.easingPresets()
+        for (let i = 0; i < presets.length; ++i) {
+            if (presets[i].id === id)
+                return presets[i].label
+        }
+        return qsTr("Custom")
+    }
+
+    function openEasingPicker() {
         EditorState.showKeyframeGraphProperty(root.propDef.key)
-        EditorState.setKeyframeInterpolation(
-            EditorState.selectedTrack, EditorState.selectedClip, root.propDef.key, mode)
+        if (root.useSheet) {
+            ShellBridge.easingSheetRequested(EditorState.selectedTrack, EditorState.selectedClip,
+                                             root.propDef.key, root.propDef.label, activeKey.seconds)
+            return
+        }
+        easingPopupLoader.active = true
+        easingPopupLoader.item.openFor(EditorState.selectedTrack, EditorState.selectedClip,
+                                       root.propDef.key, activeKey.seconds)
     }
 
     readonly property bool hasPrevKeyframe: {
@@ -235,6 +319,7 @@ Column {
         target: EditorState
         function onSelectedClipDataChanged() { root.bumpValue() }
         function onTracksChanged() { root.bumpValue() }
+        function onEasingPresetsChanged() { root.valueRevision++ }
         function onClipPropertiesPreviewed(trackIndex, clipIndex, keys) {
             if (root.editing || !root.matchesKey(keys))
                 return
@@ -282,14 +367,15 @@ Column {
                 id: labelZone
                 anchors.verticalCenter: parent.verticalCenter
                 height: labelText.implicitHeight
-                width: Math.max(24, parent.width - diamond.width - linChip.width - easeChip.width
-                                      - holdChip.width - parent.spacing * 4)
+                width: Math.max(24, parent.width - diamond.width
+                                      - (easingButton.visible ? easingButton.width + parent.spacing : 0)
+                                      - parent.spacing)
 
                 Text {
                     id: labelText
                     text: root.propDef.label
-                    color: root.animated && root.keyframesEnabled ? Theme.panelForeground
-                                                                  : Theme.mutedForeground
+                    color: root.animated && root.keyframesEnabled ? Theme.c.propertyKeyframeRow.foreground
+                                                                  : Theme.c.propertyKeyframeRow.foregroundMuted
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeXs
                     font.weight: root.animated && root.keyframesEnabled ? Font.Medium : Font.Normal
@@ -300,43 +386,56 @@ Column {
                 }
             }
 
-            ThemedChip {
-                id: linChip
-                text: qsTr("Straight")
-                tooltip: qsTr("Straight — changes at a steady rate between keyframes")
-                selected: root.interpolationMode === "linear"
-                enabled: root.activeKey !== null
-                chipHeight: 18
-                horizontalPadding: Theme.spacingSm
-                width: 28
+            Item {
+                id: easingButton
+                readonly property real buttonSize: Theme.touchInput ? 28 : 22
+                visible: root.activeKey !== null && root.keyframeList.length >= 2
                 anchors.verticalCenter: parent.verticalCenter
-                onClicked: root.setInterpolation("linear")
-            }
+                width: buttonSize
+                height: buttonSize
 
-            ThemedChip {
-                id: easeChip
-                text: qsTr("Ease")
-                tooltip: qsTr("Ease — accelerates out and decelerates in")
-                selected: root.interpolationMode === "ease"
-                enabled: root.activeKey !== null
-                chipHeight: 18
-                horizontalPadding: Theme.spacingSm
-                width: 36
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: root.setInterpolation("ease")
-            }
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Theme.c.propertyKeyframeRow.radius
+                    color: easingArea.containsMouse ? Theme.c.propertyKeyframeRow.backgroundHover
+                                                    : "transparent"
 
-            ThemedChip {
-                id: holdChip
-                text: qsTr("Jump")
-                tooltip: qsTr("Jump — holds the value until the next keyframe")
-                selected: root.interpolationMode === "hold"
-                enabled: root.activeKey !== null
-                chipHeight: 18
-                horizontalPadding: Theme.spacingSm
-                width: 34
-                anchors.verticalCenter: parent.verticalCenter
-                onClicked: root.setInterpolation("hold")
+                    Behavior on color {
+                        ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
+                    }
+                }
+
+                EasingThumb {
+                    anchors.centerIn: parent
+                    width: easingButton.buttonSize - 4
+                    height: easingButton.buttonSize - 4
+                    showBackground: false
+                    samples: root.easingState.samples ? root.easingState.samples : []
+                    curveColor: root.graphColor
+                }
+
+                MouseArea {
+                    id: easingArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openEasingPicker()
+                    onWheel: (wheel) => { wheel.accepted = false }
+                }
+
+                ThemedToolTip {
+                    text: qsTr("Easing: %1 — click to change").arg(root.easingLabel)
+                    visible: easingArea.containsMouse
+                }
+
+                Loader {
+                    id: easingPopupLoader
+                    active: false
+                    sourceComponent: EasingPickerPopup {
+                        anchorItem: easingButton
+                        propLabel: root.propDef.label
+                    }
+                }
             }
         }
     }
@@ -448,6 +547,22 @@ Column {
                     if (!isNaN(v))
                         root.liveValue = v
                 }
+                Keys.onUpPressed: event => root.nudge(valueField, event.modifiers & Qt.ShiftModifier ? 10 : 1)
+                Keys.onDownPressed: event => root.nudge(valueField, event.modifiers & Qt.ShiftModifier ? -10 : -1)
+
+                ScrubArea {
+                    anchors.fill: parent
+                    enabled: !root.scrubLocked
+                    editing: valueField.activeFocus
+                    onScrubStarted: root.beginScrub()
+                    onScrubbed: steps => root.scrubTo(steps)
+                    onScrubFinished: root.endScrub()
+                    onActivated: {
+                        valueField.forceActiveFocus()
+                        valueField.selectAll()
+                    }
+                    onWheelStepped: steps => root.nudge(valueField, steps)
+                }
             }
 
             Text {
@@ -456,7 +571,7 @@ Column {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.unit.length > 0 || root.percent
                 text: root.percent ? "%" : root.unit
-                color: Theme.mutedForeground
+                color: Theme.c.propertyKeyframeRow.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
                 z: 1
@@ -471,17 +586,19 @@ Column {
 
             ThemedSlider {
                 id: valueSlider
-                lockWhilePlaying: true
+                lockWhilePlaying: !root.editableWhilePlaying || root.animated || EditorState.autoKeyEnabled
                 label: root.propDef.label
                 width: parent.width - readoutBox.width - parent.spacing
                 anchors.verticalCenter: parent.verticalCenter
                 from: root.sliderFrom
                 to: root.sliderTo
+                stepSize: root.sliderStep
                 // Keep the playhead/model binding off while pressed — same as
                 // PreviewPanel scrub — so preview ticks cannot fight the drag.
+                // displayedValue, so a scrub on the readout moves the thumb along with it.
                 Binding on value {
-                    when: !valueSlider.pressed && !root.editing
-                    value: root.currentValue
+                    when: !valueSlider.pressed
+                    value: root.displayedValue
                 }
                 onMoved: {
                     root.liveValue = value
@@ -505,8 +622,9 @@ Column {
                 }
             }
 
-            // The readout doubles as a button: a slider cannot land on an exact
-            // value, so clicking it opens a small editor to type one.
+            // The readout scrubs like a number field: drag to adjust, click to type an exact
+            // value in place (a slider cannot land on one). Enter or clicking away commits,
+            // Escape discards.
             Item {
                 id: readoutBox
                 // The dB readout's width swings with the value ("0.0 dB (100%)" vs "-∞ dB
@@ -517,11 +635,32 @@ Column {
                 height: Theme.controlHeightSm
                 anchors.verticalCenter: parent.verticalCenter
 
+                property bool typing: false
+
+                function startTyping() {
+                    editField.text = root.formatValue(root.currentValue)
+                    typing = true
+                    editField.forceActiveFocus()
+                    editField.selectAll()
+                }
+
+                function finishTyping(apply) {
+                    if (!typing)
+                        return
+                    typing = false
+                    if (apply) {
+                        const v = root.parseInput(editField.text)
+                        if (!isNaN(v))
+                            root.commitValue(root.limitValue(v))
+                    }
+                }
+
                 Rectangle {
                     anchors.fill: parent
-                    radius: Theme.radiusSm
-                    color: readoutArea.containsMouse || valuePopup.opened
-                           ? Theme.panelAccent : "transparent"
+                    visible: !readoutBox.typing
+                    radius: Theme.c.propertyKeyframeRow.radius
+                    color: readoutArea.containsMouse || readoutArea.scrubbing
+                           ? Theme.c.propertyKeyframeRow.backgroundHover : "transparent"
 
                     Behavior on color {
                         ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
@@ -533,154 +672,49 @@ Column {
                     anchors.right: parent.right
                     anchors.rightMargin: Theme.spacingMd
                     anchors.verticalCenter: parent.verticalCenter
+                    visible: !readoutBox.typing
                     horizontalAlignment: Text.AlignRight
                     text: root.sliderReadout(root.displayedValue)
-                    color: Theme.panelForeground
+                    color: Theme.c.propertyKeyframeRow.foreground
                     font.family: Theme.monoFontFamily
                     font.pixelSize: Theme.fontSizeSm
                 }
 
-                MouseArea {
+                ThemedTextField {
+                    id: editField
+                    anchors.fill: parent
+                    visible: readoutBox.typing
+                    implicitHeight: Theme.controlHeightSm
+                    topPadding: 0
+                    bottomPadding: 0
+                    leftPadding: Theme.spacingMd
+                    rightPadding: Theme.spacingMd
+                    horizontalAlignment: TextInput.AlignRight
+                    verticalAlignment: TextInput.AlignVCenter
+                    onAccepted: readoutBox.finishTyping(true)
+                    onActiveFocusChanged: if (!activeFocus)
+                        readoutBox.finishTyping(true)
+                    Keys.onEscapePressed: readoutBox.finishTyping(false)
+                    Keys.onUpPressed: event => root.nudge(editField, event.modifiers & Qt.ShiftModifier ? 10 : 1)
+                    Keys.onDownPressed: event => root.nudge(editField, event.modifiers & Qt.ShiftModifier ? -10 : -1)
+                }
+
+                ScrubArea {
                     id: readoutArea
                     anchors.fill: parent
                     hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: valuePopup.openEditor()
-                    onWheel: (wheel) => { wheel.accepted = false }
+                    enabled: valueSlider.enabled
+                    editing: readoutBox.typing
+                    onScrubStarted: root.beginScrub()
+                    onScrubbed: steps => root.scrubTo(steps)
+                    onScrubFinished: root.endScrub()
+                    onActivated: readoutBox.startTyping()
+                    onWheelStepped: steps => root.nudge(editField, steps)
                 }
 
                 ThemedToolTip {
-                    text: qsTr("Click to type an exact %1").arg(root.propDef.label.toLowerCase())
-                    visible: readoutArea.containsMouse && !valuePopup.opened
-                }
-
-                Popup {
-                    id: valuePopup
-
-                    // Right-aligned under the readout, which keeps it inside the
-                    // inspector panel however narrow the panel is docked.
-                    x: readoutBox.width - width
-                    y: readoutBox.height + Theme.spacingXs
-                    width: 172
-                    padding: Theme.spacingLg
-                    modal: false
-                    dim: false
-                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-                    // Escape and clicking away discard; only Enter writes a key.
-                    function openEditor() {
-                        editField.text = root.formatValue(root.currentValue)
-                        open()
-                        editField.forceActiveFocus()
-                        editField.selectAll()
-                    }
-
-                    function apply() {
-                        const v = root.parseInput(editField.text)
-                        if (!isNaN(v))
-                            root.commitValue(Math.max(root.sliderFrom,
-                                                      Math.min(root.sliderTo, v)))
-                        close()
-                    }
-
-                    background: Rectangle {
-                        color: Theme.panelBackground
-                        border.width: Theme.borderWidth
-                        border.color: Theme.panelBorder
-                        radius: Theme.radiusMd
-                    }
-
-                    // Opacity plus scale, matching ThemedContextMenu.
-                    enter: Transition {
-                        ParallelAnimation {
-                            NumberAnimation {
-                                property: "opacity"
-                                from: 0.0
-                                to: 1.0
-                                duration: Theme.durationBase
-                                easing.type: Theme.easing
-                            }
-                            NumberAnimation {
-                                property: "scale"
-                                from: 0.96
-                                to: 1.0
-                                duration: Theme.durationBase
-                                easing.type: Theme.easing
-                            }
-                        }
-                    }
-
-                    exit: Transition {
-                        ParallelAnimation {
-                            NumberAnimation {
-                                property: "opacity"
-                                from: 1.0
-                                to: 0.0
-                                duration: Theme.durationFast
-                                easing.type: Theme.easing
-                            }
-                            NumberAnimation {
-                                property: "scale"
-                                from: 1.0
-                                to: 0.96
-                                duration: Theme.durationFast
-                                easing.type: Theme.easing
-                            }
-                        }
-                    }
-
-                    contentItem: Column {
-                        spacing: Theme.spacingSm
-
-                        Row {
-                            width: parent.width
-
-                            Text {
-                                width: parent.width / 2
-                                text: root.propDef.label
-                                color: Theme.panelForeground
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeXs
-                                font.weight: Font.Medium
-                                elide: Text.ElideRight
-                            }
-
-                            Text {
-                                width: parent.width / 2
-                                horizontalAlignment: Text.AlignRight
-                                text: root.displayReadout(root.sliderFrom) + "–"
-                                      + root.displayReadout(root.sliderTo)
-                                color: Theme.mutedForeground
-                                font.family: Theme.monoFontFamily
-                                font.pixelSize: Theme.fontSizeTiny
-                            }
-                        }
-
-                        Item {
-                            width: parent.width
-                            height: editField.height
-
-                            ThemedTextField {
-                                id: editField
-                                width: parent.width
-                                verticalAlignment: TextInput.AlignVCenter
-                                rightPadding: root.unit.length > 0 || root.percent
-                                              ? Theme.spacingLg + 14 : Theme.spacingLg
-                                onAccepted: valuePopup.apply()
-                            }
-
-                            Text {
-                                anchors.right: parent.right
-                                anchors.rightMargin: Theme.spacingLg
-                                anchors.verticalCenter: parent.verticalCenter
-                                visible: root.unit.length > 0 || root.percent
-                                text: root.percent ? "%" : root.unit
-                                color: Theme.mutedForeground
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeXs
-                            }
-                        }
-                    }
+                    text: qsTr("Drag to adjust, click to type an exact %1").arg(root.propDef.label.toLowerCase())
+                    visible: readoutArea.containsMouse && !readoutBox.typing && !readoutArea.scrubbing
                 }
             }
         }

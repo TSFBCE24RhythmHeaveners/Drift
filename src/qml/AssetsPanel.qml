@@ -3,23 +3,44 @@ import QtQuick.Controls.Basic
 import QtQuick.Window
 import QtQuick.Dialogs
 import Drift
-import "components"
-import "components/assets"
-
 PanelFrame {
     id: root
 
     // When true (Android bottom sheet), hide the side tab rail — the phone
     // bottom rail already picks the active library tab.
     property bool sheetMode: false
+    // Pins the panel to one tab and drops the rail: the standalone "Library tab" workspace panes.
+    property string lockedTab: ""
+    readonly property bool locked: lockedTab !== ""
+    readonly property bool railHidden: sheetMode || locked
+    readonly property var selectedMediaAssetIds: mediaBrowser.item?.selectedAssetIds ?? []
 
     // One of the click-to-add tabs (text, subtitles, stickers, shapes) put a clip
     // on the timeline. The phone shell closes the sheet on this; desktop, where
     // the panel is docked, simply leaves it unconnected.
     signal addCompleted()
-    border.width: sheetMode ? 0 : 1
-    radius: sheetMode ? 0 : Theme.radiusSm
-    color: sheetMode ? "transparent" : Theme.panelBackground
+    // The slot paints the docked surface. Sheet mode draws nothing so the
+    // sheet chrome stays the only background.
+    color: "transparent"
+    border.width: 0
+    radius: sheetMode ? 0 : Theme.c.assetsPanel.radius
+
+    ThemeSlot {
+        anchors.fill: parent
+        visible: !root.sheetMode
+        z: -1
+        slot: "AssetsPanelBackground"
+        control: root
+        fallback: Component {
+            Rectangle {
+                anchors.fill: parent
+                radius: Theme.c.assetsPanel.radius
+                color: Theme.c.assetsPanel.background
+                border.width: Theme.c.assetsPanel.borderWidth
+                border.color: Theme.c.assetsPanel.border
+            }
+        }
+    }
 
     Component.onCompleted: AssetLibrary.ensureAllMedia()
 
@@ -34,7 +55,7 @@ PanelFrame {
 
     // True while an import is running, so the panel can show progress. The folder walk counts:
     // it is the half that can take a while on a deep tree or a sandboxed (portal) mount.
-    readonly property bool importing: AssetLibrary.importing || EditorState.importingFolder
+    readonly property bool importing: AssetLibrary.importing || EditorState.bin.importingFolder
 
     // A single id goes through the existing single-asset add so that case is byte-for-byte the
     // behavior it always was; only an actual multi-selection goes through the batch add, which
@@ -55,14 +76,14 @@ PanelFrame {
         // (resolution/orientation) — same flow as dragging onto the timeline (see
         // TimelinePanel.qml/AndroidTimeline.qml). For a multi-selection, offer it from the
         // first asset that actually needs it, not always assetIds[0].
-        if (typeof Window === "undefined" || !Window.window || !Window.window.configureAndAddAsset) {
+        if (!ShellBridge.main || !ShellBridge.main.configureAndAddAsset) {
             runAdd()
             return
         }
         for (const id of assetIds) {
             const index = AssetLibrary.indexOfId(id)
             if (index >= 0 && EditorState.shouldConfigureProjectForAsset(index)) {
-                Window.window.configureAndAddAsset(index, runAdd)
+                ShellBridge.main.configureAndAddAsset(index, runAdd)
                 return
             }
         }
@@ -218,7 +239,7 @@ PanelFrame {
         onAccepted: {
             const label = newFolderNameField.text.trim()
             if (label.length > 0)
-                EditorState.createBinFolder(label, EditorState.currentBinFolderId)
+                EditorState.bin.createFolder(label, EditorState.bin.currentFolderId)
         }
     }
 
@@ -261,7 +282,7 @@ PanelFrame {
                 return
             const label = folderRenameField.text.trim()
             if (label.length > 0)
-                EditorState.renameBinFolder(root.pendingFolderRenameId, label)
+                EditorState.bin.renameFolder(root.pendingFolderRenameId, label)
             root.pendingFolderRenameId = ""
         }
         onRejected: root.pendingFolderRenameId = ""
@@ -283,7 +304,7 @@ PanelFrame {
     function requestMoveAssetToFolder(assetIds) {
         root.pendingMoveFolderId = ""
         root.pendingMoveAssetIds = assetIds
-        root.pendingMoveAssetCurrentFolderId = EditorState.currentBinFolderId
+        root.pendingMoveAssetCurrentFolderId = EditorState.bin.currentFolderId
         folderPickerDialog.open()
     }
 
@@ -393,16 +414,16 @@ PanelFrame {
             Rectangle {
                 width: parent.width
                 height: Math.min(pickerList.contentHeight + 2, 280)
-                radius: Theme.radiusSm
-                color: Theme.appBackground
-                border.width: Theme.borderWidth
-                border.color: Theme.panelBorder
+                radius: Theme.c.assetsPanel.pickerRadius
+                color: Theme.c.assetsPanel.pickerBackground
+                border.width: Theme.c.assetsPanel.pickerBorderWidth
+                border.color: Theme.c.assetsPanel.pickerBorder
                 clip: true
 
                 ListView {
                     id: pickerList
                     anchors.fill: parent
-                    anchors.margins: 1
+                    anchors.margins: Theme.c.assetsPanel.pickerBorderWidth
                     clip: true
                     model: folderPickerDialog.folderOptions
                     interactive: contentHeight > height
@@ -421,7 +442,7 @@ PanelFrame {
                         }
 
                         background: Rectangle {
-                            color: optionRow.hovered ? Theme.popoverHover : "transparent"
+                            color: optionRow.hovered ? Theme.c.assetsPanel.optionBackgroundHover : "transparent"
                         }
 
                         contentItem: Text {
@@ -431,7 +452,7 @@ PanelFrame {
                             verticalAlignment: Text.AlignVCenter
                             text: optionRow.modelData.path
                             elide: Text.ElideRight
-                            color: Theme.panelForeground
+                            color: Theme.c.assetsPanel.optionForeground
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSizeSm
                         }
@@ -444,10 +465,10 @@ PanelFrame {
                             const targetId = optionRow.modelData.id
                             folderPickerDialog.close()
                             if (root.pendingMoveFolderId !== "") {
-                                EditorState.moveBinFolder(root.pendingMoveFolderId, targetId)
+                                EditorState.bin.moveFolder(root.pendingMoveFolderId, targetId)
                                 root.pendingMoveFolderId = ""
                             } else if (root.pendingMoveAssetIds.length > 0) {
-                                EditorState.moveAssetsToFolder(root.pendingMoveAssetIds, targetId)
+                                EditorState.bin.moveAssetsToFolder(root.pendingMoveAssetIds, targetId)
                                 root.pendingMoveAssetIds = []
                             }
                         }
@@ -463,7 +484,91 @@ PanelFrame {
         var url = FileDialogs.openFile(qsTr("Replace Media"), [AssetLibrary.mediaNameFilter()])
         if (!url || url.toString() === "")
             return
-        EditorState.replaceAssetSource(assetIndex, url)
+        EditorState.bin.replaceSource(assetIndex, url)
+    }
+
+    function requestLinkProxy(assetId) {
+        var url = FileDialogs.openFile(qsTr("Link Proxy"), [AssetLibrary.mediaNameFilter()])
+        if (!url || url.toString() === "")
+            return
+        AssetLibrary.linkProxy(assetId, url)
+    }
+
+    property string pendingProxyPattern: ""
+    property int pendingProxyMatches: 0
+
+    ThemedDialog {
+        id: linkProxyPatternDialog
+        title: qsTr("Link proxies by pattern?")
+        acceptText: qsTr("Link")
+        preferredWidth: Theme.dialogWidthSm
+
+        contentItem: ThemedLabel {
+            width: parent ? parent.width : Theme.dialogWidthSm
+            wrapMode: Text.WordWrap
+            size: "sm"
+            text: qsTr("“%1” matches this clip and %n other clips in the project. Drift will link them all, and link future imports whose proxy follows the same name.", "", root.pendingProxyMatches)
+                .arg(root.pendingProxyPattern)
+        }
+
+        onAccepted: {
+            AssetLibrary.commitProxyRule(root.pendingProxyPattern)
+            Toasts.success(qsTr("Linked this clip and %n other clips.", "", root.pendingProxyMatches))
+        }
+    }
+
+    ThemedDialog {
+        id: proxyFallbackDialog
+        property string folders: ""
+        title: qsTr("Couldn’t save files next to the media")
+        acceptText: qsTr("OK")
+        showReject: false
+        preferredWidth: Theme.dialogWidthSm
+
+        contentItem: Column {
+            width: parent ? parent.width : Theme.dialogWidthSm
+            spacing: Theme.spacingMd
+
+            ThemedLabel {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                size: "sm"
+                text: qsTr("Drift can’t write to the folders listed below, because of their permissions or because they are on a read-only network share. The proxies or reversed clips were saved to Drift’s cache instead.")
+            }
+            TextEdit {
+                width: parent.width
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.Wrap
+                color: Theme.c.assetsPanel.fallbackForeground
+                selectionColor: Theme.c.assetsPanel.fallbackSelection
+                selectedTextColor: Theme.c.assetsPanel.fallbackSelectionForeground
+                font.family: Theme.monoFontFamily
+                font.pixelSize: Theme.fontSizeSm
+                text: proxyFallbackDialog.folders
+            }
+        }
+    }
+
+    Connections {
+        target: AssetLibrary
+
+        function onProxyLinkProbed(assetId, pattern, otherMatches, error) {
+            if (error.length > 0) {
+                Toasts.error(error)
+            } else if (otherMatches === 0) {
+                AssetLibrary.commitProxyRule(pattern)
+                Toasts.success(qsTr("Linked the proxy. Future imports named like “%1” will link automatically.").arg(pattern))
+            } else {
+                root.pendingProxyPattern = pattern
+                root.pendingProxyMatches = otherMatches
+                linkProxyPatternDialog.open()
+            }
+        }
+        function onProxyLocationFallback(folders) {
+            proxyFallbackDialog.folders = folders.join("\n")
+            proxyFallbackDialog.open()
+        }
     }
 
     // Writes an image row back out to disk — the way a freeze frame captured in the preview
@@ -478,14 +583,36 @@ PanelFrame {
         ], asset.name, "png")
         if (!url || url.toString() === "")
             return
-        if (EditorState.exportAssetImage(assetIndex, url))
+        if (EditorState.bin.exportImage(assetIndex, url))
             Toasts.success(qsTr("Exported “%1”.").arg(asset.name))
         else
             Toasts.error(qsTr("Couldn’t export that image."))
     }
 
+    // Copies the file behind a bin row out to disk as is, no transcode.
+    function requestSaveAssetAs(assetIndex) {
+        const asset = AssetLibrary.assetAt(assetIndex)
+        if (!asset || !asset.path)
+            return
+        const fileName = asset.path.substring(asset.path.lastIndexOf("/") + 1)
+        const dot = fileName.lastIndexOf(".")
+        const suffix = dot > 0 ? fileName.substring(dot + 1) : ""
+        let baseName = asset.name || (dot > 0 ? fileName.substring(0, dot) : fileName)
+        if (suffix && baseName.toLowerCase().endsWith("." + suffix.toLowerCase()))
+            baseName = baseName.substring(0, baseName.length - suffix.length - 1)
+        const filters = suffix ? [qsTr("%1 file (*.%2)").arg(suffix.toUpperCase()).arg(suffix)]
+                               : [qsTr("All files (*)")]
+        var url = FileDialogs.saveFile(qsTr("Save As"), filters, baseName, suffix)
+        if (!url || url.toString() === "")
+            return
+        if (EditorState.bin.saveAs(assetIndex, url))
+            Toasts.info(qsTr("Saving “%1”…").arg(asset.name))
+        else
+            Toasts.error(qsTr("Couldn’t save “%1”.").arg(asset.name))
+    }
+
     Connections {
-        target: EditorState
+        target: EditorState.bin
 
         // Hitting the limit outranks the skipped count: the walk stopped early, so what it passed
         // over is only part of the story and saying both would suggest otherwise.
@@ -501,8 +628,15 @@ PanelFrame {
             }
         }
 
+        function onSaveFinished(ok, name) {
+            if (ok)
+                Toasts.success(qsTr("Saved “%1”.").arg(name))
+            else
+                Toasts.error(qsTr("Couldn’t save “%1”.").arg(name))
+        }
+
         // The probe runs off-thread, so the outcome comes back here rather than from the call.
-        function onAssetReplaceFinished(ok, message, adjustedClips) {
+        function onReplaceFinished(ok, message, adjustedClips) {
             if (!ok) {
                 Toasts.warning(message)
             } else if (adjustedClips > 0) {
@@ -512,11 +646,12 @@ PanelFrame {
                 Toasts.success(qsTr("Replaced with “%1”.").arg(message))
             }
         }
-        function onAssetEditFinished(ok, message) {
+
+        function onEditFinished(ok, message) {
             if (!ok) {
                 if (message && message.length > 0)
                     Toasts.warning(message)
-            } else if (EditorState.assetEditIsConversion) {
+            } else if (EditorState.bin.editIsConversion) {
                 Toasts.success(qsTr("“%1” is now in an edit-friendly format.").arg(message))
             } else {
                 Toasts.success(qsTr("Saved “%1”. Drag it onto the timeline.").arg(message))
@@ -533,14 +668,14 @@ PanelFrame {
 
     // Imports a whole directory: a new bin folder mirrors the picked folder (and everything
     // nested under it), and every media file lands in the bin folder matching its containing
-    // directory. EditorState.importFolder does the walk synchronously — probing and
+    // directory. EditorState.bin.importFolder does the walk synchronously — probing and
     // thumbnailing each file still happens in the background the same as any other import.
     function importFolder() {
         var url = FileDialogs.openDirectory(qsTr("Import Folder"))
         if (!url || url.toString() === "")
             return
         // The walk runs off-thread, so the outcome arrives as onFolderImportFinished below.
-        if (!EditorState.importFolder(url))
+        if (!EditorState.bin.importFolder(url))
             Toasts.error(qsTr("Couldn’t import that folder."))
     }
 
@@ -559,6 +694,8 @@ PanelFrame {
     // Selects a tab by id. Used by cross-panel jumps such as the properties
     // panel's "Browse effects" / "Browse audio effects" empty-state actions.
     function showTab(tabId) {
+        if (root.locked)
+            return
         for (var i = 0; i < tabsModel.count; ++i) {
             if (tabsModel.get(i).tabId === tabId) {
                 root.activeTab = i
@@ -567,21 +704,29 @@ PanelFrame {
         }
     }
 
+    function tabIndexOf(tabId) {
+        for (let i = 0; i < tabsModel.count; ++i) {
+            if (tabsModel.get(i).tabId === tabId)
+                return i
+        }
+        return 0
+    }
+
     function tabLabel(tabId) {
         return tabLabels[tabId] || ""
     }
 
     function kindsForTab(tabId) {
-        if (tabId === "media") return ["video", "image", "audio", "vector", "model3d"]
+        if (tabId === "media") return ["video", "image", "audio", "vector", "model3d", "pdf"]
         return []
     }
 
     function assetVisible(kind) {
         const tabId = tabsModel.get(activeTab).tabId
-        if (tabId === "text" || tabId === "subtitles" || tabId === "stickers" || tabId === "shapes"
+        if (tabId === "text" || tabId === "subtitles" || tabId === "speech" || tabId === "stickers" || tabId === "shapes"
                 || tabId === "effects" || tabId === "templates" || tabId === "adjustment"
                 || tabId === "sounds" || tabId === "transitions" || tabId === "masks"
-                || tabId === "shortcuts" || tabId === "scenes" || tabId === "market")
+                || tabId === "scenes" || tabId === "market")
             return false
         const kinds = kindsForTab(tabId)
         return kinds.length === 0 || kinds.indexOf(kind) >= 0
@@ -594,6 +739,7 @@ PanelFrame {
         "market": qsTr("Market"),
         "text": qsTr("Text"),
         "subtitles": qsTr("Subtitles"),
+        "speech": qsTr("Speech"),
         "stickers": qsTr("Stickers"),
         "shapes": qsTr("Shapes"),
         "scenes": qsTr("Scenes"),
@@ -601,8 +747,7 @@ PanelFrame {
         "effects": qsTr("Effects"),
         "templates": qsTr("Templates"),
         "transitions": qsTr("Transitions"),
-        "sounds": qsTr("Audio FX"),
-        "shortcuts": qsTr("Shortcuts")
+        "sounds": qsTr("Audio FX")
     })
 
     // Rail order: project media → on-canvas graphics → processing → prefs.
@@ -614,6 +759,7 @@ PanelFrame {
         ListElement { tabId: "market"; icon: 12; separatorAfter: true }
         ListElement { tabId: "text"; icon: 1; separatorAfter: false }
         ListElement { tabId: "subtitles"; icon: 2; separatorAfter: false }
+        ListElement { tabId: "speech"; icon: 13; separatorAfter: false }
         ListElement { tabId: "stickers"; icon: 3; separatorAfter: false }
         ListElement { tabId: "shapes"; icon: 4; separatorAfter: false }
         ListElement { tabId: "masks"; icon: 11; separatorAfter: true }
@@ -622,7 +768,6 @@ PanelFrame {
         ListElement { tabId: "templates"; icon: 6; separatorAfter: false }
         ListElement { tabId: "transitions"; icon: 7; separatorAfter: false }
         ListElement { tabId: "sounds"; icon: 8; separatorAfter: true }
-        ListElement { tabId: "shortcuts"; icon: 9; separatorAfter: false }
     }
     property var tabIcons: [
         Theme.icons.film,
@@ -637,9 +782,10 @@ PanelFrame {
         Theme.icons.keyboard,
         Theme.icons.listVideo,
         Theme.icons.mask,
-        Theme.icons.store
+        Theme.icons.store,
+        Theme.icons.micVocal
     ]
-    property int activeTab: 0
+    property int activeTab: locked ? tabIndexOf(lockedTab) : 0
     readonly property string currentTabId: tabsModel.get(activeTab).tabId
 
     // Per-tab view state that outlives the tab being unloaded, keyed by tabId. Plain
@@ -660,7 +806,7 @@ PanelFrame {
             tab.searchText = saved.search
         if (saved.category === undefined || !tab.categories)
             return
-        if (saved.category === "__favorites__"
+        if (saved.category === "__favorites__" || saved.category === "__mine__"
                 || tab.categories.some(category => category.id === saved.category))
             tab.activeCategory = saved.category
     }
@@ -690,6 +836,7 @@ PanelFrame {
     DropArea {
         id: assetDropArea
         anchors.fill: parent
+        enabled: !root.locked || root.kindsForTab(root.currentTabId).length > 0
         keys: ["text/uri-list"]
         onDropped: (drop) => {
             if (drop.hasUrls)
@@ -697,308 +844,68 @@ PanelFrame {
         }
     }
 
-    // Drag feedback. Dropping files onto the panel used to give no visual
-    // confirmation that it was even a valid target.
-    Rectangle {
-        anchors.fill: parent
-        z: 50
-        radius: Theme.radiusMd
-        color: Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, 0.08)
-        border.width: Theme.borderWidthFocus
-        border.color: Theme.primary
-        visible: opacity > 0
-        opacity: assetDropArea.containsDrag ? 1 : 0
-
-        Behavior on opacity {
-            NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-        }
-
-        EmptyState {
-            anchors.centerIn: parent
-            glyph: Theme.icons.upload
-            title: qsTr("Drop to import")
-            hint: qsTr("Video, audio and image files")
-        }
+    AssetsPanelDropOverlay {
+        active: assetDropArea.containsDrag
     }
 
-    // Import progress. Probing and thumbnailing a large selection blocks for a
-    // while; the panel used to simply appear frozen.
-    Rectangle {
-        anchors.fill: parent
-        z: 60
-        color: Theme.panelBackground
-        opacity: root.importing ? 0.92 : 0
-        visible: opacity > 0
-
-        Behavior on opacity {
-            NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-        }
-
-        EmptyState {
-            anchors.centerIn: parent
-            glyph: Theme.icons.spinner
-            glyphSpinning: root.importing
-            title: qsTr("Importing…")
-            hint: qsTr("Reading media and generating thumbnails.")
-        }
+    AssetsPanelImportOverlay {
+        active: root.importing && assetDropArea.enabled
     }
 
     Row {
         anchors.fill: parent
+        anchors.margins: root.sheetMode ? 0 : Theme.c.assetsPanel.borderWidth
         spacing: 0
 
-        // Vertical tab rail. Up/Down move between tabs once it has focus.
-        // Flickable so short panel heights can still reach lower icons.
-        // Hidden in sheetMode — AndroidBottomRail drives showTab() instead.
-        Flickable {
+        AssetsPanelTabRail {
             id: tabRail
-            width: root.sheetMode ? 0 : Theme.tabRailWidth
-            height: parent.height
-            visible: !root.sheetMode
-            contentWidth: width
-            contentHeight: tabRailColumn.height
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            interactive: contentHeight > height
-            ScrollBar.vertical: AppScrollBar {
-                policy: tabRail.contentHeight > tabRail.height
-                        ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
-            }
-
-            Accessible.role: Accessible.PageTabList
-
-            Keys.onUpPressed: function(event) {
-                root.activeTab = (root.activeTab - 1 + tabsModel.count) % tabsModel.count
-                event.accepted = true
-            }
-            Keys.onDownPressed: function(event) {
-                root.activeTab = (root.activeTab + 1) % tabsModel.count
-                event.accepted = true
-            }
-
-            Column {
-                id: tabRailColumn
-                width: parent.width
-                topPadding: Theme.spacingSm
-                spacing: Theme.spacingXs
-
-                Repeater {
-                    model: tabsModel
-                    delegate: Column {
-                        required property int index
-                        required property var model
-
-                        width: parent.width
-                        spacing: 0
-
-                        IconButton {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            glyph: root.tabIcons[model.icon]
-                            variant: "ghost"
-                            tooltip: tabLabels[model.tabId]
-                            active: root.activeTab === index
-                            onClicked: root.activeTab = index
-
-                            Accessible.role: Accessible.PageTab
-                            Accessible.name: tabLabels[model.tabId]
-                            Accessible.checked: root.activeTab === index
-                        }
-
-                        // Group divider — sits in the rail gap so related tabs
-                        // cluster and prefs stay visually apart from content.
-                        Item {
-                            visible: model.separatorAfter
-                            width: parent.width
-                            height: visible ? Theme.spacingLg + Theme.borderWidth : 0
-
-                            Rectangle {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: Theme.iconSizeSm
-                                height: Theme.borderWidth
-                                radius: height / 2
-                                color: Theme.panelBorder
-                                opacity: 0.85
-                            }
-                        }
-                    }
-                }
-            }
+            sheetMode: root.railHidden
+            activeTab: root.activeTab
+            tabCount: tabsModel.count
+            tabLabels: root.tabLabels
+            tabIcons: root.tabIcons
+            tabs: tabsModel
+            onTabSelected: (index) => root.activeTab = index
         }
 
         Rectangle {
-            width: root.sheetMode ? 0 : Theme.borderWidth
+            width: root.railHidden ? 0 : Theme.c.assetsPanel.borderWidth
             height: parent.height
-            visible: !root.sheetMode
-            color: Theme.panelBorder
+            visible: !root.railHidden
+            color: Theme.c.assetsPanel.railBorder
         }
 
         Column {
             id: assetsContent
-            width: parent.width - (root.sheetMode ? 0 : (Theme.tabRailWidth + Theme.borderWidth))
+            width: parent.width - (root.railHidden ? 0 : (Theme.tabRailWidth + Theme.c.assetsPanel.borderWidth))
             height: parent.height
 
-            Rectangle {
+            AssetsPanelHeader {
                 id: assetsHeader
-                // In a sheet the title is the sheet's own, so this bar only earns its height when
-                // the tab has actions to put in it (emoji picker, media import); otherwise it was
-                // an empty band between the sheet title and the content.
                 readonly property string tabId: tabsModel.get(root.activeTab).tabId
-                readonly property bool hasActions: tabId === "stickers" || kindsForTab(tabId).length > 0
+                readonly property bool hasActions: kindsForTab(tabId).length > 0
+                readonly property bool searchBarTab: ["text", "stickers", "shapes", "effects", "templates",
+                                                      "transitions", "sounds"].indexOf(tabId) >= 0
                 width: parent.width
-                height: root.sheetMode && !hasActions ? 0 : Theme.panelHeaderHeight
+                height: (searchBarTab && !root.locked) || (root.sheetMode && !hasActions) ? 0 : Theme.panelHeaderHeight
                 visible: height > 0
-                // Matches the surrounding PanelFrame; it used to paint the app
-                // background, so the header read as a different surface than the
-                // panel it belongs to.
-                color: Theme.panelBackground
-
-                Rectangle {
-                    anchors.bottom: parent.bottom
-                    width: parent.width
-                    height: Theme.borderWidth
-                    color: Theme.panelBorder
-                }
-
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.pagePadding
-                    anchors.verticalCenter: parent.verticalCenter
-                    // Sheet chrome already shows the tab title.
-                    visible: !root.sheetMode
-                    text: tabLabels[tabsModel.get(root.activeTab).tabId]
-                    color: Theme.mutedForeground
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSizeSm
-                }
-
-                // The sticker packs are a curated subset of the emoji set, so the rest live behind
-                // this button rather than being unreachable.
-                IconButton {
-                    id: emojiPickerButton
-                    anchors.right: parent.right
-                    anchors.rightMargin: 8
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: tabsModel.get(root.activeTab).tabId === "stickers"
-                    glyph: Theme.icons.plus
-                    variant: "ghost"
-                    tooltip: qsTr("More emoji")
-                    active: emojiPicker.opened
-                    onClicked: emojiPicker.opened ? emojiPicker.close() : emojiPicker.open()
-                }
-
-                Row {
-                    anchors.right: parent.right
-                    anchors.rightMargin: 8
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 6
-                    visible: kindsForTab(tabsModel.get(root.activeTab).tabId).length > 0
-
-                    ThemedButton {
-                        text: qsTr("New Folder")
-                        variant: "ghost"
-                        glyph: Theme.icons.folder
-                        tooltip: qsTr("Create a new folder here")
-                        anchors.verticalCenter: parent.verticalCenter
-                        onClicked: newFolderDialog.open()
-                    }
-
-                    // Split button: the left half imports files, the chevron opens the
-                    // folder variant. Both halves share one bordered box so the header
-                    // reads as two actions, not three competing buttons.
-                    Rectangle {
-                        id: importSplit
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: importFilesHalf.width
-                               + (importMenuHalf.visible ? importSplitDivider.width + importMenuHalf.width : 0)
-                        height: Theme.controlHeight
-                        radius: Theme.radiusSm
-                        color: "transparent"
-                        border.width: Theme.borderWidth
-                        border.color: Theme.panelBorder
-                        opacity: root.importing ? 0.6 : 1
-
-                        Row {
-                            anchors.fill: parent
-                            spacing: 0
-
-                            ThemedButton {
-                                id: importFilesHalf
-                                text: qsTr("Import")
-                                variant: "ghost"
-                                flat: true
-                                radius: Theme.radiusXs
-                                glyph: Theme.icons.upload
-                                tooltip: qsTr("Import video, audio or image files")
-                                enabled: !root.importing
-                                height: parent.height - Theme.borderWidth * 2
-                                anchors.verticalCenter: parent.verticalCenter
-                                onClicked: root.importMedia()
-                            }
-
-                            Rectangle {
-                                id: importSplitDivider
-                                width: Theme.borderWidth
-                                height: parent.height - Theme.spacingLg
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: Theme.panelBorder
-                                visible: importMenuHalf.visible
-                            }
-
-                            ThemedButton {
-                                id: importMenuHalf
-                                variant: "ghost"
-                                flat: true
-                                radius: Theme.radiusXs
-                                glyph: Theme.icons.chevronDown
-                                glyphSize: Theme.iconSizeSm
-                                leftPadding: Theme.spacingLg
-                                rightPadding: Theme.spacingLg
-                                tooltip: qsTr("More import options")
-                                enabled: !root.importing
-                                visible: !Theme.touchUi
-                                height: parent.height - Theme.borderWidth * 2
-                                anchors.verticalCenter: parent.verticalCenter
-                                onClicked: importMenu.popup(0, importSplit.height + Theme.spacingSm)
-                            }
-                        }
-
-                        ThemedContextMenu {
-                            id: importMenu
-                            implicitWidth: 220
-
-                            ThemedMenuItem {
-                                text: qsTr("Import Files…")
-                                icon.name: Theme.icons.upload
-                                onTriggered: root.importMedia()
-                            }
-
-                            ThemedMenuItem {
-                                text: qsTr("Import Folder…")
-                                icon.name: Theme.icons.folderInput
-                                onTriggered: root.importFolder()
-                            }
-
-                            ThemedMenuSeparator { }
-
-                            ThemedMenuItem {
-                                text: qsTr("Collect Media to Folder…")
-                                icon.name: Theme.icons.folderOutput
-                                enabled: !EditorState.collectingMedia
-                                onTriggered: root.collectMedia()
-                            }
-                        }
-                    }
-                }
+                title: tabLabels[tabId]
+                showTitle: !root.sheetMode
+                showActions: hasActions
+                importing: root.importing
+                onNewFolderRequested: newFolderDialog.open()
+                onImportFilesRequested: root.importMedia()
+                onImportFolderRequested: root.importFolder()
+                onCollectMediaRequested: root.collectMedia()
             }
 
             EmojiPicker {
                 id: emojiPicker
-                // Hangs off the button at the panel's right edge, and slides back rather than
-                // running off-window when the panel is dragged narrow.
-                x: Math.max(-Theme.tabRailWidth, assetsContent.width - width - 8)
-                y: Theme.panelHeaderHeight + 4
-                onAddonManagerRequested: root.Window.window.openAddonManager("stickers")
+                // Hangs off the stickers search bar's + at the panel's right edge, and slides back
+                // rather than running off-window when the panel is dragged narrow.
+                x: Math.max(root.railHidden ? 0 : -Theme.tabRailWidth, assetsContent.width - width - Theme.pagePadding)
+                y: assetsHeader.height + Theme.pagePadding + Theme.controlHeight + 4
+                onAddonManagerRequested: ShellBridge.main.openAddonManager("stickers")
                 onAdded: root.addCompleted()
             }
 
@@ -1012,6 +919,12 @@ PanelFrame {
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     TextAssetsTab {
+                        Component.onCompleted: {
+                            const saved = root.tabState["text"] || {}
+                            if (saved.section)
+                                section = saved.section
+                        }
+                        onSectionChanged: root.rememberTab("text", "section", section)
                         onAdded: root.addCompleted()
                     }
                 }
@@ -1027,6 +940,17 @@ PanelFrame {
                     SubtitlesTab {
                         onAdded: root.addCompleted()
                     }
+                }
+            }
+
+            Loader {
+                active: root.currentTabId === "speech"
+                visible: active
+                width: parent.width
+                height: parent.height - assetsHeader.height
+                opacity: root.tabOpacity
+                sourceComponent: Component {
+                    SpeechTab { }
                 }
             }
 
@@ -1053,6 +977,8 @@ PanelFrame {
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     StickersTab {
+                        emojiPickerOpen: emojiPicker.opened
+                        onEmojiPickerRequested: emojiPicker.opened ? emojiPicker.close() : emojiPicker.open()
                         onAdded: root.addCompleted()
                         Component.onCompleted: root.restoreBrowserTab(this, "stickers")
                         onSearchTextChanged: root.rememberTab("stickers", "search", searchText)
@@ -1094,20 +1020,6 @@ PanelFrame {
                         }
                         onSortByScoreChanged: root.rememberTab("scenes", "sortByScore", sortByScore)
                         onLabelFilterChanged: root.rememberTab("scenes", "labelFilter", labelFilter)
-                    }
-                }
-            }
-
-            Loader {
-                active: root.currentTabId === "shortcuts"
-                visible: active
-                width: parent.width
-                height: parent.height - assetsHeader.height
-                opacity: root.tabOpacity
-                sourceComponent: Component {
-                    ShortcutsTab {
-                        Component.onCompleted: root.restoreBrowserTab(this, "shortcuts")
-                        onSearchTextChanged: root.rememberTab("shortcuts", "search", searchText)
                     }
                 }
             }
@@ -1172,6 +1084,7 @@ PanelFrame {
 
             // Shared media browser used by the Media tab.
             Loader {
+                id: mediaBrowser
                 active: root.kindsForTab(root.currentTabId).length > 0
                 visible: active
                 width: parent.width
@@ -1182,14 +1095,16 @@ PanelFrame {
                         importing: root.importing
                         assetVisibleFn: function(kind) { return root.assetVisible(kind) }
                         onPreviewRequested: (assetIndex) => {
-                            if (typeof Window !== "undefined" && Window.window && Window.window.openMediaPreview)
-                                Window.window.openMediaPreview(assetIndex)
+                            if (ShellBridge.main && ShellBridge.main.openMediaPreview)
+                                ShellBridge.main.openMediaPreview(assetIndex)
                         }
                         onAddToTimelineRequested: (assetIds) => root.requestAddToTimeline(assetIds)
                         onRemoveRequested: (assetIds) => root.requestRemoveAsset(assetIds)
                         onReplaceRequested: (assetIndex) => root.requestReplaceAsset(assetIndex)
+                        onLinkProxyRequested: (assetId) => root.requestLinkProxy(assetId)
                         onRenameRequested: (assetIndex) => root.requestRenameAsset(assetIndex)
                         onExportRequested: (assetIndex) => root.requestExportAsset(assetIndex)
+                        onSaveAsRequested: (assetIndex) => root.requestSaveAssetAs(assetIndex)
                         onImportRequested: root.importMedia()
                         onImportFolderRequested: root.importFolder()
                         onMoveToFolderRequested: (assetIds) => root.requestMoveAssetToFolder(assetIds)

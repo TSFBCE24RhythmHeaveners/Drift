@@ -1,8 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import Drift
-import "components"
-
 // What the bottom rail's [+] opens: the five things that put a new clip on the
 // timeline, which used to be five permanent rail slots each.
 //
@@ -60,6 +58,12 @@ AndroidBottomSheet {
             label: qsTr("Subtitles"),
             detail: qsTr("Captions, generated or imported"),
             icon: Theme.icons.captions
+        },
+        {
+            id: "speech",
+            label: qsTr("Speech"),
+            detail: qsTr("Turn a script into a voiceover"),
+            icon: Theme.icons.micVocal
         },
         {
             id: "stickers",

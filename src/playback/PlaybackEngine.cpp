@@ -1,14 +1,15 @@
-#include "PlaybackEngine.h"
+#include "playback/PlaybackEngine.h"
 
-#include "PerfLog.h"
+#include "playback/stats/PerfLog.h"
+#include "engine/EngineTuning.h"
 
 #include <cstdio>
 
-#include "engine/AndroidUri.h"
-#include "engine/ClipReaderPool.h"
-#include "engine/GpuCompositor.h"
-#include "engine/HwAccel.h"
-#include "engine/ReverseProxyCache.h"
+#include "engine/platform/AndroidUri.h"
+#include "engine/decode/readers/ClipReaderPool.h"
+#include "engine/compositor/GpuCompositor.h"
+#include "engine/decode/hw/HwAccel.h"
+#include "engine/encode/proxies/ReverseProxyCache.h"
 
 #include <QSettings>
 #include <QVariantMap>
@@ -85,28 +86,22 @@ constexpr int kGpuProbeDelayMs = 300;
 constexpr int kGpuProbeIntervalMs = 250;
 constexpr int kGpuProbeMaxAttempts = 20;
 
-// How much decoded source each clip's reader keeps buffered ahead of the
-// playhead during fast playback. This absorbs frames that decode slower than
-// realtime (long GOPs, a heavy transition) by spending the slack on either side
-// of them. The byte budget in ClipReader, sized from physical memory, bounds it too — that is
-// what gives 4K room to read ahead at all. Not longer than this: 5 s was measured slower after a
-// seek (two 1080p30 software streams dropped from ~15 to ~12 fps), because the prefetch then
-// competes with the frames playback actually needs. Every edit or seek discards the part of the
-// buffer past the change.
-constexpr drift::TimeUs kReadAheadUs = 2 * drift::kUsPerSecond;
+constexpr qint64 kScopeIntervalMs = 100;
+constexpr int kScopeReadbackWidth = 256;
 
 // The rates the preview transport offers. All sit inside the stretcher's own clamp
 // (kMinCurveSpeed..kMaxCurveSpeed), and nothing outside this list is accepted.
 constexpr std::array<double, 6> kPlaybackRates{0.25, 0.5, 1.0, 1.5, 2.0, 4.0};
 
-// "full", "half" and "quarter" are fractions of the preview panel (device pixels),
-// never of the project: Full matches the panel, Half/Quarter are 1/2 and 1/4 of
+// "full", "half", "quarter" and "eighth" are fractions of the preview panel (device pixels),
+// never of the project: Full matches the panel, Half/Quarter/Eighth are 1/2, 1/4 and 1/8 of
 // that, all capped at project resolution. "auto" is Full plus a compositor ratchet
 // that trades remaining resolution for cadence when playback cannot keep up.
 bool isKnownPreviewQuality(const QString &quality)
 {
     return quality == QStringLiteral("full") || quality == QStringLiteral("half")
-        || quality == QStringLiteral("quarter") || quality == QStringLiteral("auto");
+        || quality == QStringLiteral("quarter") || quality == QStringLiteral("eighth")
+        || quality == QStringLiteral("auto");
 }
 
 constexpr QLatin1String kHwPrefix("hw:");
@@ -219,8 +214,7 @@ PlaybackEngine::PlaybackEngine(QObject *parent)
     m_compositor.setStats(&m_stats);
 
     m_audio.setFillCallback([this](float *stereo, int frames) { return fillAudio(stereo, frames); });
-    connect(&m_audio, &AudioOutputChannel::sampleRateChanged, this,
-            &PlaybackEngine::onAudioSampleRateChanged);
+    connect(&m_audio, &AudioOutputChannel::sinkRebuilt, this, &PlaybackEngine::onAudioSinkRebuilt);
     connect(&m_audio, &AudioOutputChannel::errorOccurred, this, &PlaybackEngine::audioError);
     m_sampleRate = m_audio.sampleRate();
 
@@ -293,16 +287,18 @@ void PlaybackEngine::ensureAudioSink()
     m_sampleRate = m_audio.sampleRate();
 }
 
-// The device would not take the project's rate, or the sink moved to a device that runs at a
-// different one. Everything downstream of the sink counts in output samples, so re-anchor it.
-void PlaybackEngine::onAudioSampleRateChanged()
+// The sink was reopened, possibly at a rate other than the project's. Its played position restarts
+// and its queue was dropped unheard, so carry on from what was actually heard, and re-anchor
+// everything downstream of the sink, which counts in output samples.
+void PlaybackEngine::onAudioSinkRebuilt()
 {
+    if (m_playing)
+        m_playheadUs = m_clock.currentTimeUs();
     m_sampleRate = m_audio.sampleRate();
     m_mixer.resetClipAudioState();
     m_audioStreamGeneration.fetch_add(1, std::memory_order_release);
     m_clock.reset(m_playheadUs, m_sampleRate);
     if (m_playing) {
-        m_sinkPlayedUsOffset = m_audio.processedUSecs();
         m_clock.start();
     }
 }
@@ -341,6 +337,24 @@ void PlaybackEngine::notifyProjectEdited()
     m_compositor.invalidateSnapshot();
     if (!m_editRefreshTimer.isActive())
         m_editRefreshTimer.start();
+}
+
+void PlaybackEngine::setPreviewEffectBypass(const QSet<QString> &clipIds, const QSet<QString> &catalogIds)
+{
+    m_compositor.setPreviewBypass(clipIds, catalogIds);
+    refreshFrame();
+}
+
+void PlaybackEngine::acquireScopes()
+{
+    if (m_scopeConsumers++ == 0 && !m_playing)
+        refreshFrame();
+}
+
+void PlaybackEngine::releaseScopes()
+{
+    if (m_scopeConsumers > 0)
+        --m_scopeConsumers;
 }
 
 void PlaybackEngine::setPlayheadUs(drift::TimeUs us)
@@ -397,7 +411,6 @@ void PlaybackEngine::resyncAudioAt(drift::TimeUs us)
     // reset() clears the running flag; resume the clock if we are still in play
     // so edits/seeks during playback don't freeze audio at one timeline spot.
     if (m_playing) {
-        m_sinkPlayedUsOffset = m_audio.processedUSecs();
         m_clock.start();
     }
 }
@@ -701,13 +714,12 @@ void PlaybackEngine::play()
 
     requestAudioFocus();
     ensureAudioSink();
-    m_sinkPlayedUsOffset = m_audio.processedUSecs();
     m_clock.start();
 
     pushAudioSnapshot();
 
     // Opening the device may settle on a rate the project did not ask for, which comes back as
-    // sampleRateChanged and re-anchors the clock — so this has to follow m_playing being set.
+    // sinkRebuilt and re-anchors the clock — so this has to follow m_playing being set.
     m_audio.start();
 
     emit playingChanged();
@@ -944,6 +956,10 @@ void PlaybackEngine::onFrameReady(const GpuFrameTexture &frame)
         QMutexLocker lock(&m_frameMutex);
         m_currentFrame = frame;
     }
+    if (!frame.scopeImage.isNull()) {
+        m_scopeTimer.restart();
+        emit scopeFrame(frame.scopeImage);
+    }
     m_stats.setUploadPath(GpuCompositor::previewUploadPathId());
     if (drift::perf::enabled() && !frame.image.isNull())
         drift::perf::record("frame.readback", 0.0);
@@ -955,7 +971,11 @@ FrameCompositor::RenderOptions PlaybackEngine::playbackRenderOptions() const
 {
     FrameCompositor::RenderOptions options;
     double qualityFraction = 1.0;
-    if (m_previewQuality == QStringLiteral("quarter"))
+    // Eighth is for machines that cannot keep up even at Quarter — dual-core laptops on
+    // integrated graphics — where a soft preview beats a stuttering one.
+    if (m_previewQuality == QStringLiteral("eighth"))
+        qualityFraction = 0.125;
+    else if (m_previewQuality == QStringLiteral("quarter"))
         qualityFraction = 0.25;
     else if (m_previewQuality == QStringLiteral("half"))
         qualityFraction = 0.5;
@@ -981,14 +1001,29 @@ FrameCompositor::RenderOptions PlaybackEngine::playbackRenderOptions() const
     // Buffer decoded frames ahead of the playhead only while playback is actually
     // running: paused frames have no deadline to miss, and read-ahead during
     // editing is thrown away by the next edit.
-    options.readAheadUs = m_playing ? kReadAheadUs : 0;
+    options.readAheadUs =
+        m_playing ? drift::TimeUs(drift::tuning::readAheadMs.load(std::memory_order_relaxed)) * 1000 : 0;
 
-    // Hide the text clip being edited in place so the QML inline editor stands in
-    // for it. Never applies while playing (no inline edit during playback).
+    // Never while playing: the editor is a paused-preview tool, and the rest pose would be wrong.
     if (!m_playing)
-        options.skipClipId = m_editingClipId;
+        options.textEdit = m_textEditDecor;
 
     options.allowProxies = true;
+    options.deferAudioAnalysis = true;
+    options.editor = m_editorView;
+    options.maskView = m_maskView;
+    if (m_scopeConsumers > 0
+        && (!m_playing || !m_scopeTimer.isValid() || m_scopeTimer.hasExpired(kScopeIntervalMs)))
+        options.scopeReadbackWidth = kScopeReadbackWidth;
+    // The 3D view fills the panel, and is antialiased by rendering it at twice the panel's
+    // resolution, which the scene graph's linear filter averages back down. Orbiting re-renders
+    // the whole scene per step, so it drops to one sample per pixel until the release.
+    if (m_editorView.active && m_previewRenderWidth > 0 && m_previewRenderHeight > 0) {
+        const double area = double(m_previewRenderWidth) * double(m_previewRenderHeight);
+        const double factor = m_editorView.navigating ? 1.0 : qBound(1.0, std::sqrt(3840.0 * 2160.0 / area), 2.0);
+        options.editor.target = QSize(qMax(1, int(std::lround(m_previewRenderWidth * factor))),
+                                      qMax(1, int(std::lround(m_previewRenderHeight * factor))));
+    }
 
     // The first seek of a scrub is often all there is (a tap on the ruler), so it stays exact;
     // the ones after it are passing through.
@@ -1000,12 +1035,31 @@ FrameCompositor::RenderOptions PlaybackEngine::playbackRenderOptions() const
     return options;
 }
 
-void PlaybackEngine::setEditingClipId(const QString &id)
+void PlaybackEngine::setEditorView(const FrameCompositor::RenderOptions::EditorView &view)
 {
-    if (m_editingClipId == id)
+    if (m_editorView.active == view.active && m_editorView.serial == view.serial
+        && m_editorView.navigating == view.navigating)
         return;
-    m_editingClipId = id;
+    m_editorView = view;
     if (!m_playing)
+        refreshFrame();
+}
+
+void PlaybackEngine::setMaskView(const FrameCompositor::RenderOptions::MaskView &view)
+{
+    if (m_maskView == view)
+        return;
+    m_maskView = view;
+    if (!m_playing)
+        refreshFrame();
+}
+
+void PlaybackEngine::setTextEditDecor(const FrameCompositor::RenderOptions::TextEditDecor &decor, bool refresh)
+{
+    if (m_textEditDecor == decor)
+        return;
+    m_textEditDecor = decor;
+    if (refresh && !m_playing)
         refreshFrame();
 }
 
@@ -1017,6 +1071,16 @@ int PlaybackEngine::fillAudio(float *buffer, int sampleCount)
     if (!m_playing || !m_project) {
         std::memset(buffer, 0, static_cast<size_t>(sampleCount) * 2 * sizeof(float));
         return sampleCount;
+    }
+
+    // The first fill after a play, seek or rate change is the first sample of the new stream, but
+    // the sink still has whatever it pulled before — silence while paused, the old position after a
+    // seek — queued ahead of it. Anchoring to processedUSecs() at play time instead put the picture
+    // that whole queue ahead of the sound.
+    const quint64 generation = m_audioStreamGeneration.load(std::memory_order_acquire);
+    if (generation != m_anchoredGeneration) {
+        m_anchoredGeneration = generation;
+        m_sinkPlayedUsOffset = m_audio.deliveredUSecs();
     }
 
     // Mix at the produce position (audio we are generating into the buffer),

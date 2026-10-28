@@ -1,14 +1,16 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import Drift
-import ".."
-
 // Category filter row: favorites star, then horizontal category chips.
 // ⭐ | [Color] [Glitch] …
 Item {
     id: root
 
     readonly property string favoritesId: "__favorites__"
+    // "My effects": what the user imported or dropped in by hand. Off for pickers with no such notion.
+    readonly property string mineId: "__mine__"
+    property bool showMine: false
+    property string mineLabel: qsTr("My Effects")
 
     property var categories: []
     property string activeCategory: ""
@@ -18,7 +20,7 @@ Item {
 
     width: parent ? parent.width : 0
     height: visible ? Theme.controlHeightSm : 0
-    visible: !searching && categories.length > 0
+    visible: !searching && (categories.length > 0 || showMine)
 
     Row {
         id: row
@@ -39,17 +41,28 @@ Item {
             onClicked: root.categoryActivated(root.favoritesId)
         }
 
+        ThemedChip {
+            id: mineButton
+            visible: root.showMine
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.mineLabel
+            variant: "outline"
+            selected: root.activeCategory === root.mineId
+            onClicked: root.categoryActivated(root.mineId)
+        }
+
         Rectangle {
             id: divider
             anchors.verticalCenter: parent.verticalCenter
-            width: Theme.borderWidth
+            width: Theme.c.assetCategoryChips.dividerWidth
             height: Theme.controlHeightSm - 6
-            color: Theme.panelBorder
+            color: Theme.c.assetCategoryChips.divider
         }
 
         Flickable {
             id: categoryFlick
-            width: Math.max(0, row.width - favButton.width - divider.width - row.spacing * 2)
+            width: Math.max(0, row.width - favButton.width - divider.width - row.spacing * 2
+                               - (mineButton.visible ? mineButton.width + row.spacing : 0))
             height: parent.height
             contentWidth: categoryRow.width
             flickableDirection: Flickable.HorizontalFlick

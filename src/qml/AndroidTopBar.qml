@@ -2,8 +2,6 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Window
 import Drift
-import "components"
-
 // Slim CapCut-style editor top bar.
 Item {
     id: root
@@ -14,6 +12,17 @@ Item {
     // The project title is the affordance: a wide, self-labelling target in the middle of
     // the bar rather than an unlabelled glyph in the corner.
     signal projectMenuRequested()
+    signal downloadsRequested()
+    signal notificationsRequested()
+
+    readonly property int downloadCount: {
+        void Market.downloadsRevision
+        return Market.downloads.length
+    }
+    readonly property int activeDownloadCount: {
+        void Market.downloadsRevision
+        return Market.activeDownloadCount
+    }
 
     // Status bar / camera cutout. Without it the Back, Undo and Export buttons sat
     // underneath the system bar on every edge-to-edge device.
@@ -24,16 +33,23 @@ Item {
     height: Theme.androidTopBarHeight + topInset
     width: parent ? parent.width : 0
 
-    Rectangle {
+    ThemeSlot {
         anchors.fill: parent
-        color: Theme.panelBackground
+        slot: "AndroidTopBarBackground"
+        control: root
+        fallback: Component {
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.c.androidTopBar.background
+            }
+        }
     }
 
     Rectangle {
         anchors.bottom: parent.bottom
         width: parent.width
-        height: 1
-        color: Theme.panelBorder
+        height: Theme.c.androidTopBar.borderWidth
+        color: Theme.c.androidTopBar.border
     }
 
     Item {
@@ -58,75 +74,16 @@ Item {
             onClicked: root.backRequested()
         }
 
-        AbstractButton {
+        AndroidTopBarTitleButton {
             id: titleBtn
             anchors.left: backBtn.right
             anchors.verticalCenter: parent.verticalCenter
-            height: Theme.androidIconButtonSize
-            hoverEnabled: true
-
-            Accessible.role: Accessible.Button
-            Accessible.name: titleText.text
-            Accessible.description: qsTr("Project actions")
-
-            scale: titleBtn.down ? Theme.pressScale : 1.0
-
-            Behavior on scale {
-                NumberAnimation { duration: Theme.durationPress; easing.type: Theme.easing }
-            }
-
-            background: Rectangle {
-                radius: Theme.radiusSm
-                color: titleBtn.down ? Theme.panelAccent : "transparent"
-
-                Behavior on color {
-                    ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                }
-            }
-
-            contentItem: Row {
-                spacing: Theme.spacingMd
-                leftPadding: Theme.spacingMd
-                rightPadding: Theme.spacingMd
-
-                Text {
-                    id: titleText
-                    anchors.verticalCenter: parent.verticalCenter
-                    // Clamped against what the right-hand cluster actually leaves, not a
-                    // fixed 140: the export pill is wider than the icon it replaced.
-                    width: Math.min(implicitWidth,
-                                    Math.max(0, barBody.width - actionsRow.width - backBtn.width
-                                                - Theme.iconSizeMd - Theme.spacing3xl))
-                    text: EditorState.projectName.length > 0
-                          ? EditorState.projectName
-                          : qsTr("Untitled")
-                    color: Theme.foreground
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSizeSm
-                    font.weight: Font.Medium
-                    elide: Text.ElideRight
-                }
-
-                Rectangle {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 8
-                    height: 8
-                    radius: 4
-                    color: EditorState.hasUnsavedChanges ? Theme.destructive : Theme.constructive
-                }
-
-                IconGlyph {
-                    anchors.verticalCenter: parent.verticalCenter
-                    glyph: Theme.icons.chevronDown
-                    iconSize: Theme.iconSizeMd
-                    iconColor: Theme.mutedForeground
-                }
-            }
-
-            onClicked: {
-                Haptics.press()
-                root.projectMenuRequested()
-            }
+            maxTextWidth: Math.max(0, barBody.width - actionsRow.width - backBtn.width
+                                      - Theme.iconSizeMd - Theme.spacing3xl)
+            projectName: EditorState.projectFile.projectName
+            unsaved: EditorState.projectFile.hasUnsavedChanges
+            updateAvailable: Updates.updateAvailable
+            onRequested: root.projectMenuRequested()
         }
 
         Row {
@@ -135,6 +92,61 @@ Item {
             anchors.rightMargin: Theme.spacingSm
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingXs
+
+            IconButton {
+                buttonSize: Theme.androidIconButtonSize
+                iconSize: Theme.iconSizeLg
+                glyph: Theme.icons.bell
+                variant: "text"
+                tooltip: qsTr("Notifications")
+                onClicked: root.notificationsRequested()
+
+                AndroidTopBarCountBadge {
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingXs
+                    visible: Toasts.unreadCount > 0
+                    count: Toasts.unreadCount
+                    cap: 99
+                    grow: true
+                }
+            }
+
+            // The way into the downloads sheet, and the only one: the sheet never raises itself,
+            // because the per-tile ring is what lets browsing carry on while things download.
+            IconButton {
+                visible: root.downloadCount > 0
+                buttonSize: Theme.androidIconButtonSize
+                iconSize: Theme.iconSizeLg
+                glyph: Theme.icons.download
+                variant: "text"
+                tooltip: qsTr("Downloads")
+                onClicked: root.downloadsRequested()
+
+                AndroidTopBarCountBadge {
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingXs
+                    visible: root.activeDownloadCount > 0
+                    count: root.activeDownloadCount
+                }
+            }
+
+            IconButton {
+                buttonSize: Theme.androidIconButtonSize
+                iconSize: Theme.iconSizeLg
+                glyph: Theme.icons.puzzle
+                variant: "text"
+                tooltip: qsTr("Extras")
+                onClicked: ShellBridge.main.openExtras()
+
+                AndroidAttentionDot {
+                    visible: ShellBridge.main?.addonAttentionNeeded
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: Theme.spacingSm
+                }
+            }
 
             // Undo/Redo stay icon-only — the one documented exception, and long-pressable
             // for a label now that IconButton shows its tooltip on touch.
@@ -163,26 +175,13 @@ Item {
             // second window on a phone to leave it open in. The ring is drawn around the
             // glyph rather than replacing it, so the pill keeps its width and its label
             // while the render runs.
-            ThemedButton {
+            AndroidTopBarExportButton {
                 id: exportPill
                 anchors.verticalCenter: parent.verticalCenter
-                variant: "primary"
-                glyph: Theme.icons.upload
-                text: qsTr("Export")
-                tooltip: EditorState.exportInProgress ? qsTr("Show export progress")
-                                                      : qsTr("Export")
-                onClicked: EditorState.exportInProgress ? root.exportProgressRequested()
-                                                        : root.exportRequested()
-
-                CircularProgress {
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingXl + Theme.iconSizeMd / 2 - width / 2
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: EditorState.exportInProgress
-                    size: Theme.iconSizeXl
-                    strokeWidth: 2
-                    value: EditorState.exportProgress
-                }
+                exportInProgress: EditorState.exportInProgress
+                exportProgress: EditorState.exportProgress
+                onExportRequested: root.exportRequested()
+                onProgressRequested: root.exportProgressRequested()
             }
         }
     }

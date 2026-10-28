@@ -1,7 +1,5 @@
 import QtQuick
 import Drift
-import "components"
-
 // Everything the four-slot clip toolbar does not carry.
 //
 // It is not the old 26-icon strip in a drawer: rows are labelled, grouped and conditional.
@@ -374,7 +372,7 @@ AndroidBottomSheet {
             EditorState.separateAllAudioTracks(track, clipIndex)
             break
         case "editFriendly":
-            EditorState.convertAssetsToConstantFrameRate([root.mediaAssetId])
+            EditorState.bin.convertToConstantFrameRate([root.mediaAssetId])
             break
         case "mergeSubtitles":
             EditorState.mergeSelectedClips()
@@ -505,21 +503,10 @@ AndroidBottomSheet {
 
                     visible: group.anyVisible
 
-                    // Just the heading's own height: the tiles carry their own top padding, and the
-                    // old touch-target-tall band left a gap under the sheet title.
-                    Item {
+                    AndroidMoreToolsHeading {
                         width: parent.width
-                        height: groupHeading.implicitHeight
-
-                        ThemedLabel {
-                            id: groupHeading
-                            anchors.left: parent.left
-                            anchors.leftMargin: Theme.pagePadding + root.safeLeft
-                            anchors.bottom: parent.bottom
-                            tone: "default"
-                            size: "sm"
-                            text: group.modelData.title
-                        }
+                        title: group.modelData.title
+                        sideInset: root.safeLeft
                     }
 
                     // Four to a row: the sheet had grown past two screens as a list. Grid skips

@@ -1,11 +1,11 @@
-#include "engine/DepthSidecar.h"
-#include "engine/EffectCatalog.h"
-#include "engine/EffectPackageLoader.h"
-#include "engine/EffectProcessor.h"
-#include "engine/FaceLandmarker.h"
-#include "engine/FaceSwapSource.h"
-#include "engine/GpuEffectExecutor.h"
-#include "engine/VdaDepth.h"
+#include "engine/ml/vision/depth/DepthSidecar.h"
+#include "engine/packages/effects/EffectCatalog.h"
+#include "engine/packages/effects/EffectPackageLoader.h"
+#include "engine/compositor/effects/EffectProcessor.h"
+#include "engine/face/tracking/FaceLandmarker.h"
+#include "engine/face/swap/FaceSwapSource.h"
+#include "engine/gpu/effects/GpuEffectExecutor.h"
+#include "engine/ml/vision/depth/VdaDepth.h"
 
 #include <QGuiApplication>
 #include <QDir>
@@ -246,6 +246,16 @@ QMap<QString, QVariant> dramaticDefaults(const EffectPresetEntry &def)
     } else if (def.meta.id == QLatin1String("face_swirl")) {
         params.insert(QStringLiteral("twist"), 2.2);
         params.insert(QStringLiteral("coverage"), 1.3);
+    } else if (def.meta.id == QLatin1String("face_retouch")) {
+        params.insert(QStringLiteral("smoothing"), 1.0);
+        params.insert(QStringLiteral("whitening"), 0.7);
+        params.insert(QStringLiteral("slimFace"), 0.8);
+        params.insert(QStringLiteral("bigEyes"), 0.8);
+        params.insert(QStringLiteral("lipstick"), 1.0);
+        params.insert(QStringLiteral("blush"), 1.0);
+        params.insert(QStringLiteral("lipCustom"), true);
+        // Recolouring the photo's skin toward an arbitrary swatch says nothing about the effect.
+        params.insert(QStringLiteral("skinTone"), 0.0);
     } else if (def.meta.id == QLatin1String("duotone")) {
         // String colour params don't survive EffectParamSpec (double-only defaults), so set them
         // explicitly here or the shader mixes black→black.
@@ -253,6 +263,21 @@ QMap<QString, QVariant> dramaticDefaults(const EffectPresetEntry &def)
         params.insert(QStringLiteral("contrast"), 0.7);
         params.insert(QStringLiteral("shadowColor"), QStringLiteral("#0a1628"));
         params.insert(QStringLiteral("highlightColor"), QStringLiteral("#ff6b35"));
+    } else if (def.meta.id == QLatin1String("stylize.outline")) {
+        // Pushing every choice and toggle to its far end turns this one into a white square.
+        for (const drift::EffectParamSpec &spec : def.meta.parameters) {
+            if (!spec.isColor())
+                params.insert(spec.key, spec.defaultValue);
+        }
+        params.insert(QStringLiteral("width"), 56.0);
+        params.insert(QStringLiteral("outerEdge"), 3.0);
+        params.insert(QStringLiteral("outerScale"), 80.0);
+        params.insert(QStringLiteral("outerDepth"), 50.0);
+        // A white stamp on the browser's white card needs paper tint and a shadow to read.
+        params.insert(QStringLiteral("color"), QStringLiteral("#f6f1e7ff"));
+        params.insert(QStringLiteral("shadow"), 1.0);
+        params.insert(QStringLiteral("shadowDistance"), 6.0);
+        params.insert(QStringLiteral("shadowBlur"), 10.0);
     }
     return params;
 }

@@ -73,7 +73,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules">
         <activity
-            android:name="org.qtproject.qt.android.bindings.QtActivity"
+            android:name="org.cutwire.drift.DriftActivity"
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
             android:label="-- %%INSERT_APP_NAME%% --"
             android:launchMode="singleTop"
@@ -102,6 +102,21 @@
                 <data android:pathPattern=".*\\.drift" />
                 <data android:pathPattern=".*\\..*\\.drift" />
                 <data android:pathPattern=".*\\..*\\..*\\.drift" />
+            </intent-filter>
+
+            <!-- Open a .driftfx (a Drift Forge effect or transition) the same way. Routed by its
+                 magic bytes rather than this name, since a content:// path rarely has one. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.driftfx" />
+                <data android:pathPattern=".*\\..*\\.driftfx" />
+                <data android:pathPattern=".*\\..*\\..*\\.driftfx" />
             </intent-filter>
 
             <!-- Share targets. Separate filters on purpose: the VIEW filter above matches

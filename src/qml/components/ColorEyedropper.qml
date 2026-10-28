@@ -5,7 +5,8 @@ import QtQuick.Window
 import Drift
 
 // Full-window colour picker over the app's own window, with a magnifying loupe. Pointer: hover
-// to aim, click to pick. Touch: drag to aim, lift to pick. Escape, Back or a right click cancel.
+// to aim, click to pick. Touch: drag to aim, lift to pick. Escape, Back, a right click or the
+// hint's cancel button (touch only) cancel.
 // Samples a periodic grab of the window rather than a single one, so a preview that re-renders
 // after opening (an effect bypassed for the pick) is what gets sampled.
 Popup {
@@ -105,20 +106,34 @@ Popup {
             y: Theme.spacing2xl + ((Overlay.overlay && Overlay.overlay.SafeArea)
                                    ? Overlay.overlay.SafeArea.margins.top : 0)
             width: hintText.implicitWidth + Theme.spacing2xl * 2
+                   + (cancelButton.visible ? cancelButton.width : 0)
             height: Theme.controlHeight
             radius: height / 2
-            color: Theme.panelBackground
-            border.width: Theme.borderWidth
-            border.color: Theme.panelBorder
+            color: Theme.c.colorEyedropper.hintBackground
+            border.width: Theme.c.colorEyedropper.hintBorderWidth
+            border.color: Theme.c.colorEyedropper.hintBorder
 
             Text {
                 id: hintText
-                anchors.centerIn: parent
+                anchors.verticalCenter: parent.verticalCenter
+                x: Theme.spacing2xl
                 text: Theme.touchUi ? qsTr("Drag to a colour and lift to pick it")
                                     : qsTr("Click a colour to pick it. Esc cancels.")
-                color: Theme.panelForeground
+                color: Theme.c.colorEyedropper.hintForeground
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeSm
+            }
+
+            // A finger has no right click and maybe no Back key (the desktop layout on a tablet).
+            IconButton {
+                id: cancelButton
+                visible: Theme.touchUi
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                buttonSize: parent.height
+                glyph: Theme.icons.x
+                tooltip: qsTr("Cancel")
+                onClicked: root.close()
             }
         }
 
@@ -179,14 +194,14 @@ Popup {
                 width: root.zoom + 2
                 height: root.zoom + 2
                 color: "transparent"
-                border.width: 1
-                border.color: "white"
+                border.width: Theme.c.colorEyedropper.crosshairBorderWidth
+                border.color: Theme.c.colorEyedropper.crosshairBorder
                 Rectangle {
                     anchors.fill: parent
                     anchors.margins: -1
                     color: "transparent"
-                    border.width: 1
-                    border.color: Qt.rgba(0, 0, 0, 0.6)
+                    border.width: Theme.c.colorEyedropper.crosshairShadowWidth
+                    border.color: Theme.c.colorEyedropper.crosshairShadow
                 }
             }
 
@@ -196,23 +211,23 @@ Popup {
                 height: root.lensSize
                 radius: width / 2
                 color: "transparent"
-                border.width: 4
+                border.width: Theme.c.colorEyedropper.ringBorderWidth
                 border.color: root._color
                 Rectangle {
                     anchors.fill: parent
                     anchors.margins: -1
                     radius: width / 2
                     color: "transparent"
-                    border.width: 1
-                    border.color: Qt.rgba(0, 0, 0, 0.4)
+                    border.width: Theme.c.colorEyedropper.ringShadowWidth
+                    border.color: Theme.c.colorEyedropper.ringShadow
                 }
                 Rectangle {
                     anchors.fill: parent
                     anchors.margins: 4
                     radius: width / 2
                     color: "transparent"
-                    border.width: 1
-                    border.color: Qt.rgba(1, 1, 1, 0.5)
+                    border.width: Theme.c.colorEyedropper.ringHighlightWidth
+                    border.color: Theme.c.colorEyedropper.ringHighlight
                 }
             }
 
@@ -223,15 +238,15 @@ Popup {
                 width: hexText.implicitWidth + Theme.spacingXl * 2
                 height: 24
                 radius: height / 2
-                color: Theme.panelBackground
-                border.width: Theme.borderWidth
-                border.color: Theme.panelBorder
+                color: Theme.c.colorEyedropper.pillBackground
+                border.width: Theme.c.colorEyedropper.pillBorderWidth
+                border.color: Theme.c.colorEyedropper.pillBorder
 
                 Text {
                     id: hexText
                     anchors.centerIn: parent
                     text: root._color.toString().toUpperCase()
-                    color: Theme.panelForeground
+                    color: Theme.c.colorEyedropper.pillForeground
                     font.family: Theme.monoFontFamily
                     font.pixelSize: Theme.fontSizeXs
                 }

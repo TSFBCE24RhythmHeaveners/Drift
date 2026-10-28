@@ -3,23 +3,29 @@
 #include <functional>
 
 #include <QFontDatabase>
+#include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QOpenGLExtraFunctions>
 
-#include "core/Project.h"
-#include "engine/FrameCompositor.h"
-#include "engine/GlRuntime.h"
-#include "engine/GpuCompositor.h"
-#include "engine/GpuEffectExecutor.h"
-#include "engine/EmojiCatalog.h"
-#include "engine/FontCatalog.h"
-#include "engine/SkiaRuntime.h"
-#include "engine/SkiaShapePainter.h"
-#include "engine/SkiaTextPainter.h"
-#include "engine/SkiaTextEffects.h"
-#include "engine/TextLayout.h"
-#include "core/TextAnimationPreset.h"
-#include "core/TextLook.h"
-#include "engine/VectorPainter.h"
+#include "core/project/Project.h"
+#include "engine/compositor/FrameCompositor.h"
+#include "engine/gpu/GlRuntime.h"
+#include "engine/compositor/GpuCompositor.h"
+#include "engine/gpu/effects/GpuEffectExecutor.h"
+#include "engine/render3d/splats/GlSplatRenderer.h"
+#include "engine/render3d/models/ModelClipRenderer.h"
+#include "engine/render3d/splats/SplatAsset.h"
+#include "engine/packages/assets/EmojiCatalog.h"
+#include "engine/packages/assets/FontCatalog.h"
+#include "engine/render2d/skia/SkiaRuntime.h"
+#include "engine/render2d/shapes/SkiaShapePainter.h"
+#include "engine/render2d/text/SkiaTextGeometry.h"
+#include "engine/render2d/text/SkiaTextPainter.h"
+#include "engine/render2d/text/SkiaTextEffects.h"
+#include "engine/render2d/text/TextLayout.h"
+#include "core/text/animation/TextAnimationPreset.h"
+#include "core/text/TextLook.h"
+#include "engine/render2d/skia/VectorPainter.h"
 
 #include "include/core/SkBlurTypes.h"
 #include "include/core/SkCanvas.h"
@@ -276,6 +282,7 @@ class SkiaTest : public QObject
 private slots:
     void grContextAttaches();
     void paintToTargetRoundTrip();
+    void splatClipDrawsAtCentre();
     void restoresGlState();
     void rasterizeMatchesGpu();
     void cacheServesStaticPainters();
@@ -291,10 +298,14 @@ private slots:
     void keyframedShapeStrokeGrowsOverTime();
     void compositorDrawsShapeThroughSkia();
     void textPainterCacheKeys();
+    void neonFlickerIsAnimated();
     void keyframedTextGrowsOverTime();
+    void userFontImportResolvesAndRemoves();
+    void systemFontFamiliesAreListed();
     void gradientFillSweepsTheBlock();
     void pathBendArchesTheLine();
     void emojiOutlineDrawsARing();
+    void systemEmojiFallbackDraws();
     void textPrimitivesRender();
     void fragmentAnimationRendersPerCharacter();
     void bleedIsTimeInvariant();
@@ -302,7 +313,19 @@ private slots:
     void gradientOffsetShiftsColour();
     void wipeMaskRevealsBottomUp();
     void caretDrawsAfterLastVisibleFragment();
+    void inlineCaretIsMonotonicOnALatinLine();
+    void inlineCaretRunsRightToLeftInArabic();
+    void inlineCaretNeverStopsInsideASinhalaConjunct();
+    void inlineHitTestInvertsCaretRect();
+    void inlineCaretOnEmptyAndBlankLines();
+    void inlineSelectionSpansWrappedLines();
+    void inlineLineAndWordNavigation();
+    void inlineDecorRendersAndExportNeverCarriesIt();
     void arabicTextShapesRightToLeft();
+    void layoutIsDeterministic();
+    void textRangesRoundTripUtf16();
+    void complexScriptsShapeWithoutMissingGlyphs();
+    void characterPiecesNeverSplitShapingClusters();
     void skslEffectsCompileAndRender();
     void textLookRenders();
     void textPacksRender();
@@ -316,6 +339,42 @@ void SkiaTest::grContextAttaches()
     gl::runtime().exec([&] { ok = skia::SkiaRuntime::acquire(gl::runtime()) != nullptr; });
     QVERIFY(ok);
     QVERIFY(gl::runtime().skia);
+}
+
+void SkiaTest::splatClipDrawsAtCentre()
+{
+    if (!GpuEffectExecutor::instance().isAvailable())
+        QSKIP("GL unavailable");
+    auto splat = std::make_shared<SplatData>();
+    const float pts[][3] = {{0, 0, 0}, {0.3f, 0.1f, 0.2f}, {-0.3f, -0.1f, -0.2f}, {1, 1, 1}, {-1, -1, -1}};
+    for (const auto &p : pts) {
+        splat->positions.insert(splat->positions.end(), p, p + 3);
+        splat->rotations.insert(splat->rotations.end(), {1.f, 0.f, 0.f, 0.f});
+        splat->scales.insert(splat->scales.end(), {0.15f, 0.15f, 0.15f});
+        splat->colors.insert(splat->colors.end(), {255, 255, 255, 255});
+    }
+    splat->count = 5;
+    splat->fitMin = QVector3D(-1, -1, -1);
+    splat->fitMax = QVector3D(1, 1, 1);
+    // Fitting the box to a 32 px square leaves the outer two splats' 3-sigma reach short of the corners.
+    model3d::ModelDrawRequest request;
+    request.splat = splat;
+    request.rect = QRectF(16, 16, 32, 32);
+    request.canvas = QSizeF(64, 64);
+
+    QImage out;
+    gl::runtime().exec([&] {
+        gl::GlRuntime &rt = gl::runtime();
+        const QMatrix4x4 view = cameraViewProjection(SceneCamera3d(), QSizeF(64, 64));
+        gl::GlTarget target = gl::drawSplatClip(rt, rt.functions(), request, QSize(64, 64), view);
+        QVERIFY(target.isValid());
+        out = readStraight(rt.functions(), target);
+        rt.releaseTarget(std::move(target));
+    });
+    QCOMPARE(out.size(), QSize(64, 64));
+    QVERIFY(qAlpha(out.pixel(32, 32)) > 200);
+    QCOMPARE(qAlpha(out.pixel(1, 1)), 0);
+    QCOMPARE(qAlpha(out.pixel(62, 62)), 0);
 }
 
 void SkiaTest::paintToTargetRoundTrip()
@@ -1126,6 +1185,36 @@ void SkiaTest::emojiOutlineDrawsARing()
     QVERIFY2(blue > 5, qPrintable(QString::number(blue)));
 }
 
+// With no emoji addon the colour glyphs come from the system font through fallback, which is
+// what every fresh install sees.
+void SkiaTest::systemEmojiFallbackDraws()
+{
+    reloadFontCatalog({QString::fromUtf8(DRIFT_TEST_FONTS_DIR)});
+    SKIP_WITHOUT_FONTS();
+    reloadEmojiCatalog({QDir::tempPath() + QStringLiteral("/drift-no-emoji-font")});
+    TextStyle style;
+    style.pixelSize = 72;
+    setSolidFill(style, Qt::white);
+    const QString text = QString::fromUtf8("\xF0\x9F\x98\x80");
+    const QRectF layout(0, 0, 200, 120);
+    const QImage img = skiaText(textClip(style, text), text, layout, 1.0, -1, nullptr)
+                           .convertToFormat(QImage::Format_RGBA8888);
+    int coloured = 0;
+    for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x) {
+            const QRgb p = img.pixel(x, y);
+            if (qAlpha(p) > 100 && qAbs(qRed(p) - qBlue(p)) > 40)
+                ++coloured;
+        }
+    const text::TextLayoutResult laid =
+        text::layoutStyledText(text, style, 1.0, 200.0, 120.0, -1, text::WordSplit::Whole);
+    if (text::unresolvedGlyphs(*laid.paragraph) > 0)
+        QSKIP("No system emoji font");
+    QVERIFY2(coloured > 300, qPrintable(QStringLiteral("%1 coloured px, %2 pieces, colour %3")
+                                            .arg(coloured).arg(laid.words.size())
+                                            .arg(!laid.words.isEmpty() && laid.words.first().colour)));
+}
+
 
 namespace {
 
@@ -1446,14 +1535,13 @@ void SkiaTest::arabicTextShapesRightToLeft()
 
     // Every installed Arabic face: ligatures and mark clusters differ from font to font.
     for (const QString &family : families) {
-        QFont font(family);
-        font.setPixelSize(40);
         for (const bool wrap : {false, true}) {
             TextStyle style;
+            style.fontFamily = family;
             style.pixelSize = 40;
             style.wordWrap = wrap;
             const QList<text::StyledWord> words =
-                text::layoutStyledText(verse, style, font, font, width, 200.0, -1, text::WordSplit::Whole);
+                text::layoutStyledText(verse, style, 1.0, width, 200.0, -1, text::WordSplit::Whole).words;
             QCOMPARE(words.size(), 4);
             for (int i = 0; i < words.size(); ++i) {
                 const text::StyledWord &w = words.at(i);
@@ -1468,27 +1556,24 @@ void SkiaTest::arabicTextShapesRightToLeft()
 
             // Pieces cut per character keep the joined forms the whole line was shaped with.
             const QList<text::StyledWord> chars =
-                text::layoutStyledText(verse, style, font, font, width, 200.0, -1, text::WordSplit::Characters);
+                text::layoutStyledText(verse, style, 1.0, width, 200.0, -1, text::WordSplit::Characters).words;
             QVERIFY(chars.size() > words.size());
-            // Drawing elements only: QPainterPath::addPath drops a glyph outline's trailing MoveTo
-            // (Arial Unicode MS on macOS ends its glyphs with one), so a whole word counts fewer
-            // MoveTos than its pieces do.
-            const auto drawnElements = [](const QPainterPath &path) {
+            const auto drawnElements = [](const text::StyledWord &w) {
                 int n = 0;
-                for (int e = 0; e < path.elementCount(); ++e)
-                    n += path.elementAt(e).type != QPainterPath::MoveToElement;
+                for (const SkPathVerb verb : w.geometry->path.verbs())
+                    n += verb != SkPathVerb::kMove;
                 return n;
             };
             int wholeElements = 0;
             QRectF wholeInk;
             for (const text::StyledWord &w : words) {
-                wholeElements += drawnElements(w.path);
+                wholeElements += drawnElements(w);
                 wholeInk = wholeInk.united(w.inkRect);
             }
             int charElements = 0;
             QRectF charInk;
             for (const text::StyledWord &w : chars) {
-                charElements += drawnElements(w.path);
+                charElements += drawnElements(w);
                 charInk = charInk.united(w.inkRect);
             }
             QVERIFY2(charElements == wholeElements,
@@ -1496,6 +1581,200 @@ void SkiaTest::arabicTextShapesRightToLeft()
             QVERIFY(std::abs(charInk.left() - wholeInk.left()) < 0.5 && std::abs(charInk.right() - wholeInk.right()) < 0.5);
         }
     }
+}
+
+namespace {
+
+const QStringList &complexScriptSamples()
+{
+    // Sinhala: a ZWJ conjunct (shri), yansaya, a pre-base vowel (kombuva, stored after the
+    // consonant and drawn before it) and a two-part vowel; Devanagari: a conjunct plus a pre-base
+    // vowel sign.
+    static const QStringList samples = {
+        QString::fromUtf8("ශ්‍රී"),
+        QString::fromUtf8("ක්‍ය"),
+        QString::fromUtf8("කෙ"),
+        QString::fromUtf8("කො"),
+        QString::fromUtf8("क्षि"),
+    };
+    return samples;
+}
+
+TextStyle layoutTestStyle()
+{
+    TextStyle style;
+    style.pixelSize = 48;
+    style.wordWrap = false;
+    return style;
+}
+
+bool hasScriptFont(QFontDatabase::WritingSystem system)
+{
+    return !QFontDatabase::families(system).isEmpty();
+}
+
+} // namespace
+
+// The same request lays out to the same pieces, byte for byte.
+void SkiaTest::layoutIsDeterministic()
+{
+    const QString text = QString::fromUtf8("Hello \U0001F600 مرحبا é ශ්‍රී\nsecond line");
+    TextStyle style = layoutTestStyle();
+    style.wordWrap = true;
+    style.accent.rule = WordAccentRule::EveryOther;
+    style.accent.sizeScale = 1.4;
+    for (const text::WordSplit split : {text::WordSplit::Whole, text::WordSplit::Characters}) {
+        const text::TextLayoutResult a = text::layoutStyledText(text, style, 1.0, 300.0, 200.0, -1, split);
+        const text::TextLayoutResult b = text::layoutStyledText(text, style, 1.0, 300.0, 200.0, -1, split);
+        QVERIFY(!a.words.isEmpty());
+        QCOMPARE(a.words.size(), b.words.size());
+        for (int i = 0; i < a.words.size(); ++i) {
+            const text::StyledWord &x = a.words.at(i);
+            const text::StyledWord &y = b.words.at(i);
+            QCOMPARE(x.inkRect, y.inkRect);
+            QCOMPARE(x.cellRect, y.cellRect);
+            QCOMPARE(x.baselineY, y.baselineY);
+            QCOMPARE(x.textStart, y.textStart);
+            QCOMPARE(x.textLength, y.textLength);
+            QCOMPARE(x.line, y.line);
+            QCOMPARE(x.index, y.index);
+            QCOMPARE(x.colour, y.colour);
+            QCOMPARE(x.geometry->path.countVerbs(), y.geometry->path.countVerbs());
+            QCOMPARE(x.geometry->path.getBounds(), y.geometry->path.getBounds());
+        }
+        QCOMPARE(a.paragraph->caretStops, b.paragraph->caretStops);
+        QCOMPARE(a.paragraph->lineBaseline, b.paragraph->lineBaseline);
+    }
+}
+
+// textStart/textLength address the source QString in UTF-16 units, whatever Skia counts in
+// internally: surrogate pairs, combining marks, ZWJ sequences and Arabic must all land on the
+// characters they were cut from.
+void SkiaTest::textRangesRoundTripUtf16()
+{
+    const QString text = QString::fromUtf8("a\U0001F600b مرحبا éx ශ්‍රී \U0001F1F1\U0001F1F0 c");
+    const TextStyle style = layoutTestStyle();
+    for (const text::WordSplit split : {text::WordSplit::Whole, text::WordSplit::Characters}) {
+        const text::TextLayoutResult laid = text::layoutStyledText(text, style, 1.0, 2000.0, 200.0, -1, split);
+        QVERIFY(!laid.words.isEmpty());
+        const QList<int> &stops = laid.paragraph->caretStops;
+        QVERIFY(stops.contains(0) && stops.contains(text.size()));
+        QList<bool> covered(text.size(), false);
+        for (const text::StyledWord &w : laid.words) {
+            QVERIFY(w.textStart >= 0 && w.textLength > 0 && w.textStart + w.textLength <= text.size());
+            QVERIFY2(!text.mid(w.textStart, w.textLength).trimmed().isEmpty(), "piece covers only spaces");
+            // Pieces start and end at valid caret stops, so none cuts a surrogate pair, a mark or a conjunct.
+            QVERIFY2(stops.contains(w.textStart), qPrintable(QString::number(w.textStart)));
+            QVERIFY2(stops.contains(w.textStart + w.textLength), qPrintable(QString::number(w.textStart + w.textLength)));
+            for (int p = w.textStart; p < w.textStart + w.textLength; ++p) {
+                QVERIFY2(!covered.at(p), "pieces overlap");
+                covered[p] = true;
+            }
+        }
+        if (split == text::WordSplit::Whole) {
+            for (int p = 0; p < text.size(); ++p)
+                QVERIFY2(covered.at(p) || text.at(p).isSpace(), qPrintable(QStringLiteral("char %1 not covered").arg(p)));
+        }
+    }
+}
+
+// Sinhala and Devanagari go through the font collection's fallback and the shaper without a
+// missing-glyph box.
+void SkiaTest::complexScriptsShapeWithoutMissingGlyphs()
+{
+    if (!hasScriptFont(QFontDatabase::Sinhala) || !hasScriptFont(QFontDatabase::Devanagari))
+        QSKIP("no Sinhala/Devanagari font installed");
+    for (const QString &sample : complexScriptSamples()) {
+        const text::TextLayoutResult laid =
+            text::layoutStyledText(sample, layoutTestStyle(), 1.0, 600.0, 120.0, -1, text::WordSplit::Whole);
+        QVERIFY2(!laid.words.isEmpty(), qPrintable(sample));
+        QCOMPARE(text::unresolvedGlyphs(*laid.paragraph), 0);
+        qInfo("Sinhala/Devanagari sample %s shaped with: %s", qPrintable(sample),
+              qPrintable(text::firstFontFamily(*laid.paragraph)));
+        QVERIFY(!laid.words.first().inkRect.isEmpty());
+    }
+}
+
+// An imported font file is matched by family until it is removed again.
+void SkiaTest::userFontImportResolvesAndRemoves()
+{
+    const QString source = QString::fromUtf8(DRIFT_TEST_FONTS_DIR) + QStringLiteral("/anton/Anton-400.ttf");
+    if (!QFile::exists(source))
+        QSKIP("font bundle not present — see recipes/fetch-fonts.py in drift-addons");
+
+    QStandardPaths::setTestModeEnabled(true);
+    QTemporaryDir emptyRoot;
+    QVERIFY(emptyRoot.isValid());
+    reloadFontCatalog({emptyRoot.path()});
+    reloadUserFonts();
+    for (const QString &family : userFontFamilies())
+        removeUserFont(family);
+
+    QTemporaryDir staging;
+    QVERIFY(staging.isValid());
+    const QString copy = staging.filePath(QStringLiteral("picked.ttf"));
+    QVERIFY(QFile::copy(source, copy));
+
+    TextStyle style = layoutTestStyle();
+    style.fontFamily = QStringLiteral("Anton");
+    auto resolved = [&] {
+        const text::TextLayoutResult laid =
+            text::layoutStyledText(QStringLiteral("Hello"), style, 1.0, 600.0, 120.0, -1, text::WordSplit::Whole);
+        return laid.paragraph ? text::firstFontFamily(*laid.paragraph) : QString();
+    };
+    if (resolved() == QLatin1String("Anton"))
+        QSKIP("Anton is installed system-wide");
+
+    QString error;
+    const QStringList families = importUserFontFile(copy, &error);
+    QVERIFY2(!families.isEmpty(), qPrintable(error));
+    QVERIFY(families.contains(QStringLiteral("Anton")));
+    QVERIFY(userFontFamilies().contains(QStringLiteral("Anton")));
+    QCOMPARE(resolved(), QStringLiteral("Anton"));
+
+    QVERIFY(removeUserFont(QStringLiteral("Anton")));
+    QVERIFY(!userFontFamilies().contains(QStringLiteral("Anton")));
+    text::clearLayoutCache();
+    QVERIFY(resolved() != QLatin1String("Anton"));
+
+    const QString notAFont = staging.filePath(QStringLiteral("bad.ttf"));
+    QFile bad(notAFont);
+    QVERIFY(bad.open(QIODevice::WriteOnly));
+    bad.write("not a font");
+    bad.close();
+    QVERIFY(importUserFontFile(notAFont, &error).isEmpty());
+    QVERIFY(!error.isEmpty());
+    QVERIFY(userFontFamilies().isEmpty());
+    QStandardPaths::setTestModeEnabled(false);
+}
+
+void SkiaTest::systemFontFamiliesAreListed()
+{
+#if !defined(Q_OS_ANDROID) && !defined(Q_OS_WASM)
+    QVERIFY(!systemFontFamilies().isEmpty());
+#else
+    QSKIP("system font list is only asserted on desktop");
+#endif
+}
+
+// A character split may not cut a shaping cluster, even where UAX #29 has a boundary.
+void SkiaTest::characterPiecesNeverSplitShapingClusters()
+{
+    if (!hasScriptFont(QFontDatabase::Sinhala) || !hasScriptFont(QFontDatabase::Devanagari))
+        QSKIP("no Sinhala/Devanagari font installed");
+    for (const QString &sample : complexScriptSamples()) {
+        const text::TextLayoutResult laid =
+            text::layoutStyledText(sample, layoutTestStyle(), 1.0, 600.0, 120.0, -1, text::WordSplit::Characters);
+        QCOMPARE(laid.words.size(), 1);
+        QCOMPARE(laid.words.first().textStart, 0);
+        QCOMPARE(laid.words.first().textLength, int(sample.size()));
+        QCOMPARE(laid.paragraph->caretStops, (QList<int>{0, int(sample.size())}));
+    }
+    // Separate words stay separate pieces.
+    const QString two = complexScriptSamples().at(0) + QLatin1Char(' ') + complexScriptSamples().at(2);
+    const text::TextLayoutResult laid =
+        text::layoutStyledText(two, layoutTestStyle(), 1.0, 600.0, 120.0, -1, text::WordSplit::Characters);
+    QCOMPARE(laid.words.size(), 2);
 }
 
 void SkiaTest::caretDrawsAfterLastVisibleFragment()
@@ -1524,6 +1803,255 @@ void SkiaTest::caretDrawsAfterLastVisibleFragment()
     const Ink off = inkOf(skiaTextAt(clip, text, layout, 1.0, 250000));
     const Ink offBare = inkOf(skiaTextAt(noCaret, text, layout, 1.0, 250000));
     QVERIFY2(qAbs(off.count - offBare.count) < 10, qPrintable(describe(offBare, off)));
+}
+
+namespace {
+
+std::shared_ptr<const text::FragmentSet> editSet(const QString &string, bool wrap, double width = 600.0,
+                                                 double height = 300.0, const QString &family = QString())
+{
+    TextStyle style = layoutTestStyle();
+    style.wordWrap = wrap;
+    style.align = TextAlign::Left;
+    style.valign = TextVAlign::Top;
+    if (!family.isEmpty())
+        style.fontFamily = family;
+    return text::fragmentsFor(string, style, width, height, 1.0, -1, text::WordSplit::Whole);
+}
+
+} // namespace
+
+void SkiaTest::inlineCaretIsMonotonicOnALatinLine()
+{
+    reloadFontCatalog({QString::fromUtf8(DRIFT_TEST_FONTS_DIR)});
+    SKIP_WITHOUT_FONTS();
+    const auto set = editSet(QStringLiteral("Hello world"), false);
+    QVERIFY(set && set->paragraph);
+    const QList<int> &stops = text::caretStops(*set);
+    QCOMPARE(stops.size(), 12);
+    double previous = -1.0;
+    for (const int stop : stops) {
+        const QRectF caret = text::caretRect(*set, stop);
+        QVERIFY2(caret.height() > 20.0, qPrintable(QString::number(stop)));
+        QVERIFY2(caret.x() > previous, qPrintable(QStringLiteral("stop %1 x %2 after %3").arg(stop).arg(caret.x()).arg(previous)));
+        previous = caret.x();
+    }
+    QVERIFY(qAbs(text::caretRect(*set, 0).x()) < 1.0);
+}
+
+void SkiaTest::inlineCaretRunsRightToLeftInArabic()
+{
+    const QStringList families = QFontDatabase::families(QFontDatabase::Arabic);
+    if (families.isEmpty())
+        QSKIP("no Arabic font installed");
+    const auto set = editSet(QString::fromUtf8("مرحبا بكم"), false, 900.0, 200.0, families.first());
+    QVERIFY(set && set->paragraph);
+    const QList<int> &stops = text::caretStops(*set);
+    QVERIFY(stops.size() > 3);
+    for (int i = 1; i < stops.size(); ++i) {
+        QVERIFY2(text::caretRect(*set, stops.at(i)).x() < text::caretRect(*set, stops.at(i - 1)).x() + 0.01,
+                 qPrintable(QStringLiteral("stop %1").arg(stops.at(i))));
+    }
+    QVERIFY(text::caretRect(*set, 0).x() > text::caretRect(*set, stops.last()).x() + 20.0);
+}
+
+void SkiaTest::inlineCaretNeverStopsInsideASinhalaConjunct()
+{
+    if (!hasScriptFont(QFontDatabase::Sinhala))
+        QSKIP("no Sinhala font installed");
+    const QString conjunct = QString::fromUtf8("ශ්‍රී");
+    const auto set = editSet(conjunct, false, 600.0, 200.0, QFontDatabase::families(QFontDatabase::Sinhala).first());
+    QVERIFY(set && set->paragraph);
+    QCOMPARE(text::caretStops(*set), (QList<int>{0, int(conjunct.size())}));
+    // Clicking anywhere across it lands on one end or the other.
+    const QRectF end = text::caretRect(*set, int(conjunct.size()));
+    for (double x = 0.0; x <= end.x(); x += end.x() / 8.0) {
+        const int pos = text::hitTest(*set, QPointF(x, end.center().y()));
+        QVERIFY2(pos == 0 || pos == conjunct.size(), qPrintable(QString::number(pos)));
+    }
+}
+
+void SkiaTest::inlineHitTestInvertsCaretRect()
+{
+    reloadFontCatalog({QString::fromUtf8(DRIFT_TEST_FONTS_DIR)});
+    SKIP_WITHOUT_FONTS();
+    const auto set = editSet(QStringLiteral("alpha beta gamma delta epsilon zeta"), true, 330.0, 300.0);
+    QVERIFY(set && set->paragraph);
+    QVERIFY(set->paragraph->lineStart.size() >= 2);
+    for (const int stop : text::caretStops(*set)) {
+        const QRectF caret = text::caretRect(*set, stop);
+        const QPointF centre(caret.x(), caret.center().y());
+        QCOMPARE(text::hitTest(*set, centre), stop);
+    }
+    // The start of a wrapped line is drawn on that line, not at the end of the one above.
+    const int wrapped = set->paragraph->lineStart.at(1);
+    QVERIFY(text::caretRect(*set, wrapped).y() > text::caretRect(*set, wrapped - 1).y() + 10.0);
+    // The end of the text belongs to the last line.
+    const int size = int(set->paragraph->text.size());
+    QCOMPARE(text::caretRect(*set, size).y(), set->paragraph->lineBaseline.last() - set->paragraph->lineAscent.last());
+    // Clicks above and below the block pick the first and the last line.
+    QCOMPARE(text::hitTest(*set, QPointF(0, -500)), 0);
+    QVERIFY(text::hitTest(*set, QPointF(5000, 5000)) >= wrapped);
+}
+
+void SkiaTest::inlineCaretOnEmptyAndBlankLines()
+{
+    reloadFontCatalog({QString::fromUtf8(DRIFT_TEST_FONTS_DIR)});
+    SKIP_WITHOUT_FONTS();
+    const auto empty = editSet(QString(), true);
+    QVERIFY(empty && empty->paragraph);
+    QVERIFY(empty->frags.isEmpty());
+    const QRectF emptyCaret = text::caretRect(*empty, 0);
+    QVERIFY(emptyCaret.height() > 20.0);
+    QVERIFY(qIsFinite(emptyCaret.x()) && qIsFinite(emptyCaret.y()));
+    QCOMPARE(text::hitTest(*empty, QPointF(10, 10)), 0);
+
+    const auto blank = editSet(QStringLiteral("  "), true);
+    QVERIFY(blank && blank->paragraph);
+    QVERIFY(blank->frags.isEmpty());
+    QVERIFY(text::caretRect(*blank, 1).x() > text::caretRect(*blank, 0).x());
+
+    // After a trailing newline, and between two newlines, the caret sits on a line of its own.
+    const auto trailing = editSet(QStringLiteral("ab\n"), true);
+    QCOMPARE(trailing->paragraph->lineStart.size(), 2);
+    QVERIFY(text::caretRect(*trailing, 3).y() > text::caretRect(*trailing, 0).y() + 10.0);
+    QVERIFY(qAbs(text::caretRect(*trailing, 3).x()) < 1.0);
+    const auto between = editSet(QStringLiteral("a\n\nb"), true);
+    QCOMPARE(between->paragraph->lineStart.size(), 3);
+    const double y0 = text::caretRect(*between, 0).y();
+    const double y1 = text::caretRect(*between, 2).y();
+    const double y2 = text::caretRect(*between, 3).y();
+    QVERIFY(y1 > y0 + 10.0 && y2 > y1 + 10.0);
+}
+
+void SkiaTest::inlineSelectionSpansWrappedLines()
+{
+    reloadFontCatalog({QString::fromUtf8(DRIFT_TEST_FONTS_DIR)});
+    SKIP_WITHOUT_FONTS();
+    const auto set = editSet(QStringLiteral("alpha beta gamma delta epsilon zeta"), true, 330.0, 300.0);
+    QVERIFY(set && set->paragraph && set->paragraph->lineStart.size() >= 2);
+    const int wrapped = set->paragraph->lineStart.at(1);
+    const QList<QRectF> across = text::selectionRects(*set, wrapped - 3, wrapped + 3);
+    QCOMPARE(across.size(), 2);
+    QVERIFY(across.at(1).y() > across.at(0).y() + 10.0);
+    QVERIFY(across.at(0).width() > 1.0 && across.at(1).width() > 1.0);
+    QCOMPARE(text::selectionRects(*set, 2, 5).size(), 1);
+    QVERIFY(text::selectionRects(*set, 4, 4).isEmpty());
+    // Reversed ends select the same span.
+    QCOMPARE(text::selectionRects(*set, wrapped + 3, wrapped - 3), across);
+}
+
+void SkiaTest::inlineLineAndWordNavigation()
+{
+    reloadFontCatalog({QString::fromUtf8(DRIFT_TEST_FONTS_DIR)});
+    SKIP_WITHOUT_FONTS();
+    const QString string = QString::fromUtf8("alpha \U0001F600 beta gamma delta epsilon zeta");
+    const auto set = editSet(string, true, 330.0, 300.0);
+    QVERIFY(set && set->paragraph && set->paragraph->lineStart.size() >= 2);
+    const text::ParagraphLayout &layout = *set->paragraph;
+
+    const std::pair<int, int> word = text::wordAt(*set, string.indexOf(QStringLiteral("beta")) + 1);
+    QCOMPARE(string.mid(word.first, word.second - word.first), QStringLiteral("beta"));
+    // Past the emoji (a surrogate pair) the offsets are still UTF-16.
+    const std::pair<int, int> gamma = text::wordAt(*set, string.indexOf(QStringLiteral("gamma")));
+    QCOMPARE(string.mid(gamma.first, gamma.second - gamma.first), QStringLiteral("gamma"));
+
+    QCOMPARE(text::lineEdge(*set, 2, false), 0);
+    const int lineEnd = text::lineEdge(*set, 2, true);
+    QCOMPARE(lineEnd, layout.lineVisibleEnd.at(0));
+    // End of a wrapped line stays on it.
+    QCOMPARE(text::caretRect(*set, lineEnd).y(), text::caretRect(*set, 0).y());
+    QCOMPARE(text::lineEdge(*set, int(string.size()), true), int(string.size()));
+    QCOMPARE(text::lineEdge(*set, layout.lineStart.at(1) + 1, false), layout.lineStart.at(1));
+
+    const int down = text::lineMoveCaret(*set, 3, 1);
+    QVERIFY(down >= layout.lineStart.at(1));
+    QVERIFY(qAbs(text::caretRect(*set, down).x() - text::caretRect(*set, 3).x()) < 40.0);
+    const int back = text::lineMoveCaret(*set, down, -1, text::caretRect(*set, 3).x());
+    QCOMPARE(back, 3);
+    QCOMPARE(text::lineMoveCaret(*set, 3, -1), 0);
+    QCOMPARE(text::lineMoveCaret(*set, 3, 99), int(string.size()));
+}
+
+// The decorations are a layer of their own over a clip that rests while it is edited; export
+// builds its options from scratch and so never carries them.
+void SkiaTest::inlineDecorRendersAndExportNeverCarriesIt()
+{
+    reloadFontCatalog({QString::fromUtf8(DRIFT_TEST_FONTS_DIR)});
+    SKIP_WITHOUT_FONTS();
+    QVERIFY(!FrameCompositor::RenderOptions{}.textEdit.active());
+    if (!GpuCompositor::isAvailable())
+        QSKIP("GL unavailable");
+
+    TextStyle style;
+    style.fontFamily = QStringLiteral("Inter");
+    style.pixelSize = 60;
+    style.align = TextAlign::Left;
+    style.animation.in = legacyTextAnimationSlot(QStringLiteral("typewriter"), 0, QStringLiteral("linear"),
+                                                 QStringLiteral("character"), 1000000, QStringLiteral("forward"));
+    Project project;
+    project.setResolution(400, 160);
+    project.tracks().clear();
+    project.tracks().append(Track{.type = TrackType::Text});
+    Clip clip;
+    clip.id = QStringLiteral("edited");
+    clip.type = ClipType::Text;
+    clip.textContent = QStringLiteral("Hello");
+    clip.textStyle = style;
+    clip.timelineStart = 0;
+    clip.timelineDuration = secondsToUs(3.0);
+    clip.transformX.setKeyframe(0, 0.0);
+    clip.transformY.setKeyframe(0, 0.0);
+    clip.transformW.setKeyframe(0, 400.0);
+    clip.transformH.setKeyframe(0, 160.0);
+    project.tracks()[0].clips.append(clip);
+    FrameCompositor compositor;
+    compositor.setProject(&project);
+
+    const auto bright = [](const QImage &image) {
+        int count = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                count += qRed(image.pixel(x, y)) > 150 ? 1 : 0;
+        return count;
+    };
+    // Mid-typewriter nothing has been typed yet; the edited clip rests, so the text is whole.
+    const QImage plain = compositor.compositeAt(0);
+    FrameCompositor::RenderOptions options;
+    options.textEdit.clipId = clip.id;
+    options.textEdit.cursor = 5;
+    const QImage resting = compositor.compositeAt(0, options);
+    QVERIFY(bright(resting) > bright(plain) + 200);
+
+    // A selection tints behind the word; the picture changes with the selection alone.
+    options.textEdit.selStart = 1;
+    options.textEdit.selEnd = 4;
+    options.textEdit.selectionColor = QColor(0, 0, 255, 160);
+    const QImage selected = compositor.compositeAt(0, options);
+    QVERIFY(selected != resting);
+
+    // The caret on empty text still draws.
+    project.tracks()[0].clips[0].textContent.clear();
+    project.tracks()[0].clips[0].name.clear();
+    compositor.clearNestedViewCache();
+    options.textEdit.selStart = options.textEdit.selEnd = -1;
+    options.textEdit.cursor = 0;
+    const QImage emptyPlain = compositor.compositeAt(0);
+    const QImage emptyCaret = compositor.compositeAt(0, options);
+    QVERIFY(emptyCaret != emptyPlain);
+    QVERIFY(bright(emptyCaret) > 10);
+}
+
+// Neon flicker is time-driven even at speed 0, so it must count as animated.
+void SkiaTest::neonFlickerIsAnimated()
+{
+    TextShaderEffect neon;
+    neon.id = QStringLiteral("neon-pulse");
+    neon.params.insert(QStringLiteral("speed"), VectorSlotValue::fromScalar(0.0));
+    neon.params.insert(QStringLiteral("flicker"), VectorSlotValue::fromScalar(0.3));
+    QVERIFY(skia::textEffectIsAnimated(neon));
+    neon.params.insert(QStringLiteral("flicker"), VectorSlotValue::fromScalar(0.0));
+    QVERIFY(!skia::textEffectIsAnimated(neon));
 }
 
 // Every SkSL effect compiles, and a shine layer renders as ink over its base.

@@ -3,8 +3,6 @@ import QtQuick.Controls.Basic
 import QtQuick.Templates as T
 import QtQuick.Window
 import Drift
-import "components"
-
 // CapCut-style phone editor: top bar, resizable preview | tools+timeline, bottom rail.
 Item {
     id: root
@@ -17,7 +15,9 @@ Item {
     // The canvas sheet is hosted by the window, the properties sheet by this page.
     readonly property real nonBlockingSheetHeight: Math.max(
         (propertiesSheet.opened && !propertiesSheet.blocking) ? propertiesSheet.panelHeight : 0,
-        Window.window.nonBlockingSheetHeight)
+        (ShellBridge.main?.nonBlockingSheetHeight ?? 0),
+        composer.coveredHeight,
+        textEditBar.coveredHeight)
 
     // Fullscreen preview: the timeline pane, top bar and rail step aside and
     // AndroidPreview takes the page. Readable from outside so AndroidMain's Back
@@ -31,6 +31,8 @@ Item {
     readonly property var projectFilter: [qsTr("Drift project (*.drift)")]
 
     function openAssetsTab(tabId) {
+        composer.close()
+        preview.textEditor.commit()
         sheetKind = "assets"
         rail.activeId = tabId
         assetsPanel.showTab(tabId)
@@ -45,6 +47,8 @@ Item {
     // the way to one of them, and stacking it over an open Media sheet would leave
     // two sheets to dismiss to get back to the timeline.
     function openAddMenu() {
+        composer.close()
+        preview.textEditor.commit()
         sheetKind = ""
         rail.activeId = ""
         if (assetsSheet.opened)
@@ -56,6 +60,8 @@ Item {
     }
 
     function openPropertiesSheet() {
+        composer.close()
+        preview.textEditor.commit()
         sheetKind = "properties"
         rail.activeId = "edit"
         if (!propertiesSheet.opened)
@@ -67,6 +73,8 @@ Item {
     // The toolbar's fourth slot. Clears the browsers first: the sheet is a peer of them,
     // not something to stack on top.
     function openMoreTools() {
+        composer.close()
+        preview.textEditor.commit()
         if (assetsSheet.opened)
             assetsSheet.dismiss()
         if (propertiesSheet.opened)
@@ -78,6 +86,8 @@ Item {
     }
 
     function openFadeSheet() {
+        composer.close()
+        preview.textEditor.commit()
         if (assetsSheet.opened)
             assetsSheet.dismiss()
         if (propertiesSheet.opened)
@@ -86,6 +96,39 @@ Item {
             moreToolsSheet.dismiss()
         if (!fadeSheet.opened)
             fadeSheet.open()
+    }
+
+    function openEasingSheet(track, clip, prop, label, seconds) {
+        composer.close()
+        preview.textEditor.commit()
+        if (assetsSheet.opened)
+            assetsSheet.dismiss()
+        if (propertiesSheet.opened)
+            propertiesSheet.dismiss()
+        if (moreToolsSheet.opened)
+            moreToolsSheet.dismiss()
+        if (fadeSheet.opened)
+            fadeSheet.dismiss()
+        easingSheet.openFor(track, clip, prop, label, seconds)
+    }
+
+    // Typing on a phone happens on the clip in the preview, with a slim bar above the keyboard:
+    // the sheets are put away so they do not sit under it, and the preview shrinks into the
+    // space the keyboard leaves.
+    function startInlineTextEdit(track, clip, selectAllText) {
+        root.closeSheets()
+        composer.close()
+        preview.textEditor.start(track, clip, selectAllText)
+    }
+
+    function openCueComposer(index) {
+        root.closeSheets()
+        composer.openForCue(index)
+    }
+
+    // A shared link, routed here by AndroidMain once the editor exists.
+    function startLinkImport(url) {
+        linkImportSheet.openFor(url)
     }
 
     function closeSheets() {
@@ -116,6 +159,22 @@ Item {
         }
         if (packageProgressDialog.visible)
             return true // a package render is running; swallow rather than abandon it
+        if (preview.textEditor.active) {
+            preview.textEditor.commit()
+            return true
+        }
+        if (composer.active) {
+            composer.close()
+            return true
+        }
+        if (linkImportSheet.opened) {
+            linkImportSheet.dismiss()
+            return true
+        }
+        if (downloadsSheet.opened) {
+            downloadsSheet.dismiss()
+            return true
+        }
         if (projectSheet.opened) {
             projectSheet.dismiss()
             return true
@@ -136,8 +195,8 @@ Item {
             root.closeSheets()
             return true
         }
-        if (EditorState.canvasCropMode) {
-            EditorState.canvasCropMode = false
+        if (EditorState.preview.canvasCropMode) {
+            EditorState.preview.canvasCropMode = false
             return true
         }
         if (root.previewFullscreen) {
@@ -148,16 +207,7 @@ Item {
     }
 
     function saveProject() {
-        if (EditorState.currentProjectPath && EditorState.currentProjectPath.length > 0) {
-            EditorState.saveProject(EditorState.fileUrl(EditorState.currentProjectPath))
-            return !EditorState.hasUnsavedChanges
-        }
-        const url = FileDialogs.saveFile(qsTr("Save Project"), root.projectFilter,
-                                         EditorState.projectName, "drift")
-        if (url === "")
-            return false
-        EditorState.saveProject(url)
-        return !EditorState.hasUnsavedChanges
+        return ShellBridge.main.saveProject()
     }
 
     // Save As: the open project written to a second file, which the session then continues in.
@@ -165,34 +215,34 @@ Item {
     // variation. Suggests "<name> copy" so the default cannot land back on the original.
     function saveProjectAs() {
         const url = FileDialogs.saveFile(qsTr("Save Project As"), root.projectFilter,
-                                         qsTr("%1 copy").arg(EditorState.projectName), "drift")
+                                         qsTr("%1 copy").arg(EditorState.projectFile.projectName), "drift")
         if (url === "")
             return false
-        EditorState.saveProjectAs(url)
-        return !EditorState.hasUnsavedChanges
+        EditorState.projectFile.saveProjectAs(url)
+        return !EditorState.projectFile.hasUnsavedChanges
     }
 
     function packageProject() {
         const url = FileDialogs.saveFile(qsTr("Save Shareable Copy"), root.projectFilter,
-                                         EditorState.projectName, "drift")
+                                         EditorState.projectFile.projectName, "drift")
         if (url !== "")
-            EditorState.packageProject(url)
+            EditorState.projectFile.packageProject(url)
     }
 
     // Reached from EditorState's own signals (desktop menus, launch intents), not from any
     // phone control: Open and New are tiles on Home -> Projects now.
     function openProject() {
-        Window.window.confirmIfDirty(function () {
+        ShellBridge.main.confirmIfDirty(function () {
             const url = FileDialogs.openFile(qsTr("Open Project"), root.projectFilter)
             if (url !== "")
-                EditorState.loadProject(url)
+                EditorState.projectFile.loadProject(url)
         })
     }
 
     function requestNewProject() {
-        Window.window.confirmIfDirty(function () {
-            EditorState.newProject()
-            Window.window.showHome()
+        ShellBridge.main.confirmIfDirty(function () {
+            EditorState.projectFile.newProject()
+            ShellBridge.main.showHome()
         })
     }
 
@@ -219,21 +269,39 @@ Item {
             root.packageProject()
             break
         case "layout":
-            Window.window.openLayoutChooser()
+            ShellBridge.main.openLayoutChooser()
             break
         case "crop":
             // The overlay carries its own Cancel/Apply, and the preview goes
             // fullscreen for it, so this only has to start the mode.
-            EditorState.canvasCropMode = true
+            EditorState.preview.canvasCropMode = true
             break
         case "properties":
-            Window.window.openProjectProperties()
+            ShellBridge.main.openProjectProperties()
             break
         case "multicam":
-            Window.window.openMulticam()
+            ShellBridge.main.openMulticam()
+            break
+        case "extras":
+            ShellBridge.main.openExtras()
             break
         case "settings":
-            Window.window.openSettings()
+            ShellBridge.main.openSettings()
+            break
+        case "theme":
+            Theme.toggleDarkMode()
+            break
+        case "desktopLayout":
+            ShellBridge.main.switchShell("desktop")
+            break
+        case "update":
+            ShellBridge.main.openUpdateDialog()
+            break
+        case "debug":
+            ShellBridge.main.openDebugInfo()
+            break
+        case "about":
+            ShellBridge.main.openAboutDialog()
             break
         }
     }
@@ -253,6 +321,8 @@ Item {
                 exportProgressDialog.openDialog()
             }
             onProjectMenuRequested: projectSheet.open()
+            onDownloadsRequested: downloadsSheet.open()
+            onNotificationsRequested: notificationsSheet.open()
         }
 
         SplitView {
@@ -320,7 +390,7 @@ Item {
 
                 Rectangle {
                     anchors.fill: parent
-                    color: Theme.panelBackground
+                    color: Theme.c.androidEditor.splitterBackground
                 }
 
                 Rectangle {
@@ -331,8 +401,9 @@ Item {
                     // land a thumb on.
                     width: editorSplit.sideBySide ? 6 : 48
                     height: editorSplit.sideBySide ? 48 : 6
-                    radius: 3
-                    color: T.SplitHandle.pressed ? Theme.primary : Theme.panelBorder
+                    radius: Theme.c.androidEditor.handleRadius
+                    color: T.SplitHandle.pressed ? Theme.c.androidEditor.handleBackgroundPressed
+                                                 : Theme.c.androidEditor.handleBackground
                 }
 
                 MouseArea {
@@ -384,6 +455,8 @@ Item {
                     panel: timeline
                     onMoreRequested: root.openMoreTools()
                     onFadeRequested: root.openFadeSheet()
+                    onEditTextRequested: root.startInlineTextEdit(EditorState.selectedTrack,
+                                                                  EditorState.selectedClip, false)
                 }
 
                 Item {
@@ -398,6 +471,7 @@ Item {
                         anchors.fill: parent
                         onOpenMediaRequested: root.openAssetsTab("media")
                         onOpenPropertiesRequested: root.openPropertiesSheet()
+                        onSubtitleCueTapped: index => root.openCueComposer(index)
                     }
 
                     Rectangle {
@@ -410,8 +484,9 @@ Item {
                                 return false
                             return EditorState.clipCount === 0
                         }
-                        color: Qt.rgba(Theme.appBackground.r, Theme.appBackground.g,
-                                       Theme.appBackground.b, 0.82)
+                        color: Qt.rgba(Theme.c.androidEditor.emptyBackground.r,
+                                       Theme.c.androidEditor.emptyBackground.g,
+                                       Theme.c.androidEditor.emptyBackground.b, 0.82)
                         z: 5
 
                         Column {
@@ -423,7 +498,7 @@ Item {
                                 width: parent.width
                                 horizontalAlignment: Text.AlignHCenter
                                 text: qsTr("Your timeline is empty")
-                                color: Theme.foreground
+                                color: Theme.c.androidEditor.foreground
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSizeBase
                                 font.weight: Font.Medium
@@ -434,7 +509,7 @@ Item {
                                 horizontalAlignment: Text.AlignHCenter
                                 wrapMode: Text.WordWrap
                                 text: qsTr("Import media or open the Media library to start editing.")
-                                color: Theme.mutedForeground
+                                color: Theme.c.androidEditor.foregroundMuted
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontSizeSm
                             }
@@ -478,6 +553,30 @@ Item {
         onPicked: (actionId) => root.runProjectAction(actionId)
     }
 
+    AndroidDownloadsSheet {
+        id: downloadsSheet
+    }
+
+    AndroidNotificationsSheet {
+        id: notificationsSheet
+    }
+
+    Connections {
+        target: Toasts
+        function onHistoryRequested() { notificationsSheet.open() }
+    }
+
+    Connections {
+        target: ShellBridge
+        function onEasingSheetRequested(track, clip, prop, label, seconds) {
+            root.openEasingSheet(track, clip, prop, label, seconds)
+        }
+    }
+
+    AndroidLinkImport {
+        id: linkImportSheet
+    }
+
     AndroidMoreToolsSheet {
         id: moreToolsSheet
         panel: timeline
@@ -485,6 +584,10 @@ Item {
 
     AndroidFadeSheet {
         id: fadeSheet
+    }
+
+    AndroidEasingSheet {
+        id: easingSheet
     }
 
     AndroidBottomSheet {
@@ -531,7 +634,33 @@ Item {
             sheetMode: true
             onBrowseEffectsRequested: root.openAssetsTab("effects")
             onBrowseAudioEffectsRequested: root.openAssetsTab("sounds")
+            onCueEditRequested: index => root.openCueComposer(index)
         }
+    }
+
+    AndroidTextComposer {
+        id: composer
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: root.SafeArea.margins.left
+        anchors.rightMargin: root.SafeArea.margins.right
+        anchors.bottomMargin: Math.max(root.SafeArea.margins.bottom, Theme.keyboardInset)
+        z: 10
+    }
+
+    // Only the buttons: the text is edited on the preview itself, which stays visible above this.
+    AndroidTextEditBar {
+        id: textEditBar
+        editing: preview.textEditor.active
+        textEditor: preview.textEditor
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: root.SafeArea.margins.left
+        anchors.rightMargin: root.SafeArea.margins.right
+        anchors.bottomMargin: Math.max(root.SafeArea.margins.bottom, Theme.keyboardInset)
+        z: 10
     }
 
     ExportDialog {
@@ -550,25 +679,25 @@ Item {
 
     Connections {
         target: EditorState
-        // A text clip added with no text is edited in the properties sheet, which the assets
-        // sheet it was added from is covering.
-        function onInlineTextEditRequested() {
-            root.openPropertiesSheet()
+        // A text clip added with no text is typed straight onto the preview; the assets sheet
+        // it was added from is put away first.
+        function onInlineTextEditRequested(trackIndex, clipIndex) {
+            root.startInlineTextEdit(trackIndex, clipIndex, true)
         }
         function onExportInProgressChanged() {
             if (EditorState.exportInProgress) {
                 exportProgressDialog.dismissed = false
                 exportProgressDialog.openDialog()
+            } else if (EditorState.exportByAgent) {
+                // Same as the desktop header: an agent's export closes its own progress dialog.
+                exportProgressDialog.close()
             }
         }
-        // The crop frame is dragged on the preview, and the Settings tab it is
-        // started from covers most of the screen. Cropping therefore takes the page
-        // for as long as it is on, and hands it back when it ends.
-        function onCanvasCropModeChanged() {
-            if (EditorState.canvasCropMode)
-                root.closeSheets()
-            root.previewFullscreen = EditorState.canvasCropMode
-        }
+    }
+
+    Connections {
+        target: EditorState.projectFile
+
         // Selection must not auto-open the Edit sheet: that ran on press (before
         // release), stole the gesture so clips could not drag, and blocked long-press
         // menus. Open via the Edit rail; an already-open sheet still updates via
@@ -577,6 +706,18 @@ Item {
         function onSaveAsRequested() { root.saveProjectAs() }
         function onOpenRequested() { root.openProject() }
         function onNewProjectRequested() { root.requestNewProject() }
+    }
+
+    // The crop frame is dragged on the preview, and the Settings tab it is
+    // started from covers most of the screen. Cropping therefore takes the page
+    // for as long as it is on, and hands it back when it ends.
+    Connections {
+        target: EditorState.preview
+        function onCanvasCropModeChanged() {
+            if (EditorState.preview.canvasCropMode)
+                root.closeSheets()
+            root.previewFullscreen = EditorState.preview.canvasCropMode
+        }
     }
 
     Component.onCompleted: AssetLibrary.ensureAllMedia()

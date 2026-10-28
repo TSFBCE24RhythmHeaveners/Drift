@@ -54,6 +54,8 @@ QtObject {
             return Theme.icons.image
         if (kind === "video")
             return Theme.icons.film
+        if (kind === "update")
+            return Theme.icons.package
         return Theme.icons.fileText
     }
 
@@ -71,10 +73,10 @@ QtObject {
 
     function statusColor(job) {
         if (job.status === "failed")
-            return Theme.destructive
+            return Theme.c.downloadFormat.destructive
         if (job.status === "done")
-            return Theme.primary
-        return Theme.mutedForeground
+            return Theme.c.downloadFormat.accent
+        return Theme.c.downloadFormat.foregroundMuted
     }
 
     // The line under the title. Errors win: a failed job's reason is the whole reason the
@@ -87,6 +89,8 @@ QtObject {
         if (job.status === "waiting")
             return qsTr("Waiting for a free slot")
         if (job.status === "done") {
+            if (job.doneDetail)
+                return job.doneDetail
             const size = downloadFormat.formatBytes(job.bytesReceived)
             return size.length > 0 ? qsTr("%1 · in the media bin").arg(size)
                                    : qsTr("In the media bin")

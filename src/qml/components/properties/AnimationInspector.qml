@@ -2,8 +2,6 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Window
 import Drift
-import ".."
-
 // CapCut-style Animation: In / Out only.
 // Fade is one kind among slide/zoom/pop — same duration + style (Linear/Smooth/Natural/Custom).
 Item {
@@ -68,7 +66,7 @@ Item {
         const id = root.styleIds[index]
         if (id === "custom" || id === "bezier") {
             root.setAnim(which, { curve: id })
-            root.Window.window.openFadeCurve(EditorState.selectedTrack, EditorState.selectedClip)
+            ShellBridge.main.openFadeCurve(EditorState.selectedTrack, EditorState.selectedClip)
             return
         }
         root.setAnim(which, { curve: id })
@@ -116,7 +114,7 @@ Item {
         Text {
             visible: root.clipKind === "audio"
             text: qsTr("Fade in / out (volume)")
-            color: Theme.mutedForeground
+            color: Theme.c.animationInspector.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
         }
@@ -155,7 +153,7 @@ Item {
         Text {
             visible: root.clipKind === "audio"
             text: qsTr("Style")
-            color: Theme.mutedForeground
+            color: Theme.c.animationInspector.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
         }
@@ -170,7 +168,7 @@ Item {
                 if (id === "custom" || id === "bezier") {
                     EditorState.setClipFadeCurve(
                                 EditorState.selectedTrack, EditorState.selectedClip, id)
-                    root.Window.window.openFadeCurve(
+                    ShellBridge.main.openFadeCurve(
                                 EditorState.selectedTrack, EditorState.selectedClip)
                     return
                 }
@@ -185,7 +183,7 @@ Item {
             width: parent.width
             wrapMode: Text.WordWrap
             text: qsTr("Pick how the clip enters and leaves. Fade is one option — same style controls as slide or zoom.")
-            color: Theme.mutedForeground
+            color: Theme.c.animationInspector.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
         }
@@ -218,7 +216,7 @@ Item {
         Text {
             visible: root.supportsBodyAnim
             text: qsTr("In")
-            color: Theme.mutedForeground
+            color: Theme.c.animationInspector.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
         }
@@ -255,7 +253,7 @@ Item {
         Text {
             visible: root.supportsBodyAnim
             text: qsTr("Out")
-            color: Theme.mutedForeground
+            color: Theme.c.animationInspector.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
         }
@@ -297,7 +295,7 @@ Item {
             width: parent.width
             text: qsTr("Edit custom curve…")
             variant: "secondary"
-            onClicked: root.Window.window.openFadeCurve(
+            onClicked: ShellBridge.main.openFadeCurve(
                            EditorState.selectedTrack, EditorState.selectedClip)
         }
 
@@ -306,7 +304,7 @@ Item {
             width: parent.width
             wrapMode: Text.WordWrap
             text: qsTr("Letter and word animations live in the Text tab, under Animate. This moves the whole clip.")
-            color: Theme.mutedForeground
+            color: Theme.c.animationInspector.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
         }

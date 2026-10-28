@@ -1,8 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import Drift
-import ".."
-
 Item {
     id: root
 
@@ -19,8 +17,10 @@ Item {
     readonly property string stabilizeMode: (clipData && clipData.stabilizeMode)
                                             ? clipData.stabilizeMode : "bake"
     readonly property bool keyframeMode: root.stabilizeMode === "keyframes"
+    readonly property bool appliedAsKeyframes: root.stabilized && !!clipData
+                                               && clipData.stabilizeAppliedMode === "keyframes"
     readonly property var modeIds: ["bake", "keyframes"]
-    readonly property var modeLabels: [qsTr("Bake a new video"), qsTr("Animate with keyframes")]
+    readonly property var modeLabels: [qsTr("Render a new video"), qsTr("Animate with keyframes")]
     readonly property string actionLabel: {
         if (root.stabilized && root.stale)
             return qsTr("Update stabilization")
@@ -56,8 +56,8 @@ Item {
             wrapMode: Text.WordWrap
             text: root.keyframeMode
                   ? qsTr("Smooths camera shake by writing position keyframes. Linear pans stay as two keys far apart; only direction changes get extra keys. Changing smoothness or tripod does not update the preview until you apply.")
-                  : qsTr("Smooths camera shake. Drift scans the clip once, then renders a new video. Changing smoothness or tripod does not update the preview until you apply.")
-            color: Theme.mutedForeground
+                  : qsTr("Smooths camera shake. Drift scans the clip once, then renders a stabilized copy into the media bin and switches the clip to it. Changing smoothness or tripod does not update the preview until you apply.")
+            color: Theme.c.stabilizeInspector.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
         }
@@ -68,7 +68,7 @@ Item {
 
             Text {
                 text: qsTr("Mode")
-                color: Theme.mutedForeground
+                color: Theme.c.stabilizeInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
                 font.weight: Font.Medium
@@ -79,9 +79,9 @@ Item {
                 model: root.modeLabels
                 enabled: !root.stabilizing
                 currentIndex: Math.max(0, root.modeIds.indexOf(root.stabilizeMode))
-                tooltip: qsTr("Bake a new file, or animate the clip with sparse transform keys")
+                tooltip: qsTr("Render a stabilized copy, or animate the clip with sparse transform keys")
                 onActivated: (index) => {
-                    EditorState.setClipStabilizeMode(
+                    EditorState.stabilize.setMode(
                                 EditorState.selectedTrack, EditorState.selectedClip,
                                 root.modeIds[index])
                 }
@@ -94,7 +94,7 @@ Item {
 
             Text {
                 text: qsTr("Smoothing")
-                color: Theme.mutedForeground
+                color: Theme.c.stabilizeInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
                 font.weight: Font.Medium
@@ -116,7 +116,7 @@ Item {
                 }
                 onPressedChanged: {
                     if (!pressed && root.clipData) {
-                        EditorState.setClipStabilizeSmoothing(
+                        EditorState.stabilize.setSmoothing(
                              EditorState.selectedTrack, EditorState.selectedClip, value)
                     }
                 }
@@ -126,7 +126,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: qsTr("How many frames the smoother looks ahead and behind. Higher values hide more shake but crop the picture more.")
-                color: Theme.mutedForeground
+                color: Theme.c.stabilizeInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -140,7 +140,7 @@ Item {
                 text: qsTr("Tripod mode")
                 checked: root.clipData ? !!root.clipData.stabilizeTripod : false
                 enabled: !root.stabilizing
-                onToggled: EditorState.setClipStabilizeTripod(
+                onToggled: EditorState.stabilize.setTripod(
                                EditorState.selectedTrack, EditorState.selectedClip, checked)
             }
 
@@ -148,7 +148,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: qsTr("Locks the framing as if the camera were on a tripod. Crops more aggressively than smoothing alone.")
-                color: Theme.mutedForeground
+                color: Theme.c.stabilizeInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -162,7 +162,7 @@ Item {
             IconGlyph {
                 glyph: Theme.icons.warning
                 iconSize: Theme.iconSizeMd
-                iconColor: Theme.warning
+                iconColor: Theme.c.stabilizeInspector.iconWarning
                 anchors.verticalCenter: parent.verticalCenter
             }
 
@@ -172,7 +172,7 @@ Item {
                 text: root.keyframeMode
                       ? qsTr("Position keys still use the last run. Update to apply these settings.")
                       : qsTr("Preview still uses the last run. Update to apply these settings.")
-                color: Theme.warning
+                color: Theme.c.stabilizeInspector.warning
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
                 anchors.verticalCenter: parent.verticalCenter
@@ -187,15 +187,16 @@ Item {
             ThemedButton {
                 text: root.actionLabel
                 variant: (root.stabilized && !root.stale) ? "secondary" : "primary"
-                onClicked: EditorState.stabilizeClip(
+                onClicked: EditorState.stabilize.run(
                                EditorState.selectedTrack, EditorState.selectedClip)
             }
 
             ThemedButton {
                 text: qsTr("Remove")
                 variant: "ghost"
-                visible: root.stabilized
-                onClicked: EditorState.removeClipStabilization(
+                // A stabilized video is its own bin item; the original is still there to swap back.
+                visible: root.appliedAsKeyframes
+                onClicked: EditorState.stabilize.remove(
                                EditorState.selectedTrack, EditorState.selectedClip)
             }
         }
@@ -207,7 +208,7 @@ Item {
             text: (root.clipData && root.clipData.stabilizeStatus)
                   ? root.clipData.stabilizeStatus
                   : qsTr("Stabilizing…")
-            color: Theme.mutedForeground
+            color: Theme.c.stabilizeInspector.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
         }
@@ -224,7 +225,7 @@ Item {
             width: parent.width
             text: qsTr("Cancel")
             variant: "ghost"
-            onClicked: EditorState.cancelClipStabilization(
+            onClicked: EditorState.stabilize.cancel(
                            EditorState.selectedTrack, EditorState.selectedClip)
         }
     }

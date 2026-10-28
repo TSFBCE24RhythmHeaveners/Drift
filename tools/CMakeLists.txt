@@ -45,6 +45,11 @@ target_include_directories(transcribe PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(transcribe PRIVATE Qt6::Core driftengine driftcore)
 drift_bundle_onnxruntime(transcribe)
 
+add_executable(tts tts.cpp)
+target_include_directories(tts PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tts PRIVATE Qt6::Core driftengine driftcore)
+drift_bundle_onnxruntime(tts)
+
 add_executable(segment segment.cpp)
 target_include_directories(segment PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(segment PRIVATE Qt6::Core Qt6::Gui driftengine driftcore)
@@ -70,3 +75,8 @@ target_include_directories(facedetect PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(facedetect PRIVATE Qt6::Core Qt6::Gui driftengine driftcore)
 drift_copy_effects(facedetect)
 drift_bundle_onnxruntime(facedetect)
+
+# Not shipped: renders through the audio graph's C API natively, for Drift Forge's wasm golden tests.
+add_executable(audiograph_render audiograph_render.cpp)
+target_include_directories(audiograph_render PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(audiograph_render PRIVATE Qt6::Core driftaudiodsp)

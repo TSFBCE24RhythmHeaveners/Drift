@@ -1,8 +1,6 @@
 import QtQuick
 import QtQuick.Window
 import Drift
-import "components"
-
 // The contextual layer above the timeline: what you can do to the thing you have selected.
 //
 // Replaces the 26-icon horizontally-scrolling strip, of which four were visible at a time and
@@ -18,6 +16,7 @@ Item {
 
     signal moreRequested()
     signal fadeRequested()
+    signal editTextRequested()
 
     readonly property bool hasSelection: {
         void EditorState.selectionRevision
@@ -32,6 +31,12 @@ Item {
         void EditorState.selectionRevision
         const data = root.hasSelection ? EditorState.selectedClipData : ({})
         return data.kind === "adjustment" && data.adjustmentKind === "transform"
+    }
+
+    readonly property bool textClipSelected: {
+        void EditorState.selectionRevision
+        const data = root.hasSelection ? EditorState.selectedClipData : ({})
+        return data.kind === "text"
     }
 
     // The strip runs the full width of an edge-to-edge window, so in landscape the system
@@ -65,6 +70,19 @@ Item {
         if (root.hasSelection && root.multiSelection && EditorState.transformTogetherAvailable) {
             return [
                 { id: "transformTogether", label: qsTr("Transform together"), icon: Theme.icons.group },
+                { id: "duplicate", label: qsTr("Duplicate"), icon: Theme.icons.copyPlus },
+                { id: "delete", label: qsTr("Delete"), icon: Theme.icons.trash,
+                  destructive: true, gutter: true },
+                { id: "more", label: qsTr("More"), icon: Theme.icons.ellipsis }
+            ]
+        }
+        // Typing is the edit a text clip wants most, and Speed means nothing to it, so Edit
+        // text takes that slot rather than a seventh one the width cannot spare.
+        if (root.hasSelection && root.textClipSelected) {
+            return [
+                { id: "editText", label: qsTr("Edit text"), icon: Theme.icons.type },
+                { id: "split", label: qsTr("Split"), icon: Theme.icons.scissors },
+                { id: "fade", label: qsTr("Fade"), icon: Theme.icons.blend },
                 { id: "duplicate", label: qsTr("Duplicate"), icon: Theme.icons.copyPlus },
                 { id: "delete", label: qsTr("Delete"), icon: Theme.icons.trash,
                   destructive: true, gutter: true },
@@ -109,19 +127,22 @@ Item {
                 Toasts.info(qsTr("Move the playhead over the clip to split it"))
             break
         }
+        case "editText":
+            root.editTextRequested()
+            break
         case "fade":
             root.fadeRequested()
             break
         case "speed":
-            Window.window.openSpeedCurve(EditorState.selectedTrack, EditorState.selectedClip)
+            ShellBridge.main.openSpeedCurve(EditorState.selectedTrack, EditorState.selectedClip)
             break
         case "duplicate":
             EditorState.duplicateSelectedClip()
             break
         // The Transform tab of the properties sheet is where a transform clip is edited.
         case "transform":
-            if (Window.window.editorPage)
-                Window.window.editorPage.openPropertiesSheet()
+            if (ShellBridge.main.editorPage)
+                ShellBridge.main.editorPage.openPropertiesSheet()
             break
         case "transformTogether":
             EditorState.makeTransformLayerFromSelection()
@@ -132,16 +153,16 @@ Item {
         // Duration is a field, not a button: the transition inspector already owns it, and
         // the properties sheet is what shows the inspector for the current selection.
         case "transitionDuration":
-            if (Window.window.editorPage)
-                Window.window.editorPage.openPropertiesSheet()
+            if (ShellBridge.main.editorPage)
+                ShellBridge.main.editorPage.openPropertiesSheet()
             break
         case "transitionCurve":
-            Window.window.openTransitionCurve(EditorState.selectedTransitionTrack,
+            ShellBridge.main.openTransitionCurve(EditorState.selectedTransitionTrack,
                                               EditorState.selectedTransitionData.id)
             break
         case "transitionReplace":
-            if (Window.window.editorPage)
-                Window.window.editorPage.openAssetsTab("transitions")
+            if (ShellBridge.main.editorPage)
+                ShellBridge.main.editorPage.openAssetsTab("transitions")
             break
         case "transitionDelete":
             EditorState.removeTransition(EditorState.selectedTransitionTrack,
@@ -159,14 +180,14 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.panelBackground
+        color: Theme.c.androidClipToolbar.background
     }
 
     Rectangle {
         anchors.bottom: parent.bottom
         width: parent.width
-        height: Theme.borderWidth
-        color: Theme.panelBorder
+        height: Theme.c.androidClipToolbar.borderWidth
+        color: Theme.c.androidClipToolbar.border
     }
 
     Item {
@@ -175,67 +196,38 @@ Item {
         anchors.leftMargin: root.leftInset
         anchors.rightMargin: root.rightInset
 
-        Text {
+        AndroidClipToolbarHint {
             anchors.left: parent.left
             anchors.leftMargin: Theme.androidPagePadding
             anchors.right: toolRow.left
             anchors.rightMargin: Theme.spacingLg
             anchors.verticalCenter: parent.verticalCenter
             visible: root.showHint
-            text: qsTr("Tap a clip to edit")
-            color: Theme.mutedForeground
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeSm
-            elide: Text.ElideRight
         }
 
         Row {
             id: toolRow
-            anchors.right: parent.right
             anchors.top: parent.top
             anchors.bottom: parent.bottom
+            // Full row centres so wide screens don't leave it hugging one edge; the
+            // two-slot hint state stays right-hand where Fit and More always sit.
+            x: root.entries.length >= 4
+               ? Math.round((barBody.width - width) / 2)
+               : barBody.width - width
 
             // Four slots divide the bar; the two-slot hint state keeps them at a fixed
             // width so Fit and More sit where they always sit rather than sprawling.
             readonly property real slotWidth: root.entries.length >= 4
-                                              ? Math.floor(barBody.width / root.entries.length)
+                                              ? Math.min(Math.floor(barBody.width / root.entries.length), 120)
                                               : Theme.androidMinTouchTarget + Theme.spacing2xl
 
             Repeater {
                 model: root.entries
 
-                delegate: Item {
-                    id: slot
-                    required property var modelData
+                delegate: AndroidClipToolbarSlot {
                     width: toolRow.slotWidth
                     height: toolRow.height
-
-                    // Delete sits next to the two edits it cannot be undone from as easily;
-                    // the rule separating it is cheaper than the width a real gutter costs.
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: slot.modelData.gutter === true
-                        width: Theme.borderWidth
-                        height: Theme.spacing3xl
-                        color: Theme.panelBorder
-                    }
-
-                    NavRailButton {
-                        anchors.fill: parent
-                        entry: slot.modelData
-                        tint: slot.modelData.destructive === true ? Theme.destructive
-                                                                  : Theme.mutedForeground
-                        onClicked: {
-                            // Explicit rather than inherited: a signal handler declared on the
-                            // instance replaces the one in NavRailButton's own definition.
-                            if (slot.modelData.destructive === true)
-                                Haptics.confirm()
-                            else
-                                Haptics.select()
-                            root.run(slot.modelData.id)
-                        }
-                    }
+                    onActivated: (actionId) => root.run(actionId)
                 }
             }
         }

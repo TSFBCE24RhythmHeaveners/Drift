@@ -1,8 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import Drift
-import ".."
-
+import "../keyframes/ScaleMath.js" as ScaleMath
 Item {
     id: root
 
@@ -13,22 +12,25 @@ Item {
     }
     readonly property bool hasSelection: !!clipData && Object.keys(clipData).length > 0
     readonly property string clipKind: hasSelection ? (clipData.kind || "") : ""
-    // A model clip is a full-canvas layer placed by its camera: x/y shift the model, the box
-    // size and spin mean nothing (its own size and rotation live on the 3D Model tab).
+    // A model clip is always a 3D layer: its rect is the model's bounding-box front face.
     readonly property bool isModel3d: clipKind === "model3d"
     readonly property bool isTransformLayer: clipKind === "adjustment"
                                              && clipData.adjustmentKind === "transform"
+    // The dest-reading blend modes copy the canvas aside before they draw, so a depth test cannot
+    // sort them; depth occlusion is only offered on a Normal blend.
+    readonly property bool blendIsNormal: !hasSelection
+                                          || (clipData.blendMode || "normal") === "normal"
     // The transform clips over this one, innermost first; the nearest names its frame.
     readonly property var transformParents: hasSelection ? (clipData.transformParents || []) : []
     readonly property string parentName: transformParents.length > 0
                                          ? (transformParents[0].name || qsTr("Transform")) : ""
     readonly property int canvasW: {
         void EditorState.tracksRevision
-        return Math.max(1, EditorState.projectWidth())
+        return Math.max(1, EditorState.projectFile.projectWidth())
     }
     readonly property int canvasH: {
         void EditorState.tracksRevision
-        return Math.max(1, EditorState.projectHeight())
+        return Math.max(1, EditorState.projectFile.projectHeight())
     }
 
     readonly property var propOpacity: { "key": "opacity", "label": qsTr("Opacity"), "def": 1.0, "decimals": 2 }
@@ -42,9 +44,16 @@ Item {
     readonly property var propZ: { "key": "z", "label": qsTr("Depth"), "def": 0.0, "decimals": 0 }
     readonly property var propPerspective: { "key": "perspective", "label": qsTr("Perspective"), "def": 2000.0, "decimals": 0 }
 
+    // Link X and Y keyframes and motion curves together for synchronized 2D paths
+    property bool positionLinked: EditorState.positionLinked
+    onPositionLinkedChanged: {
+        if (EditorState.positionLinked !== positionLinked)
+            EditorState.positionLinked = positionLinked
+    }
+
     // One slider that scales width and height together about the box centre; the link button
     // swaps it for the separate Width/Height rows.
-    property bool sizeLinked: true
+    property bool sizeLinked: EditorState.sizeLinked
     readonly property bool isText: clipKind === "text" || clipKind === "subtitle"
 
     // 100% is the box that fills the canvas on its tighter axis — what Reset and a fitted
@@ -57,15 +66,55 @@ Item {
             return 1
         const w = transformAt("width", canvasW)
         const h = transformAt("height", canvasH)
-        return Math.max(w / canvasW, h / canvasH)
+        return ScaleMath.scaleOf(w, h, canvasW, canvasH)
+    }
+
+    // Scale is presented as a single control, but the project stores its animation as two
+    // independent width/height curves. Keep the navigation and add/remove button in sync
+    // with either curve, including clips that were keyed while the dimensions were unlinked.
+    readonly property var scaleWidthKeys: (clipData && clipData.keyframes && clipData.keyframes.width
+                                           && clipData.keyframes.width.points) || []
+    readonly property var scaleHeightKeys: (clipData && clipData.keyframes && clipData.keyframes.height
+                                            && clipData.keyframes.height.points) || []
+    readonly property var scaleKeyTimes: {
+        const times = scaleWidthKeys.concat(scaleHeightKeys).map(k => Number(k.seconds)).filter(t => isFinite(t))
+        times.sort((a, b) => a - b)
+        return times.filter((t, i) => i === 0 || t - times[i - 1] > 1 / 30)
+    }
+    readonly property bool hasPreviousScaleKey: {
+        const t = EditorState.inspectorPlayheadSeconds
+        return scaleKeyTimes.some(k => k < t - 1 / 30)
+    }
+    readonly property bool hasNextScaleKey: {
+        const t = EditorState.inspectorPlayheadSeconds
+        return scaleKeyTimes.some(k => k > t + 1 / 30)
+    }
+
+    function moveToScaleKey(previous) {
+        const t = EditorState.playheadSeconds
+        const candidates = scaleKeyTimes.filter(k => previous ? k < t - 1 / 30 : k > t + 1 / 30)
+        if (candidates.length > 0)
+            EditorState.playheadSeconds = previous ? candidates[candidates.length - 1] : candidates[0]
+        EditorState.showKeyframeGraphProperty("width")
     }
 
     property var scaleDragStart: null
+    // Fractions of the box (0, 0.5, 1 per axis) the scale keeps fixed on the canvas. Not saved.
+    property point scaleAnchor: Qt.point(0.5, 0.5)
 
     function transformAt(key, def) {
         return EditorState.propertyValueAt(EditorState.selectedTrack, EditorState.selectedClip,
                                            key, EditorState.inspectorPlayheadSeconds, def)
     }
+
+    function keyedAtPlayhead(key) {
+        const points = (clipData.keyframes && clipData.keyframes[key] && clipData.keyframes[key].points) || []
+        const t = EditorState.inspectorPlayheadSeconds
+        return points.some(p => Math.abs(p.seconds - t) <= 1 / 30)
+    }
+
+    readonly property bool widthKeyed: keyedAtPlayhead("width")
+    readonly property bool heightKeyed: keyedAtPlayhead("height")
 
     function beginScaleDrag() {
         scaleDragStart = {
@@ -74,6 +123,7 @@ Item {
             "w": transformAt("width", canvasW),
             "h": transformAt("height", canvasH),
             "scale": scaleAtPlayhead,
+            "rot": transformAt("rotation", 0) * Math.PI / 180,
             "pixelSize": (clipData.textStyle && clipData.textStyle.pixelSize) || 64
         }
     }
@@ -82,11 +132,12 @@ Item {
         const s = scaleDragStart
         if (!s || s.scale <= 0)
             return
-        const k = scale / s.scale
-        const w = Math.max(1, s.w * k)
-        const h = Math.max(1, s.h * k)
-        const x = s.x + (s.w - w) / 2
-        const y = s.y + (s.h - h) / 2
+        const r = ScaleMath.scaledRect(s, scale, scaleAnchor)
+        const k = r.k
+        const x = r.x
+        const y = r.y
+        const w = r.w
+        const h = r.h
         if (isText) {
             EditorState.previewSetTextRect(EditorState.selectedTrack, EditorState.selectedClip,
                                            x, y, w, h, Math.round(s.pixelSize * k))
@@ -117,19 +168,9 @@ Item {
         width: root.width
         spacing: Theme.spacingXl
 
-        EmptyState {
-            visible: root.clipKind === "audio"
-            width: parent.width
-            compact: true
-            glyph: Theme.icons.film
-            title: qsTr("Video only")
-            hint: qsTr("This tab does not apply to audio clips.")
-        }
-
         Column {
             width: root.width
             spacing: 10
-            visible: root.clipKind !== "audio"
 
             TransformLayerCard {
                 visible: root.isTransformLayer
@@ -147,7 +188,7 @@ Item {
                     width: parent.width - selectParentButton.width - parent.spacing
                     wrapMode: Text.WordWrap
                     text: qsTr("Also moved by %1").arg(root.parentName)
-                    color: Theme.clipTransform
+                    color: Theme.c.transformInspector.accent
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeXs
                 }
@@ -162,7 +203,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: qsTr("Move to a time, set a value, then click the diamond to add a keyframe. With Auto keyframes on, dragging a slider or the preview also creates them.")
-                color: Theme.mutedForeground
+                color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -173,12 +214,32 @@ Item {
                 onClicked: EditorState.autoKeyEnabled = !EditorState.autoKeyEnabled
             }
 
-            Text {
-                text: root.isModel3d ? qsTr("Offset (px)") : qsTr("Position (px)")
-                color: Theme.mutedForeground
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeXs
-                font.weight: Font.Medium
+            Item {
+                width: parent.width
+                height: posLinkButton.height
+
+                Text {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.positionLinked ? qsTr("Position (px, linked)") : qsTr("Position (px)")
+                    color: Theme.c.transformInspector.foregroundMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeXs
+                    font.weight: Font.Medium
+                }
+
+                IconButton {
+                    id: posLinkButton
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    buttonSize: 24
+                    iconSize: 14
+                    glyph: root.positionLinked ? Theme.icons.linkTwo : Theme.icons.unlink
+                    active: root.positionLinked
+                    tooltip: root.positionLinked ? qsTr("Separate X and Y keyframes")
+                                                 : qsTr("Link X and Y keyframes and motion curves")
+                    onClicked: root.positionLinked = !root.positionLinked
+                }
             }
 
             Text {
@@ -186,7 +247,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: qsTr("Measured inside %1's frame").arg(root.parentName)
-                color: Theme.mutedForeground
+                color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -195,6 +256,7 @@ Item {
                 width: parent.width
                 propDef: root.propX
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.x && root.clipData.keyframes.x.points) || []
+                linkedPropKey: root.positionLinked ? "y" : ""
                 useSlider: true
                 sliderFrom: -root.canvasW
                 sliderTo: root.canvasW * 2
@@ -204,6 +266,7 @@ Item {
                 width: parent.width
                 propDef: root.propY
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.y && root.clipData.keyframes.y.points) || []
+                linkedPropKey: root.positionLinked ? "x" : ""
                 useSlider: true
                 sliderFrom: -root.canvasH
                 sliderTo: root.canvasH * 2
@@ -211,7 +274,6 @@ Item {
             }
 
             Item {
-                visible: !root.isModel3d
                 width: parent.width
                 height: sizeLinkButton.height
 
@@ -219,7 +281,7 @@ Item {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.sizeLinked ? qsTr("Scale") : qsTr("Size (px)")
-                    color: Theme.mutedForeground
+                    color: Theme.c.transformInspector.foregroundMuted
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSizeXs
                     font.weight: Font.Medium
@@ -235,20 +297,52 @@ Item {
                     active: root.sizeLinked
                     tooltip: root.sizeLinked ? qsTr("Edit width and height separately")
                                              : qsTr("Scale width and height together")
-                    onClicked: root.sizeLinked = !root.sizeLinked
+                    onClicked: EditorState.sizeLinked = !EditorState.sizeLinked
                 }
             }
 
             Row {
-                visible: !root.isModel3d && root.sizeLinked
+                visible: root.sizeLinked
                 width: parent.width
-                spacing: 8
+                spacing: 4
+
+                IconButton {
+                    buttonSize: 20
+                    iconSize: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    glyph: Theme.icons.chevronLeft
+                    enabled: root.hasPreviousScaleKey
+                    tooltip: qsTr("Previous scale keyframe")
+                    onClicked: root.moveToScaleKey(true)
+                }
+
+                IconButton {
+                    buttonSize: 20
+                    iconSize: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    glyph: Theme.icons.chevronRight
+                    enabled: root.hasNextScaleKey
+                    tooltip: qsTr("Next scale keyframe")
+                    onClicked: root.moveToScaleKey(false)
+                }
+
+                IconButton {
+                    buttonSize: 20
+                    iconSize: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    glyph: Theme.icons.trash
+                    enabled: root.scaleKeyTimes.length > 0
+                    tooltip: qsTr("Clear all scale keyframes, keeping the current scale")
+                    onClicked: EditorState.keyframes.clearProperties(
+                                   EditorState.selectedTrack, EditorState.selectedClip,
+                                   ["width", "height"])
+                }
 
                 ThemedSlider {
                     id: scaleSlider
                     lockWhilePlaying: true
                     label: qsTr("Scale")
-                    width: parent.width - scaleReadout.width - parent.spacing
+                    width: parent.width - scaleReadout.width - scaleKey.width - 20 * 3 - parent.spacing * 5
                     anchors.verticalCenter: parent.verticalCenter
                     from: 0.05
                     to: 4
@@ -274,14 +368,67 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     horizontalAlignment: Text.AlignRight
                     text: Math.round((scaleSlider.pressed ? scaleSlider.value : root.scaleAtPlayhead) * 100) + "%"
-                    color: Theme.panelForeground
+                    color: Theme.c.transformInspector.foreground
                     font.family: Theme.monoFontFamily
                     font.pixelSize: Theme.fontSizeSm
+                }
+
+                IconButton {
+                    id: scaleKey
+                    anchors.verticalCenter: parent.verticalCenter
+                    buttonSize: 24
+                    iconSize: 16
+                    // Half-ghosted when only one of the two axes has a key here.
+                    opacity: root.widthKeyed !== root.heightKeyed ? 0.5 : 1
+                    glyph: root.widthKeyed && root.heightKeyed ? Theme.icons.diamondMinus : Theme.icons.diamondPlus
+                    active: root.widthKeyed && root.heightKeyed
+                    tooltip: active ? qsTr("Remove scale keyframe") : qsTr("Add scale keyframe")
+                    onClicked: {
+                        if (active) {
+                            EditorState.keyframes.removeKeysAt(EditorState.selectedTrack, EditorState.selectedClip,
+                                                               ["width", "height"], EditorState.inspectorPlayheadSeconds)
+                        } else {
+                            EditorState.keyframes.addKeysAt(EditorState.selectedTrack, EditorState.selectedClip,
+                                                            ["width", "height"], EditorState.inspectorPlayheadSeconds)
+                        }
+                    }
+                }
+            }
+
+            Grid {
+                visible: root.sizeLinked
+                columns: 3
+                spacing: 3
+
+                Repeater {
+                    model: 9
+                    delegate: Rectangle {
+                        readonly property real fx: (index % 3) * 0.5
+                        readonly property real fy: Math.floor(index / 3) * 0.5
+                        width: 12
+                        height: 12
+                        radius: 2
+                        color: root.scaleAnchor.x === fx && root.scaleAnchor.y === fy
+                               ? Theme.c.transformInspector.accent : Theme.c.transformInspector.foregroundMuted
+                        opacity: root.scaleAnchor.x === fx && root.scaleAnchor.y === fy ? 1 : 0.35
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.scaleAnchor = Qt.point(parent.fx, parent.fy)
+                        }
+                    }
+                }
+
+                HoverHandler { id: anchorHover }
+                ThemedToolTip {
+                    visible: anchorHover.hovered
+                    text: qsTr("Scale origin")
                 }
             }
 
             PropertyKeyframeRow {
-                visible: !root.isModel3d && !root.sizeLinked
+                visible: !root.sizeLinked
                 width: parent.width
                 propDef: root.propWidth
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.width && root.clipData.keyframes.width.points) || []
@@ -291,7 +438,7 @@ Item {
                 unit: "px"
             }
             PropertyKeyframeRow {
-                visible: !root.isModel3d && !root.sizeLinked
+                visible: !root.sizeLinked
                 width: parent.width
                 propDef: root.propHeight
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.height && root.clipData.keyframes.height.points) || []
@@ -302,8 +449,8 @@ Item {
             }
 
             Text {
-                text: root.isModel3d ? qsTr("Opacity") : qsTr("Opacity & rotation")
-                color: Theme.mutedForeground
+                text: qsTr("Opacity & rotation")
+                color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
                 font.weight: Font.Medium
@@ -320,7 +467,6 @@ Item {
             }
 
             PropertyKeyframeRow {
-                visible: !root.isModel3d
                 width: parent.width
                 propDef: root.propRotation
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.rotation && root.clipData.keyframes.rotation.points) || []
@@ -331,16 +477,14 @@ Item {
             }
 
             Text {
-                visible: !root.isModel3d
                 text: qsTr("Rotate 90°")
-                color: Theme.mutedForeground
+                color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
                 font.weight: Font.Medium
             }
 
             Flow {
-                visible: !root.isModel3d
                 width: parent.width
                 spacing: 6
                 Repeater {
@@ -350,9 +494,7 @@ Item {
                         required property int modelData
                         text: modelData + "°"
                         selected: {
-                            void root.clipDataRevision
-                            void EditorState.inspectorPlayheadSeconds
-                            const cur = Number(root.clipData.rotationAtPlayhead || 0)
+                            const cur = EditorState.selectedClipRotationAtPlayhead
                             return Math.abs(cur - modelData) < 0.5
                         }
                         onClicked: EditorState.setClipRotationSnap(
@@ -380,10 +522,29 @@ Item {
                                                       EditorState.selectedClip, checked)
             }
 
+            // Depth occlusion. Off by default everywhere, because track order deciding what covers
+            // what is the rule the rest of the timeline relies on; this opts one clip out of it.
+            ThemedSwitch {
+                visible: !!root.clipData.layer3d
+                enabled: root.blendIsNormal
+                text: qsTr("Occlude by depth")
+                tooltip: root.blendIsNormal
+                         ? qsTr("Let depth decide what covers this clip, instead of its track position. Only clips with this on sort against each other; everything else still draws in track order.")
+                         : qsTr("Needs the Normal blend mode — the others read the canvas behind the clip, which depth cannot sort.")
+                Binding on checked {
+                    value: {
+                        void root.clipDataRevision
+                        return !!root.clipData.depthOcclude
+                    }
+                }
+                onToggled: EditorState.setClipDepthOcclude(EditorState.selectedTrack,
+                                                           EditorState.selectedClip, checked)
+            }
+
             // The preview gizmo's tool and the axes its handles follow. Editor preferences shared by
             // every clip, not stored on this one.
             Row {
-                visible: !root.isModel3d && !!root.clipData.layer3d
+                visible: !!root.clipData.layer3d
                 spacing: 6
 
                 Repeater {
@@ -403,14 +564,14 @@ Item {
                         tooltip: (key.length > 0 ? qsTr("%1 (%2)").arg(modelData.label).arg(key)
                                                  : modelData.label) + "\n" + modelData.tip
                         Accessible.name: modelData.label
-                        active: EditorState.gizmoTool === modelData.value
-                        onClicked: EditorState.gizmoTool = modelData.value
+                        active: EditorState.preview.gizmoTool === modelData.value
+                        onClicked: EditorState.preview.gizmoTool = modelData.value
                     }
                 }
             }
 
             Flow {
-                visible: !root.isModel3d && !!root.clipData.layer3d
+                visible: !!root.clipData.layer3d
                 width: parent.width
                 spacing: 6
 
@@ -425,14 +586,14 @@ Item {
                         required property var modelData
                         text: modelData.label
                         tooltip: modelData.tip
-                        selected: EditorState.gizmoOrientation === modelData.value
-                        onClicked: EditorState.gizmoOrientation = modelData.value
+                        selected: EditorState.preview.gizmoOrientation === modelData.value
+                        onClicked: EditorState.preview.gizmoOrientation = modelData.value
                     }
                 }
             }
 
             PropertyKeyframeRow {
-                visible: !root.isModel3d && !!root.clipData.layer3d
+                visible: !!root.clipData.layer3d
                 width: parent.width
                 propDef: root.propRotationX
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.rotationX && root.clipData.keyframes.rotationX.points) || []
@@ -442,7 +603,7 @@ Item {
                 unit: "°"
             }
             PropertyKeyframeRow {
-                visible: !root.isModel3d && !!root.clipData.layer3d
+                visible: !!root.clipData.layer3d
                 width: parent.width
                 propDef: root.propRotationY
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.rotationY && root.clipData.keyframes.rotationY.points) || []
@@ -452,7 +613,7 @@ Item {
                 unit: "°"
             }
             PropertyKeyframeRow {
-                visible: !root.isModel3d && !!root.clipData.layer3d
+                visible: !!root.clipData.layer3d
                 width: parent.width
                 propDef: root.propZ
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.z && root.clipData.keyframes.z.points) || []
@@ -462,7 +623,7 @@ Item {
                 unit: "px"
             }
             PropertyKeyframeRow {
-                visible: !root.isModel3d && !!root.clipData.layer3d
+                visible: !!root.clipData.layer3d
                 width: parent.width
                 propDef: root.propPerspective
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.perspective && root.clipData.keyframes.perspective.points) || []
@@ -475,7 +636,7 @@ Item {
             Text {
                 visible: root.clipKind === "video"
                 text: qsTr("Fix orientation")
-                color: Theme.mutedForeground
+                color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
                 font.weight: Font.Medium
@@ -486,7 +647,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: qsTr("Corrects the source's own rotation losslessly — unlike Angle above, this changes decoding, not just the on-screen box.")
-                color: Theme.mutedForeground
+                color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
             }
@@ -513,7 +674,7 @@ Item {
 
             Text {
                 text: qsTr("Flip")
-                color: Theme.mutedForeground
+                color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
                 font.weight: Font.Medium
@@ -545,7 +706,7 @@ Item {
             }
 
             ThemedButton {
-                text: root.isModel3d ? qsTr("Reset position") : qsTr("Reset position & size")
+                text: qsTr("Reset position & size")
                 onClicked: EditorState.resetClipTransform(
                                EditorState.selectedTrack, EditorState.selectedClip)
             }

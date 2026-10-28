@@ -12,8 +12,10 @@ import Drift
 // a width breakpoint and swapped shells live; that was removed deliberately — see build().
 //
 // Both shells stay ApplicationWindows. That matters more than it looks: roughly twenty call
-// sites reach the root by name through Window.window.* (openSegmentation, configureAndAddAsset,
-// pushOverlayModal, openLayoutChooser, …). Demoting the shells to Items under one shared window
+// sites reach the root by name through ShellBridge.main.* (openSegmentation, configureAndAddAsset,
+// pushOverlayModal, openLayoutChooser, …). Each shell assigns itself to the ShellBridge singleton
+// in Component.onCompleted and clears it on destruction, so panels hosted in secondary windows
+// reach the editor window rather than their own. Demoting the shells to Items under one shared window
 // would route all of those through a forwarding layer, and a missed name is a runtime TypeError,
 // not a compile error.
 //
@@ -23,7 +25,8 @@ import Drift
 Item {
     id: shell
 
-    // Set from main.cpp via setInitialProperties: "mobile", "desktop", or "auto".
+    // Set from main.cpp via setInitialProperties, already resolved to "mobile" or "desktop"
+    // (PreferencesController::resolveInterfaceShell). "auto" only applies if it is left unset.
     property string shellPreference: "auto"
 
     // "auto" is platform-derived. Window width deliberately does not enter into it: see build().
@@ -43,7 +46,7 @@ Item {
     //
     // Called once. Swapping shells live on a window resize was built and then removed, because:
     //
-    //   - The two shells do not expose the same API. persistLayout exists only on the desktop
+    //   - The two shells do not expose the same API. persistWindowState exists only on the desktop
     //     root; inEditor, showEditor, overlayModalCount and toolWindowOpen only on the touch one.
     //     A swap can only cope by probing for each name at runtime, and nothing enforces the
     //     parity that shared components currently happen to rely on.

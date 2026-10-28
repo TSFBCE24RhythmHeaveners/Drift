@@ -1,17 +1,19 @@
 #pragma once
 
-#include "AudioOutputChannel.h"
-#include "CompositorService.h"
-#include "PlaybackClock.h"
-#include "PlaybackStats.h"
-#include "core/Project.h"
-#include "core/Time.h"
-#include "engine/AudioMixer.h"
-#include "engine/audio/ClipAudioRetimer.h"
+#include "playback/AudioOutputChannel.h"
+#include "playback/preview/CompositorService.h"
+#include "playback/PlaybackClock.h"
+#include "playback/stats/PlaybackStats.h"
+#include "core/project/Project.h"
+#include "core/base/Time.h"
+#include "engine/audio/AudioMixer.h"
+#include "engine/audio/dsp/ClipAudioRetimer.h"
 
 #include <memory>
+#include <QElapsedTimer>
 #include <QImage>
 #include <QMutex>
+#include <QSet>
 #include <QObject>
 #include <QTimer>
 
@@ -57,6 +59,11 @@ public:
     // unchanged pointer) and invalidated the compositor snapshot twice. Coalesces every edit
     // delivered in one event-loop turn into a single composite request.
     void notifyProjectEdited();
+    // Preview-only bypass of catalog effects on the given clips. See CompositorService.
+    void setPreviewEffectBypass(const QSet<QString> &clipIds, const QSet<QString> &catalogIds);
+    // Reference-counted: the preview reads a small copy of each frame back while any scope is open.
+    void acquireScopes();
+    void releaseScopes();
     void setPlayheadUs(drift::TimeUs us);
     // A scrub gesture is under way: seeks in between show approximate frames (see
     // RenderOptions::approximateSeek), and the exact one is drawn when the finger rests or the
@@ -137,9 +144,18 @@ public:
     // test, or before the item enters a scene — which falls the engine back to the timer.
     void setDisplayRefreshRate(double hz);
 
-    // Id of the text clip currently edited in place on the preview; that clip is
-    // omitted from the composited frame so the QML inline editor stands in for it.
-    void setEditingClipId(const QString &id);
+    // The inline text editor's caret, selection and preedit; an empty clipId clears it. The edited
+    // clip's text itself reaches the compositor through the project like any edit; a caller that is
+    // about to notifyProjectEdited() anyway passes refresh = false to render once.
+    // The preview's current render scale (canvas px per project px), for layouts that must match it.
+    double previewRenderScale() const { return playbackRenderOptions().previewScale; }
+    void setTextEditDecor(const FrameCompositor::RenderOptions::TextEditDecor &decor, bool refresh = true);
+    // The preview's mask view of one clip; an Off mode clears it.
+    void setMaskView(const FrameCompositor::RenderOptions::MaskView &view);
+    // The preview's 3D mode and its free viewpoint; inactive renders the camera's picture.
+    void setEditorView(const FrameCompositor::RenderOptions::EditorView &view);
+    // The panel's size in device px, as the preview last reported it.
+    QSize previewRenderSize() const { return QSize(m_previewRenderWidth, m_previewRenderHeight); }
 
     // Empty id follows the system default. Applied to the sink immediately.
     void setAudioDeviceId(const QByteArray &id) { m_audio.setDeviceId(id); }
@@ -168,6 +184,7 @@ signals:
 
     void gpuCompositorStatusChanged();
     void currentFrameChanged();
+    void scopeFrame(const QImage &image);
     void playingChanged();
     void previewQualityChanged();
     void playbackRateChanged();
@@ -180,7 +197,7 @@ signals:
 private:
     int fillAudio(float *buffer, int sampleCount);
     void ensureAudioSink();
-    void onAudioSampleRateChanged();
+    void onAudioSinkRebuilt();
     // Reads the clock and publishes the playhead when it has crossed into a new project frame.
     void advancePlayhead();
     void emitPlayhead();
@@ -228,6 +245,8 @@ private:
     QString m_gpuStatusDetail;
     GpuFrameTexture m_currentFrame;
     mutable QMutex m_frameMutex;
+    int m_scopeConsumers = 0;
+    QElapsedTimer m_scopeTimer;
     drift::TimeUs m_playheadUs = 0;
     std::atomic<bool> m_playing = false;
     // Auto, not full. Auto is full quality plus the adaptive ratchet in CompositorService,
@@ -250,7 +269,9 @@ private:
     // a restart by bumping the generation below rather than reaching into its state.
     drift::ClipAudioRetimer m_rateRetimer;
     std::atomic<quint64> m_audioStreamGeneration{1};
-    QString m_editingClipId;
+    FrameCompositor::RenderOptions::TextEditDecor m_textEditDecor;
+    FrameCompositor::RenderOptions::EditorView m_editorView;
+    FrameCompositor::RenderOptions::MaskView m_maskView;
     int m_previewRenderWidth = 0;
     int m_previewRenderHeight = 0;
     // Display cadence. The refresh rate comes from the window's screen and is 0 until one
@@ -272,7 +293,8 @@ private:
     bool m_loopWorkArea = false;
     bool m_voiceoverRecording = false;
     // processedUSecs() is cumulative from QAudioSink::start(), not from the last clock reset.
-    // Subtracting this (captured whenever the clock is re-anchored) keeps a seek from landing
-    // at seekTarget + time-since-play instead of seekTarget.
+    // This is where the current stream's first sample sits in the sink's output, captured on the
+    // first fill of each stream generation. Audio thread only.
     qint64 m_sinkPlayedUsOffset = 0;
+    quint64 m_anchoredGeneration = 0;
 };

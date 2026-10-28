@@ -1,11 +1,9 @@
 import QtQuick
 import Drift
-import ".."
-
-// The Market: one search field, then text tabs, Drift Assets first and the stock types from
-// the marketplace catalog after it. Drift Assets are CutWire's own and free, so they need no
-// opt-in; the consent gate stands in front of the stock tabs only, which is where the quotas
-// and third-party terms it explains actually apply.
+// The Market: one search field, then text tabs, Drift Assets and sound effects first and the
+// stock types from the marketplace catalog after them. Drift Assets and sound effects are
+// CutWire's own and free, so they need no opt-in; the consent gate stands in front of the stock
+// tabs only, which is where the quotas and third-party terms it explains actually apply.
 Item {
     id: root
 
@@ -13,26 +11,30 @@ Item {
     property bool compact: Theme.compact
     property alias searchText: field.text
     property alias submittedQuery: stock.submittedQuery
-    // "assets", or a Market type id.
+    // "assets", "sfx", or a Market type id.
     property string section: "assets"
+    readonly property bool stockSection: section !== "assets" && section !== "sfx"
 
     readonly property string query: field.text.trim()
     readonly property real sidePadding: compact ? Theme.androidPagePadding : Theme.pagePadding
-    // Before consent there is no catalog, so the stock tabs collapse into one that leads to it.
-    readonly property var stockTabs: Market.consented
+    // Until the catalog is in (no consent yet, still loading, or unreachable) the stock tabs
+    // collapse into one that leads to the consent panel or the loading and error states.
+    readonly property var stockTabs: Market.consented && Market.types.length > 0
                                      ? Market.types
                                      : [{ id: "stock", label: qsTr("Stock") }]
 
-    // Android Back, forwarded by AndroidMarket.
+    // Android Back, forwarded by its host.
     function handleBack() {
         if (root.section === "assets")
             return home.handleBack()
+        if (root.section === "sfx")
+            return false
         return stock.handleBack()
     }
 
     function showSection(id) {
         root.section = id
-        if (id !== "assets" && id !== "stock" && Market.activeTypeId !== id)
+        if (id !== "assets" && id !== "sfx" && id !== "stock" && Market.activeTypeId !== id)
             Market.activeTypeId = id
     }
 
@@ -50,15 +52,39 @@ Item {
             stock.runSearch()
     }
 
+    // Market.types is not persisted, and StockBrowser can't ask for it: it only shows once the
+    // types are there. Without this, consent from an earlier run leaves no stock tabs at all.
+    onVisibleChanged: ensureCatalog()
+    Component.onCompleted: ensureCatalog()
+    function ensureCatalog() {
+        if (!visible || !Market.configured)
+            return
+        if (!Sfx.loaded && !Sfx.loading)
+            Sfx.refresh()
+        if (!Market.consented)
+            return
+        if (Market.types.length === 0 && !Market.catalogLoading)
+            Market.refreshCatalog()
+    }
+
     Connections {
         target: Market
         function onActiveTypeIdChanged() {
-            if (root.section !== "assets" && Market.activeTypeId)
+            if (root.stockSection && Market.activeTypeId)
                 root.section = Market.activeTypeId
         }
         function onConsentedChanged() {
             if (Market.consented && root.section === "stock")
                 root.section = Market.activeTypeId || "stock"
+        }
+    }
+
+    // The server hides every category from some builds; the tab goes with them.
+    Connections {
+        target: Sfx
+        function onLibraryChanged() {
+            if (root.section === "sfx" && !Sfx.available)
+                root.section = "assets"
         }
     }
 
@@ -82,12 +108,14 @@ Item {
             id: field
             x: root.sidePadding
             width: parent.width - root.sidePadding * 2
-            busy: root.section !== "assets" && Market.searching
+            busy: root.stockSection && Market.searching
             placeholderText: root.section === "assets"
                              ? qsTr("Search assets")
-                             : (Market.canResolve ? qsTr("Search, or paste a link") : qsTr("Search"))
+                             : root.section === "sfx"
+                               ? qsTr("Search sound effects")
+                               : (Market.canResolve ? qsTr("Search, or paste a link") : qsTr("Search"))
             onSubmitted: {
-                if (root.section !== "assets" && Market.consented)
+                if (root.stockSection && Market.consented)
                     stock.submitQuery()
             }
             onCancelRequested: Market.cancelSearch()
@@ -109,37 +137,12 @@ Item {
                 spacing: Theme.spacing2xl
 
                 Repeater {
-                    model: [{ id: "assets", label: qsTr("Assets") }].concat(root.stockTabs)
-                    delegate: Item {
-                        required property var modelData
-                        readonly property bool active: root.section === modelData.id
-                        width: tabLabel.implicitWidth
-                        height: tabLabel.implicitHeight + Theme.spacingLg + 2
-                        Accessible.role: Accessible.PageTab
-                        Accessible.name: tabLabel.text
-                        Accessible.checked: active
-
-                        Text {
-                            id: tabLabel
-                            anchors.top: parent.top
-                            anchors.topMargin: Theme.spacingSm
-                            text: modelData.label || modelData.id
-                            color: parent.active || tabHover.hovered ? Theme.panelForeground : Theme.mutedForeground
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeSm
-                            font.weight: parent.active ? Font.DemiBold : Font.Medium
-                        }
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            width: parent.width
-                            height: 2
-                            radius: 1
-                            color: Theme.primary
-                            opacity: parent.active ? 1 : 0
-                            Behavior on opacity { NumberAnimation { duration: Theme.durationBase; easing.type: Theme.easing } }
-                        }
-                        HoverHandler { id: tabHover; cursorShape: Qt.PointingHandCursor }
-                        TapHandler { onTapped: root.showSection(modelData.id) }
+                    model: [{ id: "assets", label: qsTr("Assets") }]
+                           .concat(Sfx.available ? [{ id: "sfx", label: qsTr("SFX") }] : [])
+                           .concat(root.stockTabs)
+                    delegate: MarketSectionTab {
+                        section: root.section
+                        onSectionSelected: (id) => root.showSection(id)
                     }
                 }
             }
@@ -147,8 +150,8 @@ Item {
 
         Rectangle {
             width: parent.width
-            height: Theme.borderWidth
-            color: Theme.panelBorder
+            height: Theme.c.marketTab.borderWidth
+            color: Theme.c.marketTab.border
         }
     }
 
@@ -167,24 +170,29 @@ Item {
             visible: root.section === "assets"
             compact: root.compact
             query: root.section === "assets" ? root.query : ""
-            stockTypes: Market.consented ? Market.types : [{ id: "stock", label: qsTr("Stock footage") }]
+            stockTypes: Market.consented && Market.types.length > 0
+                        ? Market.types : [{ id: "stock", label: qsTr("Stock footage") }]
             onSearchStockRequested: (typeId) => root.searchStock(typeId)
+        }
+
+        SfxBrowser {
+            anchors.fill: parent
+            visible: root.section === "sfx"
+            compact: root.compact
+            query: root.section === "sfx" ? root.query : ""
         }
 
         MarketConsentPanel {
             anchors.fill: parent
-            visible: root.section !== "assets" && !Market.consented
+            visible: root.stockSection && !Market.consented
             sideMargin: root.sidePadding
-            onAccepted: {
-                if (Market.types.length === 0 && !Market.catalogLoading)
-                    Market.refreshCatalog()
-            }
+            onAccepted: root.ensureCatalog()
         }
 
         EmptyState {
             anchors.centerIn: parent
             width: parent.width
-            visible: root.section !== "assets" && Market.consented && Market.catalogLoading
+            visible: root.stockSection && Market.consented && Market.catalogLoading
                      && Market.types.length === 0
             glyph: Theme.icons.spinner
             glyphSpinning: true
@@ -194,7 +202,7 @@ Item {
         EmptyState {
             anchors.centerIn: parent
             width: parent.width
-            visible: root.section !== "assets" && Market.consented && !Market.catalogLoading
+            visible: root.stockSection && Market.consented && !Market.catalogLoading
                      && Market.catalogError.length > 0 && Market.types.length === 0
             glyph: Theme.icons.error
             title: qsTr("Couldn’t reach the marketplace")
@@ -207,7 +215,7 @@ Item {
         StockBrowser {
             id: stock
             anchors.fill: parent
-            visible: root.section !== "assets" && Market.consented && Market.types.length > 0
+            visible: root.stockSection && Market.consented && Market.types.length > 0
             compact: root.compact
             query: root.query
         }

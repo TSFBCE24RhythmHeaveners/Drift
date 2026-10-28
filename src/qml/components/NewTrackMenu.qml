@@ -27,7 +27,11 @@ Popup {
     // Adjustment tracks carry a kind, so they go through their own call rather than widening
     // addTrack()'s type whitelist with compound strings.
     function addTrackOfType(type) {
-        if (type.indexOf("adjustment:") === 0)
+        // The camera lane carries a clip from the moment it is made — an empty one would frame
+        // nothing — so it goes through its own call rather than addTrack's bare-lane path.
+        if (type === "camera")
+            EditorState.addCameraTrack()
+        else if (type.indexOf("adjustment:") === 0)
             EditorState.addAdjustmentTrack(type.substring("adjustment:".length))
         else
             EditorState.addTrack(type)
@@ -88,7 +92,17 @@ Popup {
         }
         return false
     }
-    readonly property var trackTypes: allTrackTypes.filter((t) => !t.needsVisualTrack || hasVisualTrack)
+    // A sequence has one viewer, so the camera is offered only until it exists.
+    readonly property bool hasCamera: {
+        const tracks = EditorState.tracks
+        for (let i = 0; i < tracks.length; ++i) {
+            if (tracks[i].isCameraLayer === true)
+                return true
+        }
+        return false
+    }
+    readonly property var trackTypes: allTrackTypes.filter(
+        (t) => (!t.needsVisualTrack || hasVisualTrack) && !(t.oncePerSequence && hasCamera))
     readonly property var allTrackTypes: [
         { type: "video", label: qsTr("Video"), icon: Theme.icons.film },
         { type: "audio", label: qsTr("Audio"), icon: Theme.icons.music },
@@ -103,13 +117,17 @@ Popup {
         // A transform layer moves the tracks below it, so it is only offered once there is one.
         { type: "adjustment:transform", label: qsTr("Transform"), icon: Theme.icons.maximize,
           needsVisualTrack: true },
+        // The scene camera: one viewpoint everything below is seen through. Same reasoning as the
+        // transform layer for needing something to film, and only ever one per sequence.
+        { type: "camera", label: qsTr("Camera"), icon: Theme.icons.video,
+          needsVisualTrack: true, oncePerSequence: true },
     ]
 
     background: Rectangle {
-        color: Theme.panelBackground
-        border.width: 1
-        border.color: Theme.panelBorder
-        radius: Theme.radiusMd
+        color: Theme.c.newTrackMenu.background
+        border.width: Theme.c.newTrackMenu.borderWidth
+        border.color: Theme.c.newTrackMenu.border
+        radius: Theme.c.newTrackMenu.radius
     }
 
     contentItem: Column {
@@ -141,7 +159,7 @@ Popup {
             topPadding: 4
             bottomPadding: 6
             text: qsTr("New track")
-            color: Theme.mutedForeground
+            color: Theme.c.newTrackMenu.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
             font.weight: Font.Medium
@@ -150,62 +168,15 @@ Popup {
         Rectangle {
             width: parent.width
             height: 1
-            color: Theme.panelBorder
+            color: Theme.c.newTrackMenu.separator
             opacity: 0.5
         }
 
         Repeater {
             model: root.trackTypes
 
-            delegate: Rectangle {
-                id: trackTypeRow
-                required property var modelData
-                required property int index
-
-                width: parent.width
-                height: Theme.controlHeight + Theme.spacingXs
-                radius: Theme.radiusSm
-                color: itemMouse.containsMouse || root.highlightIndex === index
-                       ? Theme.popoverHover : "transparent"
-
-                Behavior on color {
-                    ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                }
-
-                Row {
-                    anchors.fill: parent
-                    anchors.leftMargin: Theme.spacingLg
-                    anchors.rightMargin: Theme.spacingLg
-                    spacing: Theme.spacingLg + Theme.spacingXs
-
-                    IconGlyph {
-                        anchors.verticalCenter: parent.verticalCenter
-                        glyph: trackTypeRow.modelData.icon
-                        iconSize: Theme.iconSizeMd
-                        iconColor: Theme.mutedForeground
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: trackTypeRow.modelData.label
-                        color: Theme.panelForeground
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeSm
-                    }
-                }
-
-                MouseArea {
-                    id: itemMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onEntered: root.highlightIndex = trackTypeRow.index
-                    onClicked: {
-                        Haptics.confirm()
-                        root.addTrackOfType(trackTypeRow.modelData.type)
-                        root.close()
-                    }
-                }
+            delegate: NewTrackMenuEntry {
+                menu: root
             }
         }
     }

@@ -1,6 +1,6 @@
 #include <QtTest>
-#include "core/Transcript.h"
-#include "models/CloudProviders.h"
+#include "core/project/Transcript.h"
+#include "app/online/CloudProviders.h"
 
 #include <QAbstractSocket>
 #include <QCoreApplication>
@@ -25,19 +25,33 @@
 #include <QTimer>
 #include <QUrlQuery>
 
-#include "mcp/McpCatalog.h"
-#include "mcp/McpDispatcher.h"
-#include "mcp/McpJson.h"
-#include "mcp/McpProtocol.h"
-#include "mcp/McpSession.h"
-#include "mcp/McpStdio.h"
-#include "engine/DepthSidecar.h"
-#include "engine/GpuCompositor.h"
-#include "engine/ObjectDetector.h"
-#include "models/AppController.h"
+#include <atomic>
+#include <thread>
+
+#include "app/mcp/tools/McpCatalog.h"
+#include "app/mcp/tools/McpDispatcher.h"
+#include "app/mcp/protocol/McpJson.h"
+#include "app/mcp/protocol/McpProtocol.h"
+#include "app/mcp/protocol/McpSession.h"
+#include "app/mcp/transport/McpBridge.h"
+#include "app/platform/RunningInstances.h"
+#include "app/mcp/transport/McpStdio.h"
+#include "engine/addons/AddonPackage.h"
+#include "engine/packages/audio/AudioEffectCatalog.h"
+#include "engine/ml/vision/depth/DepthSidecar.h"
+#include "engine/packages/effects/EffectCatalog.h"
+#include "engine/gpu/GlRuntime.h"
+#include "engine/packages/transitions/TransitionCatalog.h"
+#include "engine/compositor/GpuCompositor.h"
+#include "engine/ml/vision/detection/ObjectDetector.h"
+#include "engine/render2d/pdf/PdfiumRuntime.h"
+#include "core/effects/EffectStackStore.h"
+#include "app/online/addons/AddonManager.h"
+#include "app/editor/AppController.h"
+#include "ui/preview/PreviewController.h"
 #include "TestZip.h"
-#include "models/AssetLibrary.h"
-#include "models/MarketClient.h"
+#include "app/bin/AssetLibrary.h"
+#include "app/online/market/MarketClient.h"
 
 #include <cmath>
 #include <cstdio>
@@ -63,6 +77,20 @@ private slots:
     void protocolNotificationHasNoReply();
     void sessionFileRoundTrip();
     void sessionFileMissing();
+    void sessionRegistryListsInstancesNewestFirst();
+    void sessionRegistryPrunesDeadInstances();
+    void stdioBridgeStaysOnAttachedInstance();
+    void bridgeServesToolsWithoutInstance();
+    void bridgeRefusesToGuessBetweenInstances();
+    void bridgeLaunchRejectsMissingProject();
+    void bridgeNotificationBatchSendsNothing();
+    void isolatedSessionLeavesUserStateAlone();
+    void sessionRecordReportsProjectLoad();
+    void extractionSweepSparesOtherInstances();
+    void startupLockExcludesConcurrentStartup();
+    void quitInstanceOnlyEndsIsolatedSessions();
+    void bridgeCloseRefusesUsersEditor();
+    void sessionRecordTracksProject();
     void stdioFramingIsNewlineDelimited();
     void stdioWriteEscapesEmbeddedNewlines();
     void stdioReadsNewlineDelimited();
@@ -78,6 +106,8 @@ private slots:
     void applyUnknownOp();
     void depthToolsSampleAndClear();
     void catalogDispatcherParity();
+    void authoredEffectLifecycle();
+    void effectPresetHousekeeping();
     void textResultRoundsNumbers();
     void validateRejectsWrongType();
     void setTransformWrites3dPose();
@@ -93,6 +123,7 @@ private slots:
     void applyFailureNotDuplicated();
     void searchFindsOps();
     void captureBeyondEndFlags();
+    void previewViewTools();
     void applyBatchStopsAndUndoRevertsPrefix();
     void inspectIsCompact();
     void inspectDetailRowIsCompact();
@@ -107,6 +138,9 @@ private slots:
     void exportDoesNotInheritAudioOnlyFromAnEarlierRender();
     void exportVideoRequiresPath();
     void projectSetupRoundTrip();
+    void projectSetupAnswersLayoutChooser();
+    void newProjectWithCanvas();
+    void closeProjectShowsStartScreen();
     void captureDoesNotInsertClip();
     void framesUniformReturnsN();
     void framesChangesDedupesFourShotClip();
@@ -139,6 +173,7 @@ private slots:
     void setVolumeRoundTrips();
     void writingAtAKeyframeReadbackTimeReusesTheKey();
     void keyframeWritesStayInsideTheClip();
+    void keyframeEasingThroughMcp();
     void normalizeVolumeIsRelativeAndIdempotent();
     void duckUnderIsIdempotentAndKeepsTheEnvelope();
     void audioReadOpsAreNotUndoable();
@@ -150,6 +185,10 @@ private slots:
     void undoToRestoresSnapshot();
     void setRippleIsNotUndoable();
     void closeGapClosesOneHole();
+    void reimportOfFileChangedInPlaceReprobes();
+    void refreshInFlightAcrossProjectReplaceIsDropped();
+    void replaceInFlightAcrossProjectReplaceIsDropped();
+    void replaceInFlightSurvivesBinModelRefresh();
     void saveProjectWithoutPathUsesCurrent();
     void detectSilenceFindsInjectedGap();
     void removeSilenceCutsMiddleGapWithDeclick();
@@ -158,6 +197,7 @@ private slots:
     void generateSubtitlesUsesStoredTranscript();
     void transcribeReportsCachedAndJobs();
     void cloudOpsNeedKeyAndConsent();
+    void localVoiceOpsValidateArgs();
     void scribeResponseBecomesTranscript();
     void keepRangesRebuildsLinkedPair();
     void assembleAppendsMultiAssetEdl();
@@ -175,7 +215,9 @@ private slots:
     void importSvgBecomesVectorAsset();
     void model3dToolboxIsCatalogued();
     void importGlbBecomesModel3dAsset();
+    void pdfClipOptionsAndKeyframes();
     void model3dKeyframesAndOptions();
+    void sceneCameraTools();
     void lottieBatchUndoesAsOneStep();
     void setTextStyleAcceptsAnimation();
     void textKeyframesThroughSetKeyframe();
@@ -288,9 +330,9 @@ void McpTest::catalogOpsIncludeWhen()
     QVERIFY(!compact.contains(QStringLiteral("guide")));
     QVERIFY(!compact.contains(QStringLiteral("hint")));
     // Budgets, not targets: ~270 ops with one-line "when" hints. Raise only with new ops.
-    QVERIFY(QJsonDocument(compact).toJson(QJsonDocument::Compact).size() < 19500);
+    QVERIFY(QJsonDocument(compact).toJson(QJsonDocument::Compact).size() < 21500);
     QVERIFY(QJsonDocument(drift::mcp::catalogPayload({{QStringLiteral("brief"), true}}))
-                .toJson(QJsonDocument::Compact).size() < 10000);
+                .toJson(QJsonDocument::Compact).size() < 10800);
 
     const QJsonObject cat = drift::mcp::catalogPayload(
         {{QStringLiteral("guide"), true}, {QStringLiteral("endpoints"), true}});
@@ -493,13 +535,14 @@ void McpTest::sessionFileRoundTrip()
     QVERIFY(dir.isValid());
     const QString path = dir.filePath(QStringLiteral("session.json"));
     qputenv("DRIFT_MCP_SESSION_PATH", path.toUtf8());
-    QVERIFY(drift::mcp::writeSessionFile(4731, QStringLiteral("abc123")));
-    quint16 port = 0;
-    QString token;
-    QString error;
-    QVERIFY(drift::mcp::readSessionFile(&port, &token, &error));
-    QCOMPARE(port, quint16(4731));
-    QCOMPARE(token, QStringLiteral("abc123"));
+    drift::mcp::SessionInfo info;
+    info.port = 4731;
+    info.token = QStringLiteral("abc123");
+    QVERIFY(drift::mcp::writeSessionFile(info));
+    const QList<drift::mcp::SessionInfo> sessions = drift::mcp::listSessions();
+    QCOMPARE(sessions.size(), 1);
+    QCOMPARE(sessions.at(0).port, quint16(4731));
+    QCOMPARE(sessions.at(0).token, QStringLiteral("abc123"));
     drift::mcp::removeSessionFile();
     QVERIFY(!QFile::exists(path));
     qunsetenv("DRIFT_MCP_SESSION_PATH");
@@ -508,10 +551,539 @@ void McpTest::sessionFileRoundTrip()
 void McpTest::sessionFileMissing()
 {
     qputenv("DRIFT_MCP_SESSION_PATH", "/tmp/drift-mcp-does-not-exist-test.json");
+    drift::mcp::SessionInfo attached;
     QString error;
-    QVERIFY(!drift::mcp::readSessionFile(nullptr, nullptr, &error));
+    QVERIFY(!drift::mcp::resolveAttachedSession(&attached, &error));
     QVERIFY(error.contains(QStringLiteral("Agent access")));
     qunsetenv("DRIFT_MCP_SESSION_PATH");
+}
+
+namespace {
+
+void writeRegistryRecord(const QDir &dir, const QString &name, const QJsonObject &record)
+{
+    QFile file(dir.filePath(name));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QJsonDocument(record).toJson(QJsonDocument::Compact));
+}
+
+} // namespace
+
+// Two editors open at once must both stay reachable: each keeps its own record, and the
+// bridge's default is the most recently started one.
+void McpTest::sessionRegistryListsInstancesNewestFirst()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    qputenv("DRIFT_MCP_SESSION_DIR", dir.path().toUtf8());
+    const auto restore = qScopeGuard([] { qunsetenv("DRIFT_MCP_SESSION_DIR"); });
+
+    drift::mcp::SessionInfo mine;
+    mine.port = 4731;
+    mine.token = QStringLiteral("older");
+    mine.startedAt = 1000;
+    mine.project = QStringLiteral("/projects/a.json");
+    QVERIFY(drift::mcp::writeSessionFile(mine));
+    QVERIFY(QFile::exists(dir.filePath(
+        QStringLiteral("%1.json").arg(QCoreApplication::applicationPid()))));
+
+    // Stands in for a second instance; it only has to carry a live pid.
+    writeRegistryRecord(QDir(dir.path()), QStringLiteral("other.json"),
+                        {{QStringLiteral("port"), 4732},
+                         {QStringLiteral("token"), QStringLiteral("newer")},
+                         {QStringLiteral("pid"), QCoreApplication::applicationPid()},
+                         {QStringLiteral("startedAt"), 2000},
+                         {QStringLiteral("headless"), true}});
+
+    const QList<drift::mcp::SessionInfo> sessions = drift::mcp::listSessions();
+    QCOMPARE(sessions.size(), 2);
+    QCOMPARE(sessions.at(0).token, QStringLiteral("newer"));
+    QVERIFY(sessions.at(0).headless);
+    QCOMPARE(sessions.at(1).token, QStringLiteral("older"));
+    QCOMPARE(sessions.at(1).project, QStringLiteral("/projects/a.json"));
+
+    // Stopping one instance leaves the other registered.
+    drift::mcp::removeSessionFile();
+    const QList<drift::mcp::SessionInfo> remaining = drift::mcp::listSessions();
+    QCOMPARE(remaining.size(), 1);
+    QCOMPARE(remaining.at(0).token, QStringLiteral("newer"));
+}
+
+// A bridge stays on the instance it first attached to: a newer editor opening must not
+// take over its next call, while the attached instance's token rotation still reaches it.
+void McpTest::stdioBridgeStaysOnAttachedInstance()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    qputenv("DRIFT_MCP_SESSION_DIR", dir.path().toUtf8());
+    const auto restore = qScopeGuard([] { qunsetenv("DRIFT_MCP_SESSION_DIR"); });
+
+    drift::mcp::SessionInfo mine;
+    mine.port = 4731;
+    mine.token = QStringLiteral("first");
+    mine.startedAt = 1000;
+    mine.projectName = QStringLiteral("Project A");
+    QVERIFY(drift::mcp::writeSessionFile(mine));
+
+    drift::mcp::SessionInfo attached;
+    QString error;
+    QVERIFY(drift::mcp::resolveAttachedSession(&attached, &error));
+    QCOMPARE(attached.port, quint16(4731));
+
+    // A newer instance appears under another live pid...
+    QProcess sleeper;
+    sleeper.start(QStringLiteral("sleep"), {QStringLiteral("30")});
+    if (!sleeper.waitForStarted())
+        QSKIP("needs a `sleep` process to stand in for a second instance");
+    const auto stopSleeper = qScopeGuard([&] {
+        sleeper.kill();
+        sleeper.waitForFinished();
+    });
+    writeRegistryRecord(QDir(dir.path()), QStringLiteral("other.json"),
+                        {{QStringLiteral("port"), 4732},
+                         {QStringLiteral("token"), QStringLiteral("other")},
+                         {QStringLiteral("pid"), sleeper.processId()},
+                         {QStringLiteral("startedAt"), 2000}});
+
+    // ...and the attached one rotates its token.
+    mine.token = QStringLiteral("rotated");
+    QVERIFY(drift::mcp::writeSessionFile(mine));
+
+    QVERIFY(drift::mcp::resolveAttachedSession(&attached, &error));
+    QCOMPARE(attached.port, quint16(4731));
+    QCOMPARE(attached.token, QStringLiteral("rotated"));
+
+    // Once the attached instance turns access off, the bridge reports it instead of
+    // moving to the other one.
+    drift::mcp::removeSessionFile();
+    QVERIFY(!drift::mcp::resolveAttachedSession(&attached, &error));
+    QVERIFY2(error.contains(QStringLiteral("Project A")), qPrintable(error));
+    QVERIFY2(error.contains(QStringLiteral("Agent access is off")), qPrintable(error));
+}
+
+// An instance that crashed never removes its record; it must not shadow a live one.
+void McpTest::sessionRegistryPrunesDeadInstances()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    qputenv("DRIFT_MCP_SESSION_DIR", dir.path().toUtf8());
+    const auto restore = qScopeGuard([] { qunsetenv("DRIFT_MCP_SESSION_DIR"); });
+
+    // Above every platform's pid range.
+    const QString stale = dir.filePath(QStringLiteral("stale.json"));
+    writeRegistryRecord(QDir(dir.path()), QStringLiteral("stale.json"),
+                        {{QStringLiteral("port"), 4733},
+                         {QStringLiteral("token"), QStringLiteral("dead")},
+                         {QStringLiteral("pid"), qint64(1) << 40},
+                         {QStringLiteral("startedAt"), 9999}});
+    // Unreadable records may be mid-write by their owner and are left alone.
+    const QString junk = dir.filePath(QStringLiteral("junk.json"));
+    {
+        QFile file(junk);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{");
+    }
+
+    QVERIFY(drift::mcp::listSessions().isEmpty());
+    QVERIFY(!QFile::exists(stale));
+    QVERIFY(QFile::exists(junk));
+}
+
+void McpTest::sessionRecordTracksProject()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    qputenv("DRIFT_MCP_SESSION_DIR", dir.path().toUtf8());
+    const auto restore = qScopeGuard([] { qunsetenv("DRIFT_MCP_SESSION_DIR"); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    state.mcp()->setEnabled(true);
+    QVERIFY2(state.mcp()->running(), qPrintable(state.mcp()->error()));
+
+    state.projectFile()->setProjectName(QStringLiteral("Registry Test"));
+    QList<drift::mcp::SessionInfo> sessions = drift::mcp::listSessions();
+    QCOMPARE(sessions.size(), 1);
+    QCOMPARE(sessions.at(0).port, quint16(state.mcp()->port()));
+    QCOMPARE(sessions.at(0).token, state.mcp()->token());
+    QCOMPARE(sessions.at(0).projectName, QStringLiteral("Registry Test"));
+    QVERIFY(!sessions.at(0).headless);
+    QVERIFY(sessions.at(0).startedAt > 0);
+
+    state.mcp()->setEnabled(false);
+    QVERIFY(drift::mcp::listSessions().isEmpty());
+}
+
+namespace {
+
+QJsonObject bridgeCall(drift::mcp::StdioBridge &bridge, const QString &method,
+                       const QJsonObject &params = {})
+{
+    QJsonObject request{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                        {QStringLiteral("id"), 1},
+                        {QStringLiteral("method"), method}};
+    if (!params.isEmpty())
+        request.insert(QStringLiteral("params"), params);
+    return QJsonDocument::fromJson(
+               bridge.handle(QJsonDocument(request).toJson(QJsonDocument::Compact)))
+        .object();
+}
+
+// The text payload of a tools/call reply through the bridge.
+QJsonObject bridgeTool(drift::mcp::StdioBridge &bridge, const QString &name,
+                       const QJsonObject &args = {})
+{
+    const QJsonObject reply = bridgeCall(
+        bridge, QStringLiteral("tools/call"),
+        {{QStringLiteral("name"), name}, {QStringLiteral("arguments"), args}});
+    const QJsonArray content = reply.value(QStringLiteral("result")).toObject()
+                                   .value(QStringLiteral("content")).toArray();
+    return QJsonDocument::fromJson(
+               content.at(0).toObject().value(QStringLiteral("text")).toString().toUtf8())
+        .object();
+}
+
+// Forwarding blocks on a socket while the in-process server answers on this thread, so
+// the bridge runs on its own thread and this one keeps the event loop turning.
+QJsonObject bridgeToolOffThread(drift::mcp::StdioBridge &bridge, const QString &name,
+                                const QJsonObject &args = {})
+{
+    QJsonObject result;
+    std::atomic<bool> done{false};
+    std::thread worker([&] {
+        result = bridgeTool(bridge, name, args);
+        done = true;
+    });
+    QElapsedTimer timer;
+    timer.start();
+    while (!done && timer.elapsed() < 20000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    worker.join();
+    return result;
+}
+
+} // namespace
+
+// With no editor running an agent must still see the whole tool list — launch_instance
+// above all — rather than a dead server.
+void McpTest::bridgeServesToolsWithoutInstance()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    qputenv("DRIFT_MCP_SESSION_DIR", dir.path().toUtf8());
+    const auto restore = qScopeGuard([] { qunsetenv("DRIFT_MCP_SESSION_DIR"); });
+
+    drift::mcp::StdioBridge bridge;
+    const QJsonObject init = bridgeCall(bridge, QStringLiteral("initialize"));
+    QVERIFY(init.value(QStringLiteral("result")).toObject()
+                .value(QStringLiteral("instructions")).toString()
+                .contains(QStringLiteral("use_instance")));
+
+    const QJsonArray tools = bridgeCall(bridge, QStringLiteral("tools/list"))
+                                 .value(QStringLiteral("result")).toObject()
+                                 .value(QStringLiteral("tools")).toArray();
+    QStringList names;
+    for (const QJsonValue &tool : tools)
+        names.append(tool.toObject().value(QStringLiteral("name")).toString());
+    for (const QString &name : {QStringLiteral("catalog"), QStringLiteral("inspect"),
+                                QStringLiteral("instances"), QStringLiteral("use_instance"),
+                                QStringLiteral("launch_instance")})
+        QVERIFY2(names.contains(name), qPrintable(name));
+
+    const QJsonObject inspect = bridgeTool(bridge, QStringLiteral("inspect"));
+    QCOMPARE(inspect.value(QStringLiteral("error")).toString(), QStringLiteral("no_instance"));
+    QVERIFY(inspect.value(QStringLiteral("detail")).toString().contains(QStringLiteral("launch_instance")));
+
+    const QJsonObject listed = bridgeTool(bridge, QStringLiteral("instances"));
+    QVERIFY(listed.value(QStringLiteral("ok")).toBool());
+    QVERIFY(listed.value(QStringLiteral("instances")).toArray().isEmpty());
+}
+
+// With two instances open, a bridge that guessed could put edits into the wrong project:
+// it lists them and waits for use_instance, then forwards to the chosen one.
+void McpTest::bridgeRefusesToGuessBetweenInstances()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    qputenv("DRIFT_MCP_SESSION_DIR", dir.path().toUtf8());
+    const auto restore = qScopeGuard([] { qunsetenv("DRIFT_MCP_SESSION_DIR"); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    state.projectFile()->setProjectName(QStringLiteral("Mine"));
+    state.mcp()->setEnabled(true);
+    QVERIFY2(state.mcp()->running(), qPrintable(state.mcp()->error()));
+    const auto stopServer = qScopeGuard([&] { state.mcp()->setEnabled(false); });
+
+    QProcess sleeper;
+    sleeper.start(QStringLiteral("sleep"), {QStringLiteral("30")});
+    if (!sleeper.waitForStarted())
+        QSKIP("needs a `sleep` process to stand in for a second instance");
+    const auto stopSleeper = qScopeGuard([&] {
+        sleeper.kill();
+        sleeper.waitForFinished();
+    });
+    writeRegistryRecord(QDir(dir.path()), QStringLiteral("other.json"),
+                        {{QStringLiteral("port"), 1},
+                         {QStringLiteral("token"), QStringLiteral("other")},
+                         {QStringLiteral("pid"), sleeper.processId()},
+                         {QStringLiteral("projectName"), QStringLiteral("Theirs")},
+                         {QStringLiteral("startedAt"), QDateTime::currentMSecsSinceEpoch() + 1000}});
+
+    drift::mcp::StdioBridge bridge;
+    const QJsonObject refused = bridgeTool(bridge, QStringLiteral("inspect"));
+    QCOMPARE(refused.value(QStringLiteral("error")).toString(), QStringLiteral("no_instance"));
+    const QString detail = refused.value(QStringLiteral("detail")).toString();
+    QVERIFY2(detail.contains(QStringLiteral("Mine")) && detail.contains(QStringLiteral("Theirs")),
+             qPrintable(detail));
+
+    const QJsonArray rows = bridgeTool(bridge, QStringLiteral("instances"))
+                                .value(QStringLiteral("instances")).toArray();
+    QCOMPARE(rows.size(), 2);
+    for (const QJsonValue &row : rows) {
+        QVERIFY(!row.toObject().contains(QStringLiteral("token")));
+        QVERIFY(!row.toObject().value(QStringLiteral("attached")).toBool());
+    }
+
+    QCOMPARE(bridgeTool(bridge, QStringLiteral("use_instance"), {{QStringLiteral("id"), 999999999}})
+                 .value(QStringLiteral("error")).toString(),
+             QStringLiteral("not_found"));
+
+    const qint64 self = QCoreApplication::applicationPid();
+    const QJsonObject chosen =
+        bridgeTool(bridge, QStringLiteral("use_instance"), {{QStringLiteral("id"), self}});
+    QVERIFY2(chosen.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(chosen).toJson()));
+    QCOMPARE(chosen.value(QStringLiteral("instance")).toObject().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Mine"));
+    QCOMPARE(bridge.attached().pid, self);
+
+    const QJsonObject inspected = bridgeToolOffThread(bridge, QStringLiteral("inspect"));
+    QVERIFY2(inspected.contains(QStringLiteral("revision")),
+             qPrintable(QJsonDocument(inspected).toJson()));
+}
+
+void McpTest::bridgeLaunchRejectsMissingProject()
+{
+    drift::mcp::StdioBridge bridge;
+    const QJsonObject result =
+        bridgeTool(bridge, QStringLiteral("launch_instance"),
+                   {{QStringLiteral("project"), QStringLiteral("/nonexistent/drift-project.json")}});
+    QCOMPARE(result.value(QStringLiteral("error")).toString(), QStringLiteral("not_found"));
+}
+
+void McpTest::bridgeNotificationBatchSendsNothing()
+{
+    drift::mcp::StdioBridge bridge;
+    const QByteArray batch =
+        R"([{"jsonrpc":"2.0","method":"notifications/initialized"},)"
+        R"({"jsonrpc":"2.0","method":"notifications/initialized"}])";
+    QVERIFY(bridge.handle(batch).isEmpty());
+}
+
+// An agent's instance runs next to the user's editor under the same settings profile: it
+// must not reopen the user's last project, offer their crash recovery, or rewrite the
+// recovery file or lastSessionPath the user's own next launch depends on.
+void McpTest::isolatedSessionLeavesUserStateAlone()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftMcpTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftMcpTest"));
+    const QString recoveryPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/recovery/autosave.json");
+    const auto restore = qScopeGuard([&] {
+        QSettings().remove(QStringLiteral("lastSessionPath"));
+        QFile::remove(recoveryPath);
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        QStandardPaths::setTestModeEnabled(false);
+    });
+
+    const QString userProject = QStringLiteral("/user/project.drift");
+    QSettings().setValue(QStringLiteral("lastSessionPath"), userProject);
+    QVERIFY(QDir().mkpath(QFileInfo(recoveryPath).absolutePath()));
+    const QByteArray userRecovery =
+        R"({"__recovery":{"originalPath":"/user/project.drift","projectName":"Users work"}})";
+    {
+        QFile file(recoveryPath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(userRecovery);
+    }
+
+    AssetLibrary library;
+    AppController state(&library);
+    state.preferences()->setReopenLastProject(true);
+    QVERIFY(state.projectFile()->recoveryAvailable());
+    state.projectFile()->setIsolatedSession(true);
+    QVERIFY(!state.projectFile()->recoveryAvailable());
+    QVERIFY(!state.projectFile()->restoreLastSessionIfEnabled());
+
+    state.projectFile()->setCurrentProjectPath(QStringLiteral("/agent/other.drift"));
+    state.projectFile()->setDirty(true);
+    state.projectFile()->flushRecoverySnapshot();
+    state.projectFile()->newProject(); // deletes the recovery file in a normal session
+
+    QCOMPARE(QSettings().value(QStringLiteral("lastSessionPath")).toString(), userProject);
+    QFile file(recoveryPath);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), userRecovery);
+}
+
+// launch_instance waits on these fields: registering is not the same as the startup
+// project having opened, and a failed open has to be reported rather than look like success.
+void McpTest::sessionRecordReportsProjectLoad()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    qputenv("DRIFT_MCP_SESSION_DIR", dir.path().toUtf8());
+    const auto restore = qScopeGuard([] { qunsetenv("DRIFT_MCP_SESSION_DIR"); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    state.mcp()->setEnabled(true);
+    QVERIFY2(state.mcp()->running(), qPrintable(state.mcp()->error()));
+    const auto stopServer = qScopeGuard([&] { state.mcp()->setEnabled(false); });
+
+    drift::mcp::SessionInfo record = drift::mcp::listSessions().value(0);
+    QVERIFY(!record.loading);
+    QVERIFY(!record.hasLoaded);
+
+    const QString broken = dir.filePath(QStringLiteral("broken.json"));
+    {
+        QFile file(broken);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("{ not json");
+    }
+    QSignalSpy finished(state.projectFile(), &ProjectFileController::projectLoadFinished);
+    state.projectFile()->loadProjectJson(QUrl::fromLocalFile(broken));
+    QVERIFY(drift::mcp::listSessions().value(0).loading);
+    QVERIFY(finished.wait(10000));
+
+    record = drift::mcp::listSessions().value(0);
+    QVERIFY(!record.loading);
+    QVERIFY(record.hasLoaded);
+    QVERIFY(!record.loadOk);
+    QVERIFY(!record.loadMessage.isEmpty());
+}
+
+// Startup reclaims projects/<id> dirs that no recent or recovery snapshot names. Those say
+// nothing about another Drift running beside this one — an isolated agent session writes
+// neither — so with one alive the sweep must leave everything that might be its media.
+void McpTest::extractionSweepSparesOtherInstances()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftSweepTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftSweepTest"));
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const auto restore = qScopeGuard([&] {
+        QDir(base).removeRecursively();
+        QSettings().remove(QStringLiteral("recentProjects"));
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        QStandardPaths::setTestModeEnabled(false);
+    });
+    QSettings().remove(QStringLiteral("recentProjects"));
+    QFile::remove(base + QStringLiteral("/recovery/autosave.json"));
+
+    const QString orphan = base + QStringLiteral("/projects/other-instance-project");
+    QVERIFY(QDir().mkpath(orphan));
+
+    QProcess sleeper;
+    sleeper.start(QStringLiteral("sleep"), {QStringLiteral("30")});
+    if (!sleeper.waitForStarted())
+        QSKIP("needs a `sleep` process to stand in for another instance");
+    const QString marker =
+        base + QStringLiteral("/instances/") + QString::number(sleeper.processId());
+    QVERIFY(QDir().mkpath(QFileInfo(marker).absolutePath()));
+    {
+        QFile file(marker);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+
+    {
+        AssetLibrary library;
+        AppController state(&library);
+    }
+    QVERIFY(QDir(orphan).exists());
+
+    // Once that instance is gone, its marker is pruned and the sweep runs as before.
+    sleeper.kill();
+    sleeper.waitForFinished();
+    {
+        AssetLibrary library;
+        AppController state(&library);
+    }
+    QVERIFY(!QFile::exists(marker));
+    QVERIFY(!QDir(orphan).exists());
+}
+
+// The sweep holds this from registering until its last deletion, so an instance starting
+// meanwhile cannot register or extract anything until the sweep is over.
+void McpTest::startupLockExcludesConcurrentStartup()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftSweepTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftSweepTest"));
+    const auto restore = qScopeGuard([&] {
+        QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).removeRecursively();
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        QStandardPaths::setTestModeEnabled(false);
+    });
+
+    auto first = drift::instances::lockStartup(1000);
+    QVERIFY(first);
+    QVERIFY(!drift::instances::lockStartup(200));
+    first.reset();
+    QVERIFY(drift::instances::lockStartup(1000));
+}
+
+// quit_instance is reachable over plain HTTP too, so the instance itself refuses to end the
+// user's editor; an agent's own instance still keeps unsaved work unless told to discard it.
+// (The accepting path quits the process, so it is exercised end to end, not here.)
+void McpTest::quitInstanceOnlyEndsIsolatedSessions()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+
+    QCOMPARE(dispatcher.applyOne(QStringLiteral("quit_instance"), {{QStringLiteral("discard"), true}})
+                 .value(QStringLiteral("error")).toString(),
+             QStringLiteral("not_isolated"));
+
+    state.projectFile()->setIsolatedSession(true);
+    state.projectFile()->setDirty(true);
+    QCOMPARE(dispatcher.applyOne(QStringLiteral("quit_instance"), {})
+                 .value(QStringLiteral("error")).toString(),
+             QStringLiteral("unsaved_changes"));
+}
+
+void McpTest::bridgeCloseRefusesUsersEditor()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    qputenv("DRIFT_MCP_SESSION_DIR", dir.path().toUtf8());
+    const auto restore = qScopeGuard([] { qunsetenv("DRIFT_MCP_SESSION_DIR"); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    state.mcp()->setEnabled(true);
+    QVERIFY2(state.mcp()->running(), qPrintable(state.mcp()->error()));
+    const auto stopServer = qScopeGuard([&] { state.mcp()->setEnabled(false); });
+
+    drift::mcp::StdioBridge bridge;
+    const QJsonObject refused = bridgeTool(bridge, QStringLiteral("close_instance"),
+                                           {{QStringLiteral("id"), QCoreApplication::applicationPid()}});
+    QCOMPARE(refused.value(QStringLiteral("error")).toString(), QStringLiteral("not_isolated"));
+    QCOMPARE(bridgeTool(bridge, QStringLiteral("close_instance"), {{QStringLiteral("id"), 999999999}})
+                 .value(QStringLiteral("error")).toString(),
+             QStringLiteral("not_found"));
+    QVERIFY(!drift::mcp::listSessions().value(0).isolated);
 }
 
 void McpTest::serverRequiresBearerToken()
@@ -520,14 +1092,14 @@ void McpTest::serverRequiresBearerToken()
     qputenv("DRIFT_MCP_SESSION_PATH", dir.filePath(QStringLiteral("s.json")).toUtf8());
     AssetLibrary library;
     AppController state(&library);
-    state.setMcpEnabled(true);
-    QVERIFY2(state.mcpRunning(), qPrintable(state.mcpError()));
+    state.mcp()->setEnabled(true);
+    QVERIFY2(state.mcp()->running(), qPrintable(state.mcp()->error()));
     int status = 0;
-    httpPost(quint16(state.mcpPort()), {},
+    httpPost(quint16(state.mcp()->port()), {},
              QJsonDocument(rpc(QStringLiteral("ping"))).toJson(QJsonDocument::Compact), &status);
     QCOMPARE(status, 401);
-    state.setMcpEnabled(false);
-    QVERIFY(!state.mcpRunning());
+    state.mcp()->setEnabled(false);
+    QVERIFY(!state.mcp()->running());
     qunsetenv("DRIFT_MCP_SESSION_PATH");
 }
 
@@ -537,12 +1109,12 @@ void McpTest::serverInitializeWithToken()
     qputenv("DRIFT_MCP_SESSION_PATH", dir.filePath(QStringLiteral("s.json")).toUtf8());
     AssetLibrary library;
     AppController state(&library);
-    state.setMcpEnabled(true);
-    QVERIFY(state.mcpRunning());
+    state.mcp()->setEnabled(true);
+    QVERIFY(state.mcp()->running());
     int status = 0;
-    const QByteArray auth = "Bearer " + state.mcpToken().toUtf8();
+    const QByteArray auth = "Bearer " + state.mcp()->token().toUtf8();
     const QByteArray body = httpPost(
-        quint16(state.mcpPort()), auth,
+        quint16(state.mcp()->port()), auth,
         QJsonDocument(rpc(QStringLiteral("initialize"))).toJson(QJsonDocument::Compact), &status);
     QCOMPARE(status, 200);
     const auto doc = QJsonDocument::fromJson(body);
@@ -551,7 +1123,7 @@ void McpTest::serverInitializeWithToken()
                  .value(QStringLiteral("name")).toString(),
              QStringLiteral("drift"));
     QVERIFY(QFile::exists(dir.filePath(QStringLiteral("s.json"))));
-    state.setMcpEnabled(false);
+    state.mcp()->setEnabled(false);
     QVERIFY(!QFile::exists(dir.filePath(QStringLiteral("s.json"))));
     qunsetenv("DRIFT_MCP_SESSION_PATH");
 }
@@ -562,25 +1134,25 @@ void McpTest::serverNotificationReturns202()
     qputenv("DRIFT_MCP_SESSION_PATH", dir.filePath(QStringLiteral("s.json")).toUtf8());
     AssetLibrary library;
     AppController state(&library);
-    state.setMcpEnabled(true);
-    QVERIFY2(state.mcpRunning(), qPrintable(state.mcpError()));
+    state.mcp()->setEnabled(true);
+    QVERIFY2(state.mcp()->running(), qPrintable(state.mcp()->error()));
     int status = 0;
-    const QByteArray auth = "Bearer " + state.mcpToken().toUtf8();
+    const QByteArray auth = "Bearer " + state.mcp()->token().toUtf8();
     const QJsonObject note{
         {QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
         {QStringLiteral("method"), QStringLiteral("notifications/initialized")},
     };
-    httpPost(quint16(state.mcpPort()), auth, QJsonDocument(note).toJson(QJsonDocument::Compact),
+    httpPost(quint16(state.mcp()->port()), auth, QJsonDocument(note).toJson(QJsonDocument::Compact),
              &status);
     QCOMPARE(status, 202);
-    state.setMcpEnabled(false);
+    state.mcp()->setEnabled(false);
     qunsetenv("DRIFT_MCP_SESSION_PATH");
 }
 
 // Regression for the constructor starting the server itself: that raced headless mode's
 // own --mcp-port/--mcp-token setup (the later start() was a same-instance no-op against
 // the wrong port/token) and started HTTP even for a stdio-only headless run. Construction
-// must only load the preference; only applyMcpStartOnLaunch() (the GUI's own call) may
+// must only load the preference; only applyStartOnLaunch() (the GUI's own call) may
 // act on it.
 void McpTest::mcpStartOnLaunchAppliesOnlyWhenInvoked()
 {
@@ -600,13 +1172,13 @@ void McpTest::mcpStartOnLaunchAppliesOnlyWhenInvoked()
 
     AssetLibrary library;
     AppController state(&library);
-    QVERIFY(state.mcpStartOnLaunch());
-    QVERIFY(!state.mcpRunning());
+    QVERIFY(state.mcp()->startOnLaunch());
+    QVERIFY(!state.mcp()->running());
 
-    state.applyMcpStartOnLaunch();
-    QVERIFY2(state.mcpRunning(), qPrintable(state.mcpError()));
+    state.mcp()->applyStartOnLaunch();
+    QVERIFY2(state.mcp()->running(), qPrintable(state.mcp()->error()));
 
-    state.setMcpEnabled(false);
+    state.mcp()->setEnabled(false);
     qunsetenv("DRIFT_MCP_SESSION_PATH");
 }
 
@@ -631,13 +1203,13 @@ void McpTest::mcpDisablingResetsStartOnLaunch()
 
     AssetLibrary library;
     AppController state(&library);
-    state.setMcpEnabled(true);
-    state.setMcpStartOnLaunch(true);
-    QVERIFY(state.mcpStartOnLaunch());
+    state.mcp()->setEnabled(true);
+    state.mcp()->setStartOnLaunch(true);
+    QVERIFY(state.mcp()->startOnLaunch());
     QVERIFY(QSettings().value(QStringLiteral("mcp/startOnLaunch")).toBool());
 
-    state.setMcpEnabled(false);
-    QVERIFY(!state.mcpStartOnLaunch());
+    state.mcp()->setEnabled(false);
+    QVERIFY(!state.mcp()->startOnLaunch());
     QVERIFY(!QSettings().value(QStringLiteral("mcp/startOnLaunch")).toBool());
 
     qunsetenv("DRIFT_MCP_SESSION_PATH");
@@ -662,7 +1234,7 @@ void McpTest::depthToolsSampleAndClear()
     state.addTextClip(QStringLiteral("Deep"), 0.0);
     const int track = state.selectedTrack();
     const int clip = state.selectedClip();
-    const QString id = state.mcpCompactClip(track, clip).value(QStringLiteral("id")).toString();
+    const QString id = state.mcp()->compactClip(track, clip).value(QStringLiteral("id")).toString();
     const QJsonObject at{{QStringLiteral("clip"), id}, {QStringLiteral("x"), 0.25},
                          {QStringLiteral("y"), 0.5}};
 
@@ -725,7 +1297,7 @@ void McpTest::applyBatchStopsAndUndoRevertsPrefix()
     const int track = state.selectedTrack();
     const int clip = state.selectedClip();
     QVERIFY(track >= 0);
-    const QString id = state.mcpCompactClip(track, clip).value(QStringLiteral("id")).toString();
+    const QString id = state.mcp()->compactClip(track, clip).value(QStringLiteral("id")).toString();
     QVERIFY(!id.isEmpty());
 
     drift::mcp::McpDispatcher dispatcher(&state);
@@ -743,11 +1315,11 @@ void McpTest::applyBatchStopsAndUndoRevertsPrefix()
     QCOMPARE(batch.value(QStringLiteral("ok")).toBool(), false);
     QCOMPARE(batch.value(QStringLiteral("error")).toString(), QStringLiteral("apply_failed"));
     QCOMPARE(batch.value(QStringLiteral("stopped")).toInt(), 1);
-    QCOMPARE(state.mcpCompactClip(track, clip).value(QStringLiteral("duration")).toDouble(), 2.0);
+    QCOMPARE(state.mcp()->compactClip(track, clip).value(QStringLiteral("duration")).toDouble(), 2.0);
 
     QVERIFY(state.undoAvailable());
     state.undo();
-    QVERIFY(state.mcpCompactClip(track, clip).value(QStringLiteral("duration")).toDouble() > 2.0);
+    QVERIFY(state.mcp()->compactClip(track, clip).value(QStringLiteral("duration")).toDouble() > 2.0);
 }
 
 void McpTest::inspectIsCompact()
@@ -1121,9 +1693,9 @@ void McpTest::exportDoesNotInheritAudioOnlyFromAnEarlierRender()
     drift::mcp::McpDispatcher dispatcher(&state);
 
     // Stand in for an earlier audio-only mix check.
-    state.mcpRememberExportSettings({{QStringLiteral("audioOnly"), true},
+    state.mcp()->rememberExportSettings({{QStringLiteral("audioOnly"), true},
                                      {QStringLiteral("audioBitrateKbps"), 256}});
-    QCOMPARE(state.mcpLastExportSettings().value(QStringLiteral("audioBitrateKbps")).toInt(), 256);
+    QCOMPARE(state.mcp()->lastExportSettings().value(QStringLiteral("audioBitrateKbps")).toInt(), 256);
 
     // A later export that says nothing about audio_only must still be a video.
     const QString out = dir.filePath(QStringLiteral("out.mp4"));
@@ -1154,7 +1726,7 @@ void McpTest::exportDoesNotInheritAudioOnlyFromAnEarlierRender()
              "the export came back with no video stream — audio_only was inherited");
 
     // The useful half of the inheritance is untouched.
-    QCOMPARE(state.mcpLastExportSettings().value(QStringLiteral("audioBitrateKbps")).toInt(), 256);
+    QCOMPARE(state.mcp()->lastExportSettings().value(QStringLiteral("audioBitrateKbps")).toInt(), 256);
     // And the export dialog's own memory was not written by an agent export.
     QSettings gui;
     gui.beginGroup(QStringLiteral("export"));
@@ -1248,6 +1820,92 @@ void McpTest::projectSetupRoundTrip()
     QVERIFY(QFile::exists(path));
 }
 
+void McpTest::projectSetupAnswersLayoutChooser()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+
+    state.projectFile()->newProject();
+    QVERIFY(!state.projectLayoutChosen());
+    const QJsonObject setup = dispatcher.applyOne(
+        QStringLiteral("set_project_setup"),
+        {{QStringLiteral("width"), 1080}, {QStringLiteral("height"), 1920}, {QStringLiteral("fps"), 30}});
+    QVERIFY(setup.value(QStringLiteral("ok")).toBool());
+    QVERIFY(state.projectLayoutChosen());
+}
+
+void McpTest::newProjectWithCanvas()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    state.addTextClip(QStringLiteral("Keep"), 0.0);
+    auto clipCount = [](AppController &s) {
+        int n = 0;
+        for (const QVariant &t : s.tracks())
+            n += t.toMap().value(QStringLiteral("clips")).toList().size();
+        return n;
+    };
+
+    // Bad args are rejected before the open timeline is discarded.
+    const QJsonObject bad = dispatcher.applyOne(QStringLiteral("new_project"), {{QStringLiteral("width"), 1080}});
+    QVERIFY(!bad.value(QStringLiteral("ok")).toBool());
+    QCOMPARE(clipCount(state), 1);
+
+    const QJsonObject created = dispatcher.applyOne(
+        QStringLiteral("new_project"),
+        {{QStringLiteral("width"), 1080}, {QStringLiteral("height"), 1920}, {QStringLiteral("fps"), 25}});
+    QVERIFY(created.value(QStringLiteral("ok")).toBool());
+    QCOMPARE(clipCount(state), 0);
+    QCOMPARE(state.projectFile()->projectWidth(), 1080);
+    QCOMPARE(state.projectFile()->projectHeight(), 1920);
+    QCOMPARE(state.projectFile()->projectFps(), 25);
+    QVERIFY(state.projectLayoutChosen());
+    QVERIFY(!state.projectFile()->hasUnsavedChanges());
+
+    // Without a canvas the defaults are used and the user is still not prompted.
+    state.projectFile()->newProject();
+    QVERIFY(!state.projectLayoutChosen());
+    QVERIFY(dispatcher.applyOne(QStringLiteral("new_project"), {}).value(QStringLiteral("ok")).toBool());
+    QVERIFY(state.projectLayoutChosen());
+}
+
+void McpTest::closeProjectShowsStartScreen()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    state.addTextClip(QStringLiteral("Gone"), 0.0);
+    QSignalSpy startScreen(state.projectFile(), &ProjectFileController::startScreenRequested);
+
+    QVERIFY(dispatcher.applyOne(QStringLiteral("close_project"), {}).value(QStringLiteral("ok")).toBool());
+    int clips = 0;
+    for (const QVariant &t : state.tracks())
+        clips += t.toMap().value(QStringLiteral("clips")).toList().size();
+    QCOMPARE(clips, 0);
+    QVERIFY(!state.projectFile()->hasUnsavedChanges());
+    QCOMPARE(startScreen.count(), 1);
+    QCOMPARE(startScreen.at(0).at(0).toBool(), true);
+
+    // new_project and load_project are the agent's ways back off the start screen.
+    QVERIFY(dispatcher.applyOne(QStringLiteral("new_project"), {}).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(startScreen.count(), 2);
+    QCOMPARE(startScreen.at(1).at(0).toBool(), false);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("closed.drift"));
+    QVERIFY(dispatcher.applyOne(QStringLiteral("save_project"), {{QStringLiteral("path"), path}})
+                .value(QStringLiteral("ok")).toBool());
+    QVERIFY(dispatcher.applyOne(QStringLiteral("close_project"), {}).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(startScreen.count(), 3);
+    QVERIFY(dispatcher.applyOne(QStringLiteral("load_project"), {{QStringLiteral("path"), path}})
+                .value(QStringLiteral("ok")).toBool());
+    QCOMPARE(startScreen.count(), 4);
+    QCOMPARE(startScreen.at(3).at(0).toBool(), false);
+}
+
 void McpTest::captureDoesNotInsertClip()
 {
     AssetLibrary library;
@@ -1260,7 +1918,7 @@ void McpTest::captureDoesNotInsertClip()
         return n;
     };
     const int before = clipCount(state);
-    const QJsonObject result = state.mcpCaptureFrame(-1.0, false);
+    const QJsonObject result = state.mcp()->captureFrame(-1.0, false);
     QCOMPARE(clipCount(state), before);
     if (result.value(QStringLiteral("isError")).toBool())
         QSKIP("Compositor could not produce a frame in this environment");
@@ -1412,6 +2070,200 @@ QString importAndPlace(drift::mcp::McpDispatcher &dispatcher, const QString &pat
 
 } // namespace
 
+// A file rewritten at the same path (as a TTS pipeline does: render to a temp name, rename over
+// the old one) used to come back from import_media as the old asset — old duration, old audio —
+// and the same again after reopening the project.
+void McpTest::reimportOfFileChangedInPlaceReprobes()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate audio fixtures");
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("vo.wav"));
+    const auto rewrite = [&](int seconds) {
+        const QString staged = dir.filePath(QStringLiteral("staged.wav"));
+        return writeClickTrack(staged, seconds) && QFile::remove(path) && QFile::rename(staged, path);
+    };
+    const auto clipSeconds = [&](const QString &clipId) {
+        for (const drift::Track &track : state.project()->tracks())
+            for (const drift::Clip &clip : track.clips)
+                if (clip.id == clipId)
+                    return drift::usToSeconds(clip.timelineDuration);
+        return -1.0;
+    };
+
+    QVERIFY(writeClickTrack(path, 4));
+    const QString first = importAndPlace(dispatcher, path, 0.0);
+    QVERIFY(!first.isEmpty());
+    QCOMPARE(qRound(clipSeconds(first)), 4);
+    const QString assetId = state.project()->assetOrder().first();
+
+    // Same path, shorter content. Re-importing re-probes the row in place.
+    QVERIFY(rewrite(2));
+    const QJsonObject again = dispatcher.applyOne(QStringLiteral("import_media"),
+                                                  {{QStringLiteral("paths"), QJsonArray{path}}});
+    QVERIFY2(again.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(again).toJson()));
+    QCOMPARE(again.value(QStringLiteral("reprobed")).toArray(), QJsonArray{assetId});
+    QVERIFY(!again.contains(QStringLiteral("stale")));
+    const QJsonObject row = again.value(QStringLiteral("assets")).toArray().first().toObject();
+    QCOMPARE(row.value(QStringLiteral("id")).toString(), assetId);
+    QCOMPARE(qRound(row.value(QStringLiteral("dur")).toDouble()), 2);
+    // The clip already placed no longer reaches past the end of its media.
+    QCOMPARE(qRound(clipSeconds(first)), 2);
+
+    // New clips get the new length.
+    const QString second = importAndPlace(dispatcher, path, 10.0);
+    QVERIFY(!second.isEmpty());
+    QCOMPARE(qRound(clipSeconds(second)), 2);
+
+    // Unchanged since: a plain re-import leaves the row alone.
+    const QJsonObject unchanged = dispatcher.applyOne(QStringLiteral("import_media"),
+                                                      {{QStringLiteral("paths"), QJsonArray{path}}});
+    QVERIFY(!unchanged.contains(QStringLiteral("reprobed")));
+
+    // refresh_asset re-reads it on request, changed or not.
+    const QJsonObject refreshed = dispatcher.applyOne(QStringLiteral("refresh_asset"),
+                                                      {{QStringLiteral("asset"), assetId}});
+    QVERIFY2(refreshed.value(QStringLiteral("ok")).toBool(),
+             qPrintable(QJsonDocument(refreshed).toJson()));
+    QCOMPARE(refreshed.value(QStringLiteral("stale")).toBool(), false);
+
+    // Changed while the project was closed: opening it re-probes the row.
+    const QString projectPath = dir.filePath(QStringLiteral("p.drift"));
+    QVERIFY(dispatcher.applyOne(QStringLiteral("save_project"), {{QStringLiteral("path"), projectPath}})
+                .value(QStringLiteral("ok")).toBool());
+    QVERIFY(rewrite(3));
+    const QJsonObject loaded = dispatcher.applyOne(QStringLiteral("load_project"),
+                                                   {{QStringLiteral("path"), projectPath}});
+    QVERIFY2(loaded.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(loaded).toJson()));
+    // Settled by the time load_project answers, so the next place_clip sees the new length.
+    const QString loadedId = state.project()->assetOrder().first();
+    QCOMPARE(loaded.value(QStringLiteral("reprobed")).toArray(), QJsonArray{loadedId});
+    QVERIFY(!library.isImportPending(loadedId));
+    QCOMPARE(qRound(drift::usToSeconds(state.project()->asset(loadedId)->durationUs)), 3);
+
+    // A refresh that fails is reported as stale, fingerprint or not: here the asset has none
+    // (as in a project saved before it existed) and the file is no longer media at all.
+    drift::MediaAsset *asset = state.project()->asset(loadedId);
+    asset->sourceSize = 0;
+    asset->sourceModifiedMs = 0;
+    {
+        QFile garbage(path);
+        QVERIFY(garbage.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        garbage.write("not audio");
+    }
+    QElapsedTimer waited;
+    waited.start();
+    const QJsonObject failed = dispatcher.applyOne(QStringLiteral("refresh_asset"),
+                                                   {{QStringLiteral("asset"), loadedId}});
+    QVERIFY2(failed.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(failed).toJson()));
+    QCOMPARE(failed.value(QStringLiteral("stale")).toBool(), true);
+    // A refused probe changes no metadata; the wait must still wake on it, not sit out its cap.
+    QVERIFY2(waited.elapsed() < 5000, qPrintable(QString::number(waited.elapsed())));
+    const QJsonObject reimported = dispatcher.applyOne(QStringLiteral("import_media"),
+                                                       {{QStringLiteral("paths"), QJsonArray{path}}});
+    QCOMPARE(reimported.value(QStringLiteral("stale")).toArray(), QJsonArray{loadedId});
+    QVERIFY(!reimported.contains(QStringLiteral("reprobed")));
+}
+
+// Asset ids survive a reload, so a refresh probe started before the asset set was replaced can
+// land on the reloaded asset of the same id. It must be dropped, not take the refresh mark of the
+// probe the reloaded asset started — that left the second probe to land as a plain replace and
+// reset the name, trim and rotation the user gave the asset.
+void McpTest::refreshInFlightAcrossProjectReplaceIsDropped()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate audio fixtures");
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("vo.wav"));
+    QVERIFY(writeClickTrack(path, 2));
+    QVERIFY(!importAndPlace(dispatcher, path, 0.0).isEmpty());
+    const QString assetId = state.project()->assetOrder().first();
+    QVERIFY(dispatcher.applyOne(QStringLiteral("rename_asset"),
+                                {{QStringLiteral("asset"), assetId}, {QStringLiteral("name"), QStringLiteral("Custom")}})
+                .value(QStringLiteral("ok")).toBool());
+
+    QVERIFY(library.startRefreshProbe(0));
+    // What a load does to the bin, minus the worker-thread open that would let the first probe
+    // land before it.
+    library.setProject(state.project(), true);
+    QVERIFY(library.startRefreshProbe(0));
+
+    QTRY_VERIFY_WITH_TIMEOUT(!library.isImportPending(assetId), 15000);
+    // Let a late first probe land, had it not been dropped.
+    QTest::qWait(200);
+    QCOMPARE(state.project()->asset(assetId)->name, QStringLiteral("Custom"));
+    QVERIFY(!library.isRefreshPending(assetId));
+}
+
+// A reload may not need to start a new probe for this id. The old replace result must still be
+// invalidated rather than changing the freshly loaded asset to a file it never referenced.
+void McpTest::replaceInFlightAcrossProjectReplaceIsDropped()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate audio fixtures");
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("vo.wav"));
+    const QString other = dir.filePath(QStringLiteral("other.wav"));
+    QVERIFY(writeClickTrack(path, 2));
+    QVERIFY(writeClickTrack(other, 3));
+    QVERIFY(!importAndPlace(dispatcher, path, 0.0).isEmpty());
+    const QString assetId = state.project()->assetOrder().first();
+
+    QSignalSpy probed(&library, &AssetLibrary::assetSourceProbed);
+    QVERIFY(library.startReplaceProbe(0, other));
+    library.setProject(state.project(), true);
+    QVERIFY(!library.isImportPending(assetId));
+    QTest::qWait(500);
+    QCOMPARE(probed.count(), 0);
+    QCOMPARE(state.project()->asset(assetId)->path, QFileInfo(path).absoluteFilePath());
+}
+
+// setProject() also runs as a plain model refresh on the same document (template import, collect
+// media), with the asset still there. A replace probe in flight then is still the one that ends
+// the replace: dropping it left the row busy for good, and an edit waiting on it never finished.
+void McpTest::replaceInFlightSurvivesBinModelRefresh()
+{
+    if (ffmpegPath().isEmpty())
+        QSKIP("ffmpeg not available to generate audio fixtures");
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("vo.wav"));
+    const QString other = dir.filePath(QStringLiteral("other.wav"));
+    QVERIFY(writeClickTrack(path, 2));
+    QVERIFY(writeClickTrack(other, 3));
+    QVERIFY(!importAndPlace(dispatcher, path, 0.0).isEmpty());
+    const QString assetId = state.project()->assetOrder().first();
+
+    QSignalSpy finished(state.bin(), &MediaBinController::replaceFinished);
+    QVERIFY(state.bin()->replaceSource(0, QUrl::fromLocalFile(other)));
+    QCOMPARE(state.bin()->replacingAssetId(), assetId);
+    library.setProject(state.project());
+
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 15000);
+    QVERIFY(finished.at(0).at(0).toBool());
+    QVERIFY(state.bin()->replacingAssetId().isEmpty());
+    QCOMPARE(state.project()->asset(assetId)->path, QFileInfo(other).absoluteFilePath());
+}
+
 void McpTest::audioToolboxReturnsSchemas()
 {
     const QJsonObject payload = drift::mcp::toolboxPayload(QStringLiteral("audio"));
@@ -1490,7 +2342,7 @@ void McpTest::waveformReportsSilenceAsZero()
     drift::mcp::McpDispatcher dispatcher(&state);
     QVERIFY(!importAndPlace(dispatcher, source, 0.0).isEmpty());
 
-    const QString assetId = state.mcpInspect(false)
+    const QString assetId = state.mcp()->inspect(false)
                                 .value(QStringLiteral("assets")).toArray().at(0).toObject()
                                 .value(QStringLiteral("id")).toString();
     QVERIFY(!assetId.isEmpty());
@@ -1612,7 +2464,7 @@ void McpTest::splitOnBeatsCutsAndUndoesAsOneStep()
     QVERIFY(produced.size() > 1);
     QCOMPARE(produced.at(0).toString(), clip); // the original id names the first piece
     for (const QJsonValue &v : produced)
-        QVERIFY(state.mcpLocateClip(v.toString()).first >= 0);
+        QVERIFY(state.mcp()->locateClip(v.toString()).first >= 0);
     QCOMPARE(dispatcher.inspect({}).value(QStringLiteral("clips")).toInt(),
              clipsBefore + produced.size() - 1);
 
@@ -1910,6 +2762,85 @@ void McpTest::writingAtAKeyframeReadbackTimeReusesTheKey()
     QCOMPARE(distinct.value(QStringLiteral("keys")).toArray().size(), 2);
 }
 
+void McpTest::keyframeEasingThroughMcp()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+
+    const QJsonObject text = dispatcher.applyOne(
+        QStringLiteral("add_text"),
+        {{QStringLiteral("text"), QStringLiteral("A")}, {QStringLiteral("at"), 0.0}});
+    QVERIFY(text.value(QStringLiteral("ok")).toBool());
+    const QString clip = text.value(QStringLiteral("id")).toString();
+    for (const double at : {0.0, 1.0, 2.0}) {
+        QVERIFY(dispatcher
+                    .applyOne(QStringLiteral("set_keyframe"),
+                              {{QStringLiteral("clip"), clip}, {QStringLiteral("prop"), QStringLiteral("opacity")},
+                               {QStringLiteral("at"), at}, {QStringLiteral("value"), 0.2 * (at + 1.0)}})
+                    .value(QStringLiteral("ok"))
+                    .toBool());
+    }
+
+    const QJsonObject presets = dispatcher.applyOne(QStringLiteral("list_easing_presets"), {});
+    QVERIFY(presets.value(QStringLiteral("ok")).toBool());
+    QStringList ids;
+    for (const QJsonValue &v : presets.value(QStringLiteral("presets")).toArray()) {
+        ids.append(v.toObject().value(QStringLiteral("id")).toString());
+        QVERIFY(!v.toObject().contains(QStringLiteral("samples")));
+    }
+    QVERIFY(ids.contains(QStringLiteral("elasticOut")));
+    QVERIFY(ids.contains(QStringLiteral("linear")));
+
+    auto keysOf = [&]() {
+        return dispatcher
+            .applyOne(QStringLiteral("list_keyframes"),
+                      {{QStringLiteral("clip"), clip}, {QStringLiteral("prop"), QStringLiteral("opacity")}})
+            .value(QStringLiteral("keys"))
+            .toArray();
+    };
+    auto setEasing = [&](QJsonObject extra) {
+        extra.insert(QStringLiteral("clip"), clip);
+        extra.insert(QStringLiteral("prop"), QStringLiteral("opacity"));
+        return dispatcher.applyOne(QStringLiteral("set_keyframe_easing"), extra);
+    };
+
+    QVERIFY(setEasing({{QStringLiteral("at"), 0.0}, {QStringLiteral("preset"), QStringLiteral("cubicOut")}})
+                .value(QStringLiteral("ok"))
+                .toBool());
+    QCOMPARE(keysOf().at(0).toObject().value(QStringLiteral("segmentEasing")).toString(), QStringLiteral("cubicOut"));
+    QVERIFY(!keysOf().at(2).toObject().contains(QStringLiteral("segmentEasing")));
+
+    QVERIFY(setEasing({{QStringLiteral("at"), 1.0},
+                       {QStringLiteral("bezier"), QJsonArray{0.1, 0.7, 0.2, 1.0}}})
+                .value(QStringLiteral("ok"))
+                .toBool());
+    const QJsonObject bezier = keysOf().at(1).toObject().value(QStringLiteral("segmentEasing")).toObject();
+    QCOMPARE(bezier.value(QStringLiteral("kind")).toString(), QStringLiteral("bezier"));
+    QCOMPARE(bezier.value(QStringLiteral("x1")).toDouble(), 0.1);
+
+    QVERIFY(setEasing({{QStringLiteral("at"), 0.0}, {QStringLiteral("fn"), QStringLiteral("bounceOut")}})
+                .value(QStringLiteral("ok"))
+                .toBool());
+    // bounceOut at the default amplitude and period is the built-in preset, so the readback names it.
+    QCOMPARE(keysOf().at(0).toObject().value(QStringLiteral("segmentEasing")).toString(), QStringLiteral("bounceOut"));
+
+    QVERIFY(setEasing({{QStringLiteral("all"), true}, {QStringLiteral("preset"), QStringLiteral("expoIn")}})
+                .value(QStringLiteral("ok"))
+                .toBool());
+    QCOMPARE(keysOf().at(0).toObject().value(QStringLiteral("segmentEasing")).toString(), QStringLiteral("expoIn"));
+    QCOMPARE(keysOf().at(1).toObject().value(QStringLiteral("segmentEasing")).toString(), QStringLiteral("expoIn"));
+
+    const QJsonObject unknown = setEasing({{QStringLiteral("at"), 0.0}, {QStringLiteral("preset"), QStringLiteral("noSuchCurve")}});
+    QVERIFY(!unknown.value(QStringLiteral("ok")).toBool());
+    QCOMPARE(unknown.value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+
+    const QJsonObject twoShapes = setEasing({{QStringLiteral("at"), 0.0}, {QStringLiteral("preset"), QStringLiteral("linear")},
+                                             {QStringLiteral("fn"), QStringLiteral("elasticIn")}});
+    QVERIFY(!twoShapes.value(QStringLiteral("ok")).toBool());
+    QCOMPARE(twoShapes.value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+}
+
 void McpTest::setVolumeRoundTrips()
 {
     AssetLibrary library;
@@ -2089,7 +3020,7 @@ void McpTest::sceneOpsRequireAnalysisFirst()
     // Scene detection on a text clip is a bad request, not a crash.
     state.addTextClip(QStringLiteral("Hello"), 0.0);
     const QString id =
-        state.mcpCompactClip(state.selectedTrack(), state.selectedClip())
+        state.mcp()->compactClip(state.selectedTrack(), state.selectedClip())
             .value(QStringLiteral("id")).toString();
     const QJsonObject onText = dispatcher.applyOne(
         QStringLiteral("detect_scenes"), QJsonObject{{QStringLiteral("clip"), id}});
@@ -2161,7 +3092,7 @@ void McpTest::sceneWorkflowEndToEnd()
     drift::mcp::McpDispatcher dispatcher(&state);
     const QJsonObject clipRef{{QStringLiteral("clip"), QStringLiteral("scene-clip")}};
 
-    QSignalSpy finished(&state, &AppController::sceneDetectionFinished);
+    QSignalSpy finished(state.scenes(), &SceneDetectController::finished);
     const QJsonObject started = dispatcher.applyOne(QStringLiteral("detect_scenes"), clipRef);
     QVERIFY2(started.value(QStringLiteral("ok")).toBool(),
              qPrintable(started.value(QStringLiteral("detail")).toString()));
@@ -2490,7 +3421,7 @@ void McpTest::saveProjectWithoutPathUsesCurrent()
                           {{QStringLiteral("path"), copyPath}, {QStringLiteral("saveAs"), true}})
                 .value(QStringLiteral("ok"))
                 .toBool());
-    QCOMPARE(state.currentProjectPath(), copyPath);
+    QCOMPARE(state.projectFile()->currentProjectPath(), copyPath);
     QCOMPARE(readFile(path), originalBytes);
 }
 
@@ -2737,7 +3668,7 @@ void McpTest::addLottieReportsDocument()
     QVERIFY(!added.contains(QStringLiteral("ignored")));
 
     // The clip is on a graphic track, runs the animation's own length, and carries the override.
-    const QPair<int, int> loc = state.mcpLocateClip(id);
+    const QPair<int, int> loc = state.mcp()->locateClip(id);
     QVERIFY(loc.first >= 0);
     const QVariantMap clip = state.clipAt(loc.first, loc.second);
     QCOMPARE(clip.value(QStringLiteral("kind")).toString(), QStringLiteral("vector"));
@@ -2801,7 +3732,7 @@ void McpTest::setLottieSlotValidatesTypes()
                             {{QStringLiteral("clip"), id}, {QStringLiteral("name"), QStringLiteral("accent")},
                              {QStringLiteral("value"), QJsonArray{0.0, 1.0, 0.0}}});
     QVERIFY2(r.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(r).toJson(QJsonDocument::Compact)));
-    const QPair<int, int> loc = state.mcpLocateClip(id);
+    const QPair<int, int> loc = state.mcp()->locateClip(id);
     QCOMPARE(state.clipAt(loc.first, loc.second).value(QStringLiteral("vector")).toMap()
                  .value(QStringLiteral("slots")).toMap().value(QStringLiteral("accent")).toString(),
              QStringLiteral("#ff00ff00"));
@@ -2848,7 +3779,7 @@ void McpTest::addSvgShowsInCapture()
     AppController state(&library);
     if (!state.vectorSupportAvailable())
         QSKIP("built without Skia");
-    state.setProjectResolution(160, 90);
+    state.projectFile()->setProjectResolution(160, 90);
     drift::mcp::McpDispatcher dispatcher(&state);
     const QJsonObject added = dispatcher.applyOne(
         QStringLiteral("add_svg"),
@@ -2858,7 +3789,7 @@ void McpTest::addSvgShowsInCapture()
     QCOMPARE(added.value(QStringLiteral("kind")).toString(), QStringLiteral("svg"));
     QCOMPARE(added.value(QStringLiteral("width")).toInt(), 160);
 
-    const QJsonObject capture = state.mcpCaptureFrame(0.5, false);
+    const QJsonObject capture = state.mcp()->captureFrame(0.5, false);
     if (capture.value(QStringLiteral("isError")).toBool())
         QSKIP("Compositor could not produce a frame in this environment");
     QByteArray jpeg;
@@ -2898,7 +3829,7 @@ void McpTest::svgOverridesThroughMcp()
     QCOMPARE(elements.at(0).toObject().value(QStringLiteral("id")).toString(), QStringLiteral("box"));
     QCOMPARE(elements.at(0).toObject().value(QStringLiteral("fill")).toString(), QStringLiteral("#00ff00"));
     QCOMPARE(added.value(QStringLiteral("slotErrors")).toArray().size(), 1);
-    const QPair<int, int> loc = state.mcpLocateClip(id);
+    const QPair<int, int> loc = state.mcp()->locateClip(id);
     const QVariantMap overrides = state.clipAt(loc.first, loc.second).value(QStringLiteral("vector")).toMap()
                                       .value(QStringLiteral("slots")).toMap();
     QCOMPARE(overrides.size(), 1);
@@ -2984,12 +3915,12 @@ void McpTest::importSvgBecomesVectorAsset()
                                                    {{QStringLiteral("asset"), rows.at(0).toObject().value(QStringLiteral("id")).toString()},
                                                     {QStringLiteral("at"), 0.0}});
     QVERIFY2(placed.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(placed).toJson(QJsonDocument::Compact)));
-    const QPair<int, int> loc = state.mcpLocateClip(placed.value(QStringLiteral("id")).toString());
+    const QPair<int, int> loc = state.mcp()->locateClip(placed.value(QStringLiteral("id")).toString());
     const QVariantMap clip = state.clipAt(loc.first, loc.second);
     QCOMPARE(clip.value(QStringLiteral("kind")).toString(), QStringLiteral("vector"));
     QCOMPARE(clip.value(QStringLiteral("vector")).toMap().value(QStringLiteral("kind")).toString(), QStringLiteral("svg"));
     QCOMPARE(clip.value(QStringLiteral("vector")).toMap().value(QStringLiteral("width")).toInt(), 120);
-    QCOMPARE(clip.value(QStringLiteral("duration")).toDouble(), drift::usToSeconds(drift::kImageClipDurationUs));
+    QCOMPARE(clip.value(QStringLiteral("duration")).toDouble(), drift::usToSeconds(drift::imageClipDurationUs()));
 }
 
 void McpTest::model3dToolboxIsCatalogued()
@@ -3026,30 +3957,29 @@ void McpTest::importGlbBecomesModel3dAsset()
                                                    {{QStringLiteral("asset"), rows.at(0).toObject().value(QStringLiteral("id")).toString()},
                                                     {QStringLiteral("at"), 0.0}});
     QVERIFY2(placed.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(placed).toJson(QJsonDocument::Compact)));
-    const QPair<int, int> loc = state.mcpLocateClip(placed.value(QStringLiteral("id")).toString());
+    const QPair<int, int> loc = state.mcp()->locateClip(placed.value(QStringLiteral("id")).toString());
     const QVariantMap clip = state.clipAt(loc.first, loc.second);
     QCOMPARE(clip.value(QStringLiteral("kind")).toString(), QStringLiteral("model3d"));
     const QVariantMap model = clip.value(QStringLiteral("model3d")).toMap();
     QCOMPARE(model.value(QStringLiteral("path")).toString(), path);
-    QCOMPARE(model.value(QStringLiteral("scale")).toDouble(), 0.5);
+    QVERIFY(!model.contains(QStringLiteral("scale")));
+    QVERIFY(clip.value(QStringLiteral("layer3d")).toBool());
     QCOMPARE(model.value(QStringLiteral("loop")).toString(), QStringLiteral("loop"));
     QVERIFY(model.value(QStringLiteral("animations")).toList().isEmpty());
-    QCOMPARE(clip.value(QStringLiteral("duration")).toDouble(), drift::usToSeconds(drift::kImageClipDurationUs));
-    // The overlay box is the projected model, centred on the canvas; the anchor is the clip's x/y.
+    QCOMPARE(clip.value(QStringLiteral("duration")).toDouble(), drift::usToSeconds(drift::imageClipDurationUs()));
+    // The overlay box is the model's bounding-box front face, centred on the canvas.
     bool found = false;
-    for (const QVariant &entry : state.previewClipsAtPlayhead()) {
+    for (const QVariant &entry : state.preview()->clipsAtPlayhead()) {
         const QVariantMap m = entry.toMap();
         if (m.value(QStringLiteral("kind")).toString() != QLatin1String("model3d"))
             continue;
         found = true;
-        QCOMPARE(m.value(QStringLiteral("anchorX")).toDouble(), 0.0);
-        QCOMPARE(m.value(QStringLiteral("anchorY")).toDouble(), 0.0);
         const double cx = m.value(QStringLiteral("x")).toDouble() + m.value(QStringLiteral("width")).toDouble() / 2.0;
         const double cy = m.value(QStringLiteral("y")).toDouble() + m.value(QStringLiteral("height")).toDouble() / 2.0;
-        QVERIFY(std::abs(cx - state.projectWidth() / 2.0) < 1.0);
-        QVERIFY(std::abs(cy - state.projectHeight() / 2.0) < 1.0);
-        QVERIFY(m.value(QStringLiteral("height")).toDouble() > state.projectHeight() * 0.3);
-        QVERIFY(m.value(QStringLiteral("height")).toDouble() < state.projectHeight() * 0.8);
+        QVERIFY(std::abs(cx - state.projectFile()->projectWidth() / 2.0) < 1.0);
+        QVERIFY(std::abs(cy - state.projectFile()->projectHeight() / 2.0) < 1.0);
+        QVERIFY(m.value(QStringLiteral("height")).toDouble() > state.projectFile()->projectHeight() * 0.3);
+        QVERIFY(m.value(QStringLiteral("height")).toDouble() < state.projectFile()->projectHeight() * 0.8);
     }
     QVERIFY(found);
 
@@ -3058,6 +3988,103 @@ void McpTest::importGlbBecomesModel3dAsset()
     QVERIFY2(inspected.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(inspected).toJson(QJsonDocument::Compact)));
     QCOMPARE(inspected.value(QStringLiteral("vertexCount")).toInt(), 8);
     QVERIFY(inspected.contains(QStringLiteral("model3d")));
+}
+
+void McpTest::pdfClipOptionsAndKeyframes()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+
+    // The smallest document PDFium (when installed) still opens: one empty A4 page. Offsets in the
+    // xref are not checked by PDFium's repair pass, so the table is left empty.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("one.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+               "2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+               "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj\n"
+               "trailer<</Root 1 0 R/Size 4>>\n%%EOF\n");
+    file.close();
+
+    const QJsonObject imported = dispatcher.applyOne(QStringLiteral("import_media"),
+                                                     {{QStringLiteral("paths"), QJsonArray{path}}});
+    QVERIFY2(imported.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(imported).toJson(QJsonDocument::Compact)));
+    const QJsonArray rows = dispatcher.applyOne(QStringLiteral("list_assets"), {}).value(QStringLiteral("assets")).toArray();
+    QCOMPARE(rows.size(), 1);
+    QCOMPARE(rows.at(0).toObject().value(QStringLiteral("kind")).toString(), QStringLiteral("pdf"));
+    const QJsonObject placed = dispatcher.applyOne(QStringLiteral("place_clip"),
+                                                   {{QStringLiteral("asset"), rows.at(0).toObject().value(QStringLiteral("id")).toString()},
+                                                    {QStringLiteral("at"), 0.0}});
+    QVERIFY2(placed.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(placed).toJson(QJsonDocument::Compact)));
+    const QString id = placed.value(QStringLiteral("id")).toString();
+    const QPair<int, int> loc = state.mcp()->locateClip(id);
+    QCOMPARE(state.clipAt(loc.first, loc.second).value(QStringLiteral("kind")).toString(), QStringLiteral("pdf"));
+
+    for (const char *op : {"inspect_pdf", "set_pdf_options"}) {
+        QVERIFY2(drift::mcp::isKnownOp(QLatin1String(op)), op);
+        QCOMPARE(drift::mcp::toolboxForOp(QLatin1String(op)), QStringLiteral("media"));
+    }
+    QVERIFY(drift::mcp::isReadOnlyOp(QStringLiteral("inspect_pdf")));
+    QVERIFY(!drift::mcp::isReadOnlyOp(QStringLiteral("set_pdf_options")));
+
+    QJsonObject r = dispatcher.applyOne(QStringLiteral("set_pdf_options"),
+                                        {{QStringLiteral("clip"), id}, {QStringLiteral("firstPage"), 1},
+                                         {QStringLiteral("layout"), QStringLiteral("grid")},
+                                         {QStringLiteral("gridColumns"), 3}, {QStringLiteral("gap"), 20.0}});
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(r).toJson(QJsonDocument::Compact)));
+    QVariantMap pdf = state.clipAt(loc.first, loc.second).value(QStringLiteral("pdf")).toMap();
+    QCOMPARE(pdf.value(QStringLiteral("layout")).toString(), QStringLiteral("grid"));
+    QCOMPARE(pdf.value(QStringLiteral("gridColumns")).toInt(), 3);
+    QCOMPARE(pdf.value(QStringLiteral("gap")).toDouble(), 20.0);
+
+    for (const QJsonObject &bad : {QJsonObject{{QStringLiteral("clip"), id}, {QStringLiteral("gridColumns"), 21}},
+                                   QJsonObject{{QStringLiteral("clip"), id}, {QStringLiteral("gap"), 201.0}},
+                                   QJsonObject{{QStringLiteral("clip"), id}, {QStringLiteral("firstPage"), 0}},
+                                   QJsonObject{{QStringLiteral("clip"), id}, {QStringLiteral("layout"), QStringLiteral("spiral")}},
+                                   QJsonObject{{QStringLiteral("clip"), id}}}) {
+        r = dispatcher.applyOne(QStringLiteral("set_pdf_options"), bad);
+        QVERIFY(!r.value(QStringLiteral("ok")).toBool());
+        QCOMPARE(r.value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+    }
+
+    r = dispatcher.applyOne(QStringLiteral("set_keyframe"),
+                            {{QStringLiteral("clip"), id}, {QStringLiteral("prop"), QStringLiteral("pdf.scrollY")},
+                             {QStringLiteral("at"), 0.0}, {QStringLiteral("value"), 0.0}});
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(r).toJson(QJsonDocument::Compact)));
+    r = dispatcher.applyOne(QStringLiteral("set_keyframe"),
+                            {{QStringLiteral("clip"), id}, {QStringLiteral("prop"), QStringLiteral("pdf.scrollY")},
+                             {QStringLiteral("at"), 2.0}, {QStringLiteral("value"), 4.0}});
+    QVERIFY(r.value(QStringLiteral("ok")).toBool());
+    QVERIFY(state.clipAnimatedProperties(loc.first, loc.second).contains(QStringLiteral("pdf.scrollY")));
+    QCOMPARE(state.propertyValueAt(loc.first, loc.second, QStringLiteral("pdf.scrollY"), 1.0, 0.0), 2.0);
+    r = dispatcher.applyOne(QStringLiteral("set_keyframe"),
+                            {{QStringLiteral("clip"), id}, {QStringLiteral("prop"), QStringLiteral("pdf.nope")},
+                             {QStringLiteral("at"), 0.0}, {QStringLiteral("value"), 1.0}});
+    QVERIFY(!r.value(QStringLiteral("ok")).toBool());
+    QCOMPARE(r.value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+
+    const bool addon = drift::pdfium::available();
+    r = dispatcher.applyOne(QStringLiteral("inspect_pdf"), {{QStringLiteral("path"), path}});
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(r).toJson(QJsonDocument::Compact)));
+    QCOMPARE(r.value(QStringLiteral("addonAvailable")).toBool(), addon);
+    QCOMPARE(r.value(QStringLiteral("addonId")).toString(), QStringLiteral("pdfium"));
+    if (addon)
+        QCOMPARE(r.value(QStringLiteral("pageCount")).toInt(), 1);
+    else
+        QCOMPARE(r.value(QStringLiteral("pageCount")).toInt(), 0);
+    r = dispatcher.applyOne(QStringLiteral("inspect_pdf"), {{QStringLiteral("clip"), id}});
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(r).toJson(QJsonDocument::Compact)));
+    QCOMPARE(r.value(QStringLiteral("layout")).toString(), QStringLiteral("grid"));
+    QVERIFY(r.contains(QStringLiteral("scrollY")) && r.contains(QStringLiteral("zoom")));
+    QVERIFY(r.value(QStringLiteral("keyframes")).toObject().contains(QStringLiteral("scrollY")));
+    QVERIFY(!dispatcher.applyOne(QStringLiteral("inspect_pdf"), {{QStringLiteral("path"), QStringLiteral("/nope.pdf")}})
+                 .value(QStringLiteral("ok")).toBool());
+    QVERIFY(!dispatcher.applyOne(QStringLiteral("inspect_pdf"), {}).value(QStringLiteral("ok")).toBool());
 }
 
 void McpTest::model3dKeyframesAndOptions()
@@ -3077,13 +4104,21 @@ void McpTest::model3dKeyframesAndOptions()
                                                    {QStringLiteral("duration"), 4.0}});
     QVERIFY2(added.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(added).toJson(QJsonDocument::Compact)));
     const QString id = added.value(QStringLiteral("id")).toString();
-    const QPair<int, int> loc = state.mcpLocateClip(id);
+    const QPair<int, int> loc = state.mcp()->locateClip(id);
     const int track = loc.first;
     const int clip = loc.second;
+    // A model is a 3D layer: the old rotY shorthand lands on the clip's own rotation.
     QVariantMap model = state.clipAt(track, clip).value(QStringLiteral("model3d")).toMap();
-    QCOMPARE(model.value(QStringLiteral("rotY")).toDouble(), 30.0);
+    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("rotationY"), 0.0, 0.0), 30.0);
+    QVERIFY(state.clipAt(track, clip).value(QStringLiteral("layer3d")).toBool());
     QCOMPARE(model.value(QStringLiteral("loop")).toString(), QStringLiteral("hold"));
     QCOMPARE(state.clipAt(track, clip).value(QStringLiteral("duration")).toDouble(), 4.0);
+    const auto boxSpan = [&]() {
+        return std::max(state.propertyValueAt(track, clip, QStringLiteral("width"), 0.0, 0.0),
+                        state.propertyValueAt(track, clip, QStringLiteral("height"), 0.0, 0.0));
+    };
+    // Its largest extent starts at half the canvas height.
+    QCOMPARE(boxSpan(), state.projectFile()->projectHeight() * 0.5);
 
     QJsonObject r = dispatcher.applyOne(QStringLiteral("set_keyframe"),
                                         {{QStringLiteral("clip"), id}, {QStringLiteral("prop"), QStringLiteral("model3d.rotY")},
@@ -3093,13 +4128,16 @@ void McpTest::model3dKeyframesAndOptions()
                             {{QStringLiteral("clip"), id}, {QStringLiteral("prop"), QStringLiteral("model3d.rotY")},
                              {QStringLiteral("at"), 2.0}, {QStringLiteral("value"), 180.0}});
     QVERIFY(r.value(QStringLiteral("ok")).toBool());
-    // camelCase survives normalisation: the key lands on the clip, not on "model3d.roty".
-    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("model3d.rotY"), 1.0, 0.0), 90.0);
-    QVERIFY(state.clipAnimatedProperties(track, clip).contains(QStringLiteral("model3d.rotY")));
-    QCOMPARE(state.keyframePropertyLabel(track, clip, QStringLiteral("model3d.rotY")), QStringLiteral("Rotation Y"));
-    model = state.clipAt(track, clip).value(QStringLiteral("model3d")).toMap();
-    QCOMPARE(model.value(QStringLiteral("keyframes")).toMap().value(QStringLiteral("rotY")).toMap()
-                 .value(QStringLiteral("points")).toList().size(), 2);
+    // The legacy key keyframes the clip's rotationY.
+    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("rotationY"), 1.0, 0.0), 90.0);
+    QVERIFY(state.clipAnimatedProperties(track, clip).contains(QStringLiteral("rotationY")));
+    // And the light keys still live on the model.
+    r = dispatcher.applyOne(QStringLiteral("set_keyframe"),
+                            {{QStringLiteral("clip"), id}, {QStringLiteral("prop"), QStringLiteral("model3d.light1_x")},
+                             {QStringLiteral("at"), 0.0}, {QStringLiteral("value"), 0.25}});
+    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(r).toJson(QJsonDocument::Compact)));
+    QVERIFY(state.clipAnimatedProperties(track, clip).contains(QStringLiteral("model3d.light1_x")));
+    QCOMPARE(state.keyframePropertyLabel(track, clip, QStringLiteral("model3d.light1_x")), QStringLiteral("Light 1 left / right"));
 
     const QJsonObject nope = dispatcher.applyOne(QStringLiteral("set_keyframe"),
                                                  {{QStringLiteral("clip"), id}, {QStringLiteral("prop"), QStringLiteral("model3d.nope")},
@@ -3112,47 +4150,138 @@ void McpTest::model3dKeyframesAndOptions()
                             {{QStringLiteral("clip"), id}, {QStringLiteral("depth"), 3.0}});
     QVERIFY(!r.value(QStringLiteral("ok")).toBool());
     QCOMPARE(r.value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
-    // A plain value write, and the animation index clamps on a static file.
+    // The scale shorthand resizes the box about its centre, and the animation index clamps on a
+    // static file.
+    const double centreX = state.propertyValueAt(track, clip, QStringLiteral("x"), 0.0, 0.0)
+                           + state.propertyValueAt(track, clip, QStringLiteral("width"), 0.0, 0.0) / 2.0;
     r = dispatcher.applyOne(QStringLiteral("set_model3d_options"),
                             {{QStringLiteral("clip"), id}, {QStringLiteral("scale"), 0.8}, {QStringLiteral("animation"), 5}});
     QVERIFY2(r.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(r).toJson(QJsonDocument::Compact)));
+    QCOMPARE(boxSpan(), state.projectFile()->projectHeight() * 0.8);
+    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("x"), 0.0, 0.0)
+                 + state.propertyValueAt(track, clip, QStringLiteral("width"), 0.0, 0.0) / 2.0,
+             centreX);
     model = state.clipAt(track, clip).value(QStringLiteral("model3d")).toMap();
-    QCOMPARE(model.value(QStringLiteral("scale")).toDouble(), 0.8);
     QCOMPARE(model.value(QStringLiteral("animation")).toInt(), 0);
+    // depth clamps to the old 0..1 and becomes the eye distance.
     QCOMPARE(state.setModel3dOptions(track, clip, {{QStringLiteral("depth"), 3.0}}), QString());
-    QCOMPARE(state.clipAt(track, clip).value(QStringLiteral("model3d")).toMap().value(QStringLiteral("depth")).toDouble(), 1.0);
+    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("perspective"), 0.0, 0.0),
+             state.projectFile()->projectHeight() / 2.0);
     QVERIFY(!state.setModel3dOptions(track, clip, {{QStringLiteral("nope"), 1.0}}).isEmpty());
     state.undo();
     state.undo();
-    model = state.clipAt(track, clip).value(QStringLiteral("model3d")).toMap();
-    QCOMPARE(model.value(QStringLiteral("scale")).toDouble(), 0.5);
+    QCOMPARE(boxSpan(), state.projectFile()->projectHeight() * 0.5);
 
-    // The canvas grips never resize or spin this kind; the anchor still moves.
+    // The canvas grips size and spin a model like any clip.
     state.previewSetClipRect(track, clip, 10.0, 20.0, 300.0, 200.0);
     state.previewSetClipRotation(track, clip, 45.0);
-    state.previewSetClipPosition(track, clip, 10.0, 20.0);
     state.commitPreviewDrag();
-    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("rotation"), 0.0, 0.0), 0.0);
-    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("width"), 0.0, 0.0), double(state.projectWidth()));
-    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("height"), 0.0, 0.0), double(state.projectHeight()));
+    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("rotation"), 0.0, 0.0), 45.0);
+    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("width"), 0.0, 0.0), 300.0);
+    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("height"), 0.0, 0.0), 200.0);
     QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("x"), 0.0, 0.0), 10.0);
-    QCOMPARE(state.propertyValueAt(track, clip, QStringLiteral("y"), 0.0, 0.0), 20.0);
 
-    // set_transform writes w/h through the generic path; the overlay box (and the render, which
-    // shares the formula) is anchored on x/y alone, so a size write cannot shift the model.
-    auto overlayCentreX = [&]() {
-        for (const QVariant &entry : state.previewClipsAtPlayhead()) {
-            const QVariantMap m = entry.toMap();
-            if (m.value(QStringLiteral("track")).toInt() == track && m.value(QStringLiteral("clip")).toInt() == clip)
-                return m.value(QStringLiteral("x")).toDouble() + m.value(QStringLiteral("width")).toDouble() / 2.0;
-        }
-        return -1.0;
+    // The overlay box is the clip's rect, as for any 3D layer.
+    bool found = false;
+    for (const QVariant &entry : state.preview()->clipsAtPlayhead()) {
+        const QVariantMap m = entry.toMap();
+        if (m.value(QStringLiteral("track")).toInt() != track || m.value(QStringLiteral("clip")).toInt() != clip)
+            continue;
+        found = true;
+        QCOMPARE(m.value(QStringLiteral("width")).toDouble(), 300.0);
+        QVERIFY(m.value(QStringLiteral("layer3d")).toBool());
+    }
+    QVERIFY(found);
+}
+
+void McpTest::sceneCameraTools()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.addTextClip(QStringLiteral("Subject"), 0.0);
+    const QString subject = state.mcp()->compactClip(state.selectedTrack(), state.selectedClip()).value(QStringLiteral("id")).toString();
+    drift::mcp::McpDispatcher dispatcher(&state);
+    auto call = [&](const char *tool, const QJsonObject &args) {
+        return dispatcher.applyOne(QString::fromLatin1(tool), args);
     };
-    const double centreBefore = overlayCentreX();
-    r = dispatcher.applyOne(QStringLiteral("set_transform"),
-                            {{QStringLiteral("clip"), id}, {QStringLiteral("w"), 300.0}, {QStringLiteral("h"), 200.0}});
-    QVERIFY2(r.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(r).toJson(QJsonDocument::Compact)));
-    QCOMPARE(overlayCentreX(), centreBefore);
+
+    for (const char *tool : {"reset_camera", "camera_move", "camera_look_at"}) {
+        QJsonObject args{{QStringLiteral("target"), QJsonObject{{QStringLiteral("x"), 1}, {QStringLiteral("y"), 1}}},
+                         {QStringLiteral("move"), QStringLiteral("pan_left")},
+                         {QStringLiteral("start"), 0.5}, {QStringLiteral("end"), 1.5}};
+        const QJsonObject r = call(tool, args);
+        QVERIFY(!r.value(QStringLiteral("ok")).toBool());
+        QCOMPARE(r.value(QStringLiteral("error")).toString(), QStringLiteral("not_found"));
+    }
+    QVERIFY(!call("get_camera_state", {}).value(QStringLiteral("active")).toBool());
+
+    const QJsonObject added = call("add_camera", {});
+    QVERIFY2(added.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(added).toJson(QJsonDocument::Compact)));
+    const QString camera = added.value(QStringLiteral("clip")).toString();
+
+    QJsonObject cs = call("get_camera_state", {{QStringLiteral("at"), 0.5}});
+    QVERIFY(cs.value(QStringLiteral("active")).toBool());
+    QCOMPARE(cs.value(QStringLiteral("clip")).toString(), camera);
+    QCOMPARE(cs.value(QStringLiteral("rotationY")).toDouble(), 0.0);
+    QCOMPARE(cs.value(QStringLiteral("eye")).toArray().size(), 3);
+    QCOMPARE(cs.value(QStringLiteral("eye")).toArray().at(2).toDouble(), cs.value(QStringLiteral("perspective")).toDouble());
+
+    // Off-centre point to the right and above: yaws right (negative), pitches up (negative).
+    QJsonObject look = call("camera_look_at", {{QStringLiteral("target"), QJsonObject{{QStringLiteral("x"), 400}, {QStringLiteral("y"), -200}}}});
+    QVERIFY2(look.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(look).toJson(QJsonDocument::Compact)));
+    cs = call("get_camera_state", {{QStringLiteral("at"), 0.0}});
+    QVERIFY(cs.value(QStringLiteral("rotationY")).toDouble() < -1.0);
+    QVERIFY(cs.value(QStringLiteral("rotationX")).toDouble() < -1.0);
+    QVERIFY(qAbs(cs.value(QStringLiteral("eye")).toArray().at(0).toDouble()) < 0.1);
+    // A clip as target works and a camera cannot look at itself.
+    QVERIFY(call("camera_look_at", {{QStringLiteral("target"), subject}}).value(QStringLiteral("ok")).toBool());
+    QVERIFY(!call("camera_look_at", {{QStringLiteral("target"), camera}}).value(QStringLiteral("ok")).toBool());
+    QVERIFY(!call("camera_look_at", {{QStringLiteral("target"), QJsonObject{{QStringLiteral("x"), 1}}}}).value(QStringLiteral("ok")).toBool());
+    QVERIFY(!call("camera_look_at", {}).value(QStringLiteral("ok")).toBool());
+
+    // reset clears it (the lens stays).
+    QVERIFY(call("reset_camera", {}).value(QStringLiteral("ok")).toBool());
+    cs = call("get_camera_state", {});
+    QCOMPARE(cs.value(QStringLiteral("rotationY")).toDouble(), 0.0);
+    QCOMPARE(cs.value(QStringLiteral("x")).toDouble(), 0.0);
+
+    // A move writes two keys; the middle sits between them; it is one undo step.
+    const QJsonObject move = call("camera_move", {{QStringLiteral("move"), QStringLiteral("dolly_in")},
+                                                  {QStringLiteral("start"), 0.0}, {QStringLiteral("end"), 2.0},
+                                                  {QStringLiteral("amount"), 400}, {QStringLiteral("easing"), QStringLiteral("linear")}});
+    QVERIFY2(move.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(move).toJson(QJsonDocument::Compact)));
+    const QJsonObject keys = call("list_keyframes", {{QStringLiteral("clip"), camera}, {QStringLiteral("prop"), QStringLiteral("z")}});
+    QCOMPARE(keys.value(QStringLiteral("keys")).toArray().size(), 2);
+    const double z0 = call("get_camera_state", {{QStringLiteral("at"), 0.0}}).value(QStringLiteral("z")).toDouble();
+    const double zm = call("get_camera_state", {{QStringLiteral("at"), 1.0}}).value(QStringLiteral("z")).toDouble();
+    const double z1 = call("get_camera_state", {{QStringLiteral("at"), 2.0}}).value(QStringLiteral("z")).toDouble();
+    QCOMPARE(z0, 0.0);
+    QCOMPARE(z1, -400.0);
+    QVERIFY(zm < z0 && zm > z1);
+    state.undo();
+    QVERIFY(call("list_keyframes", {{QStringLiteral("clip"), camera}, {QStringLiteral("prop"), QStringLiteral("z")}}).value(QStringLiteral("keys")).toArray().isEmpty());
+    state.redo();
+
+    // A pan turns in place: the eye stays at the start's eye while rotationY moves.
+    const double eyeX = call("get_camera_state", {{QStringLiteral("at"), 3.0}}).value(QStringLiteral("eye")).toArray().at(0).toDouble();
+    QVERIFY(call("camera_move", {{QStringLiteral("move"), QStringLiteral("pan_right")}, {QStringLiteral("start"), 3.0}, {QStringLiteral("end"), 4.0}})
+                .value(QStringLiteral("ok")).toBool());
+    const QJsonObject panned = call("get_camera_state", {{QStringLiteral("at"), 4.0}});
+    QVERIFY(panned.value(QStringLiteral("rotationY")).toDouble() < -1.0);
+    QVERIFY(qAbs(panned.value(QStringLiteral("eye")).toArray().at(0).toDouble() - eyeX) < 0.1);
+    // Orbit around a point moves the eye.
+    QVERIFY(call("camera_move", {{QStringLiteral("move"), QStringLiteral("orbit_right")}, {QStringLiteral("start"), 4.2}, {QStringLiteral("end"), 4.9}})
+                .value(QStringLiteral("ok")).toBool());
+    QVERIFY(call("get_camera_state", {{QStringLiteral("at"), 4.9}}).value(QStringLiteral("eye")).toArray().at(0).toDouble() > 100.0);
+
+    // Bad arguments.
+    QVERIFY(!call("camera_move", {{QStringLiteral("move"), QStringLiteral("zoom")}, {QStringLiteral("start"), 0}, {QStringLiteral("end"), 1}}).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(call("camera_move", {{QStringLiteral("move"), QStringLiteral("crane_up")}, {QStringLiteral("start"), 2}, {QStringLiteral("end"), 1}}).value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+    QCOMPARE(call("camera_move", {{QStringLiteral("move"), QStringLiteral("crane_up")}, {QStringLiteral("start"), 0}, {QStringLiteral("end"), 1}, {QStringLiteral("amount"), -5}}).value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+    QCOMPARE(call("camera_move", {{QStringLiteral("move"), QStringLiteral("crane_up")}, {QStringLiteral("start"), 0}, {QStringLiteral("end"), 9999}}).value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+    QVERIFY(!call("camera_move", {{QStringLiteral("move"), QStringLiteral("crane_up")}, {QStringLiteral("start"), 0}}).value(QStringLiteral("ok")).toBool());
+    QVERIFY(!call("camera_move", {{QStringLiteral("move"), QStringLiteral("crane_up")}, {QStringLiteral("start"), 0}, {QStringLiteral("end"), 1}, {QStringLiteral("easing"), QStringLiteral("bounce")}}).value(QStringLiteral("ok")).toBool());
+    QVERIFY(!call("get_camera_state", {{QStringLiteral("clip"), subject}}).value(QStringLiteral("ok")).toBool());
 }
 
 void McpTest::lottieBatchUndoesAsOneStep()
@@ -3166,7 +4295,7 @@ void McpTest::lottieBatchUndoesAsOneStep()
                                                   {{QStringLiteral("json"), lottieFixture()}, {QStringLiteral("at"), 0.0}});
     QVERIFY(added.value(QStringLiteral("ok")).toBool());
     const QString id = added.value(QStringLiteral("id")).toString();
-    const QPair<int, int> loc = state.mcpLocateClip(id);
+    const QPair<int, int> loc = state.mcp()->locateClip(id);
 
     const QJsonObject batch = dispatcher.apply(QJsonObject{
         {QStringLiteral("ops"),
@@ -3198,7 +4327,7 @@ void McpTest::setTextStyleAcceptsAnimation()
     state.addTextClip(QStringLiteral("Hello"), 0.0);
     const int track = state.selectedTrack();
     const int clip = state.selectedClip();
-    const QString id = state.mcpCompactClip(track, clip).value(QStringLiteral("id")).toString();
+    const QString id = state.mcp()->compactClip(track, clip).value(QStringLiteral("id")).toString();
     drift::mcp::McpDispatcher dispatcher(&state);
     const QJsonObject r = dispatcher.applyOne(
         QStringLiteral("set_text"),
@@ -3231,7 +4360,7 @@ void McpTest::textKeyframesThroughSetKeyframe()
     state.addTextClip(QStringLiteral("Grow"), 0.0);
     const int track = state.selectedTrack();
     const int clip = state.selectedClip();
-    const QString id = state.mcpCompactClip(track, clip).value(QStringLiteral("id")).toString();
+    const QString id = state.mcp()->compactClip(track, clip).value(QStringLiteral("id")).toString();
     drift::mcp::McpDispatcher dispatcher(&state);
 
     QJsonObject r = dispatcher.applyOne(QStringLiteral("set_keyframe"),
@@ -3307,7 +4436,7 @@ void McpTest::importMediaTakesLottieBundles()
     const QJsonObject placed = dispatcher.applyOne(QStringLiteral("place_clip"),
                                                    {{QStringLiteral("asset"), asset.value(QStringLiteral("id")).toString()}, {QStringLiteral("at"), 0.0}});
     QVERIFY2(placed.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(placed).toJson(QJsonDocument::Compact)));
-    const QPair<int, int> loc = state.mcpLocateClip(placed.value(QStringLiteral("id")).toString());
+    const QPair<int, int> loc = state.mcp()->locateClip(placed.value(QStringLiteral("id")).toString());
     const QVariantMap clip = state.clipAt(loc.first, loc.second);
     QCOMPARE(clip.value(QStringLiteral("kind")).toString(), QStringLiteral("vector"));
     QCOMPARE(clip.value(QStringLiteral("duration")).toDouble(), 2.0);
@@ -3632,6 +4761,294 @@ void McpTest::catalogDispatcherParity()
     dispatcher.applyOne(QStringLiteral("pause"), {});
 }
 
+void McpTest::authoredEffectLifecycle()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const auto restore = qScopeGuard([&] {
+        for (const char *sub : {"effects", "transitions", "audio-effects", "exports"})
+            QDir(QDir(appData).filePath(QString::fromLatin1(sub))).removeRecursively();
+        reloadEffectCatalog();
+        reloadTransitionCatalog();
+        reloadAudioEffectCatalog();
+        QStandardPaths::setTestModeEnabled(false);
+    });
+
+    AssetLibrary library;
+    AddonManager addons;
+    AppController state(&library);
+    state.setAddonManager(&addons);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    const auto call = [&](const char *op, const QJsonObject &args) {
+        return dispatcher.applyOne(QString::fromLatin1(op), args);
+    };
+
+    const QJsonObject guide = call("effect_authoring_guide", {{QStringLiteral("kind"), QStringLiteral("audio_effect")}});
+    QVERIFY(guide.value(QStringLiteral("ok")).toBool());
+    QVERIFY(guide.value(QStringLiteral("processors")).toArray().size() > 0);
+    const QJsonObject pedals = guide.value(QStringLiteral("pedals")).toObject();
+    QVERIFY(pedals.value(QStringLiteral("pedals")).toArray().size() > 26);
+    QVERIFY(pedals.value(QStringLiteral("modulators")).toArray().size() == 3);
+
+    const QJsonObject manifest{
+        {QStringLiteral("displayName"), QStringLiteral("Test Tint")},
+        {QStringLiteral("category"), QStringLiteral("color")},
+        {QStringLiteral("parameters"), QJsonArray{QJsonObject{{QStringLiteral("identifier"), QStringLiteral("amount")},
+                                                              {QStringLiteral("type"), QStringLiteral("float")},
+                                                              {QStringLiteral("defaultValue"), 0.5}}}},
+        {QStringLiteral("pipeline"),
+         QJsonObject{{QStringLiteral("intermediateBuffers"), QJsonArray{}},
+                     {QStringLiteral("passes"),
+                      QJsonArray{QJsonObject{{QStringLiteral("passIndex"), 0},
+                                             {QStringLiteral("fragmentShader"), QStringLiteral("main.frag")},
+                                             {QStringLiteral("inputs"), QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("source_texture")}}}},
+                                             {QStringLiteral("output"), QJsonObject{{QStringLiteral("type"), QStringLiteral("canvas")}}}}}}}},
+    };
+    const QString good = QStringLiteral(
+        "#version 330 core\nin vec2 v_texCoord; out vec4 fragColor;\nuniform sampler2D u_currentTexture; uniform float amount;\n"
+        "void main() { vec4 c = texture(u_currentTexture, v_texCoord); fragColor = vec4(c.rgb * amount, c.a); }\n");
+    const auto effectArgs = [&](const QString &frag) {
+        return QJsonObject{{QStringLiteral("kind"), QStringLiteral("effect")},
+                           {QStringLiteral("slug"), QStringLiteral("test_tint")},
+                           {QStringLiteral("manifest"), manifest},
+                           {QStringLiteral("files"), QJsonObject{{QStringLiteral("main.frag"), frag}}}};
+    };
+    const QString target = QDir(appData).filePath(QStringLiteral("effects/test_tint"));
+
+    QJsonObject missing = effectArgs(good);
+    missing.insert(QStringLiteral("files"), QJsonObject{});
+    QCOMPARE(call("create_effect", missing).value(QStringLiteral("error")).toString(), QStringLiteral("bad_manifest"));
+    QVERIFY(!QFileInfo::exists(target));
+
+    if (drift::gl::runtime().available()) {
+        const QJsonObject broken = call("create_effect", effectArgs(QStringLiteral("#version 330 core\nvoid main() { nope; }\n")));
+        QCOMPARE(broken.value(QStringLiteral("error")).toString(), QStringLiteral("shader_compile_failed"));
+        QVERIFY(!broken.value(QStringLiteral("errors")).toArray().isEmpty());
+        QVERIFY(!QFileInfo::exists(target));
+    }
+
+    const QJsonObject created = call("create_effect", effectArgs(good));
+    QVERIFY2(created.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(created).toJson()));
+    QCOMPARE(created.value(QStringLiteral("id")).toString(), QStringLiteral("user.test_tint"));
+    const EffectPresetEntry *def = effectDefForId(QStringLiteral("user.test_tint"));
+    QVERIFY(def);
+    QCOMPARE(QDir::cleanPath(def->gpu.packageDir), QDir::cleanPath(target));
+    QCOMPARE(call("create_effect", effectArgs(good)).value(QStringLiteral("error")).toString(), QStringLiteral("exists"));
+
+    QJsonObject updateArgs = effectArgs(QString(good).replace(QStringLiteral("c.rgb * amount"), QStringLiteral("c.rgb + amount")));
+    updateArgs.remove(QStringLiteral("slug"));
+    updateArgs.insert(QStringLiteral("id"), QStringLiteral("user.test_tint"));
+    QVERIFY(call("update_effect", updateArgs).value(QStringLiteral("ok")).toBool());
+    const QJsonObject src = call("get_effect_source", {{QStringLiteral("kind"), QStringLiteral("effect")},
+                                                       {QStringLiteral("id"), QStringLiteral("user.test_tint")}});
+    QVERIFY(src.value(QStringLiteral("user")).toBool());
+    QCOMPARE(src.value(QStringLiteral("uses")).toInt(), 0);
+    QVERIFY(!call("get_effect_source", {{QStringLiteral("kind"), QStringLiteral("effect")},
+                                        {QStringLiteral("id"), QStringLiteral("adjust.brightness")}})
+                 .contains(QStringLiteral("uses")));
+    {
+        const QJsonObject listed = call("list_effects", {{QStringLiteral("id"), QStringLiteral("user.test_tint")}});
+        QVERIFY(listed.value(QStringLiteral("effects")).toArray().at(0).toObject().value(QStringLiteral("user")).toBool());
+        const QJsonObject bundledRow = call("list_effects", {{QStringLiteral("id"), QStringLiteral("adjust.brightness")}});
+        QVERIFY(!bundledRow.value(QStringLiteral("effects")).toArray().at(0).toObject().contains(QStringLiteral("user")));
+    }
+    QVERIFY(src.value(QStringLiteral("files")).toObject().value(QStringLiteral("main.frag")).toString().contains(QStringLiteral("c.rgb + amount")));
+
+    const QJsonObject bundled = call("update_effect", {{QStringLiteral("kind"), QStringLiteral("effect")},
+                                                       {QStringLiteral("id"), QStringLiteral("adjust.brightness")},
+                                                       {QStringLiteral("manifest"), manifest}});
+    QCOMPARE(bundled.value(QStringLiteral("error")).toString(), QStringLiteral("not_user_effect"));
+
+    QTemporaryDir tmp;
+    const QString out = tmp.filePath(QStringLiteral("tint.driftfx"));
+    const QJsonObject exported = call("export_effect", {{QStringLiteral("kind"), QStringLiteral("effect")},
+                                                        {QStringLiteral("id"), QStringLiteral("user.test_tint")},
+                                                        {QStringLiteral("path"), out}});
+    QVERIFY2(exported.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(exported).toJson()));
+    QString error;
+    const auto info = drift::addon::readManifest(exported.value(QStringLiteral("path")).toString(), &error,
+                                                 drift::addon::Container::User);
+    QVERIFY2(info.has_value(), qPrintable(error));
+    QCOMPARE(info->provides.first().kind, QStringLiteral("effects"));
+    const QString reinstall = tmp.filePath(QStringLiteral("reinstall"));
+    QVERIFY2(drift::addon::install(exported.value(QStringLiteral("path")).toString(), reinstall, {}, nullptr, &error,
+                                   drift::addon::Container::User),
+             qPrintable(error));
+    QVERIFY(QFile::exists(reinstall + QStringLiteral("/effects/test_tint/main.frag")));
+
+    QVERIFY(call("delete_effect", {{QStringLiteral("kind"), QStringLiteral("effect")},
+                                   {QStringLiteral("id"), QStringLiteral("user.test_tint")}})
+                .value(QStringLiteral("ok")).toBool());
+    QVERIFY(!effectDefForId(QStringLiteral("user.test_tint")));
+    QVERIFY(!QFileInfo::exists(target));
+
+    QCOMPARE(call("import_effect", {{QStringLiteral("path"), QStringLiteral("relative.driftfx")}}).value(QStringLiteral("error")).toString(),
+             QStringLiteral("bad_args"));
+    QCOMPARE(call("import_effect", {{QStringLiteral("path"), tmp.filePath(QStringLiteral("nope.driftfx"))}}).value(QStringLiteral("error")).toString(),
+             QStringLiteral("not_found"));
+    const QString junk = tmp.filePath(QStringLiteral("junk.driftfx"));
+    QFile junkFile(junk);
+    QVERIFY(junkFile.open(QIODevice::WriteOnly));
+    junkFile.write("not a package");
+    junkFile.close();
+    QCOMPARE(call("import_effect", {{QStringLiteral("path"), junk}}).value(QStringLiteral("error")).toString(),
+             QStringLiteral("bad_package"));
+
+    const QJsonObject imported = call("import_effect", {{QStringLiteral("path"), out}});
+    QVERIFY2(imported.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(imported).toJson()));
+    QCOMPARE(imported.value(QStringLiteral("ids")).toArray().at(0).toString(), QStringLiteral("user.test_tint"));
+    QCOMPARE(imported.value(QStringLiteral("kind")).toString(), QStringLiteral("effect"));
+    QVERIFY(effectDefForId(QStringLiteral("user.test_tint")));
+    QCOMPARE(call("import_effect", {{QStringLiteral("path"), out}}).value(QStringLiteral("error")).toString(), QStringLiteral("exists"));
+    QVERIFY(call("import_effect", {{QStringLiteral("path"), out}, {QStringLiteral("overwrite"), true}}).value(QStringLiteral("ok")).toBool());
+
+    // The imported effect applies to a clip, and the use count follows it.
+    const QString holder = addTextClip(dispatcher);
+    QVERIFY(!holder.isEmpty());
+    const QJsonObject applied = call("add_effect", {{QStringLiteral("clip"), holder}, {QStringLiteral("effect"), QStringLiteral("user.test_tint")}});
+    QVERIFY2(applied.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(applied).toJson()));
+    {
+        const drift::Clip &clip = state.project()->tracks().at(state.selectedTrack()).clips.at(state.selectedClip());
+        QCOMPARE(clip.effects.size(), 1);
+        QCOMPARE(clip.effects.first().catalogId, QStringLiteral("user.test_tint"));
+    }
+    QCOMPARE(call("get_effect_source", {{QStringLiteral("kind"), QStringLiteral("effect")}, {QStringLiteral("id"), QStringLiteral("user.test_tint")}})
+                 .value(QStringLiteral("uses")).toInt(), 1);
+    QVERIFY(call("delete_effect", {{QStringLiteral("kind"), QStringLiteral("effect")}, {QStringLiteral("id"), QStringLiteral("user.test_tint")},
+                                   {QStringLiteral("force"), true}}).value(QStringLiteral("ok")).toBool());
+
+    const QJsonObject audio = call("create_effect", {{QStringLiteral("kind"), QStringLiteral("audio_effect")},
+                                                     {QStringLiteral("slug"), QStringLiteral("test_echo")},
+                                                     {QStringLiteral("manifest"), QJsonObject{{QStringLiteral("processor"), QStringLiteral("echo")}}}});
+    QVERIFY2(audio.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(audio).toJson()));
+    QVERIFY(audioEffectDefForId(QStringLiteral("user.test_echo")));
+    const QJsonObject badAudio = call("create_effect", {{QStringLiteral("kind"), QStringLiteral("audio_effect")},
+                                                        {QStringLiteral("slug"), QStringLiteral("test_nope")},
+                                                        {QStringLiteral("manifest"), QJsonObject{{QStringLiteral("processor"), QStringLiteral("nope")}}}});
+    QCOMPARE(badAudio.value(QStringLiteral("error")).toString(), QStringLiteral("bad_manifest"));
+
+    // The graph example the guide shows has to be one Drift accepts.
+    const QString guideText = call("effect_authoring_guide", {{QStringLiteral("kind"), QStringLiteral("audio_effect")}})
+                                  .value(QStringLiteral("guide")).toString();
+    const int start = guideText.indexOf(QStringLiteral("{\"displayName\": \"Swirl\""));
+    const int end = guideText.indexOf(QStringLiteral("\n\n- chain runs in order"), start);
+    QVERIFY(start > 0 && end > start);
+    QJsonParseError parseError;
+    const QJsonObject example = QJsonDocument::fromJson(guideText.mid(start, end - start).toUtf8(), &parseError).object();
+    QVERIFY2(parseError.error == QJsonParseError::NoError, qPrintable(parseError.errorString()));
+    const QJsonObject graph = call("create_effect", {{QStringLiteral("kind"), QStringLiteral("audio_effect")},
+                                                     {QStringLiteral("slug"), QStringLiteral("test_swirl")},
+                                                     {QStringLiteral("manifest"), example}});
+    QVERIFY2(graph.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(graph).toJson()));
+    QVERIFY(audioEffectDefForId(QStringLiteral("user.test_swirl")));
+    QVERIFY(audioEffectDefForId(QStringLiteral("user.test_swirl"))->graph->modulators.size() == 1);
+
+    QJsonObject transition = manifest;
+    QJsonObject pipeline = transition.value(QStringLiteral("pipeline")).toObject();
+    QJsonArray passes = pipeline.value(QStringLiteral("passes")).toArray();
+    QJsonObject pass = passes.at(0).toObject();
+    pass.insert(QStringLiteral("inputs"), QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("source_texture")}, {QStringLiteral("index"), 0}},
+                                                    QJsonObject{{QStringLiteral("type"), QStringLiteral("source_texture")}, {QStringLiteral("index"), 1}}});
+    passes[0] = pass;
+    pipeline.insert(QStringLiteral("passes"), passes);
+    transition.insert(QStringLiteral("pipeline"), pipeline);
+    const QJsonObject made = call("create_effect", {{QStringLiteral("kind"), QStringLiteral("transition")},
+                                                    {QStringLiteral("slug"), QStringLiteral("test_mix")},
+                                                    {QStringLiteral("manifest"), transition},
+                                                    {QStringLiteral("files"), QJsonObject{{QStringLiteral("main.frag"), QStringLiteral(
+        "#version 330 core\nin vec2 v_texCoord; out vec4 fragColor;\nuniform sampler2D u_fromTexture; uniform sampler2D u_toTexture;\n"
+        "uniform float u_progress; uniform float amount;\n"
+        "void main() { fragColor = mix(texture(u_fromTexture, v_texCoord), texture(u_toTexture, v_texCoord), u_progress * amount); }\n")}}}});
+    QVERIFY2(made.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(made).toJson()));
+    QVERIFY(transitionDefForId(QStringLiteral("user.test_mix")));
+
+    // A created transition lands between two clips.
+    QVERIFY(call("set_overlap", {{QStringLiteral("enabled"), true}}).value(QStringLiteral("ok")).toBool());
+    const QJsonObject first = call("add_text", {{QStringLiteral("text"), QStringLiteral("A")}, {QStringLiteral("at"), 10.0}});
+    const QJsonObject second = call("add_text", {{QStringLiteral("text"), QStringLiteral("B")},
+                                                 {QStringLiteral("at"), 10.0 + first.value(QStringLiteral("dur")).toDouble()}});
+    QVERIFY(second.value(QStringLiteral("ok")).toBool());
+    const QJsonObject placed = call("add_transition", {{QStringLiteral("clip"), first.value(QStringLiteral("id")).toString()},
+                                                       {QStringLiteral("kind"), QStringLiteral("user.test_mix")}});
+    QVERIFY2(placed.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(placed).toJson()));
+    QCOMPARE(placed.value(QStringLiteral("kind")).toString(), QStringLiteral("user.test_mix"));
+    bool onTrack = false;
+    for (const drift::Transition &t : state.project()->tracks().at(placed.value(QStringLiteral("track")).toInt()).transitions)
+        onTrack = onTrack || t.kindId == QLatin1String("user.test_mix");
+    QVERIFY(onTrack);
+    QCOMPARE(call("get_effect_source", {{QStringLiteral("kind"), QStringLiteral("transition")}, {QStringLiteral("id"), QStringLiteral("user.test_mix")}})
+                 .value(QStringLiteral("uses")).toInt(), 1);
+}
+
+void McpTest::effectPresetHousekeeping()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] {
+        QFile::remove(drift::EffectStackStore::storePath());
+        drift::EffectStackStore::instance().reload();
+        QStandardPaths::setTestModeEnabled(false);
+    });
+    QFile::remove(drift::EffectStackStore::storePath());
+    drift::EffectStackStore::instance().reload();
+
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    const auto call = [&](const char *op, const QJsonObject &args) {
+        return dispatcher.applyOne(QString::fromLatin1(op), args);
+    };
+    const QString clip = addTextClip(dispatcher);
+    QVERIFY(call("add_effect", {{QStringLiteral("clip"), clip}, {QStringLiteral("effect"), QStringLiteral("adjust.brightness")}}).value(QStringLiteral("ok")).toBool());
+    QVERIFY(call("add_effect", {{QStringLiteral("clip"), clip}, {QStringLiteral("effect"), QStringLiteral("adjust.contrast")}}).value(QStringLiteral("ok")).toBool());
+
+    const auto presetCount = [&](const QString &id, const char *key) {
+        for (const QJsonValue &v : call("list_user_effect_presets", {}).value(QStringLiteral("presets")).toArray()) {
+            if (v.toObject().value(QStringLiteral("id")).toString() == id)
+                return v.toObject().value(QLatin1String(key)).toInt();
+        }
+        return -1;
+    };
+
+    const QJsonObject whole = call("save_effect_preset", {{QStringLiteral("clip"), clip}, {QStringLiteral("label"), QStringLiteral("Both")}});
+    QVERIFY2(whole.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(whole).toJson()));
+    QCOMPARE(presetCount(whole.value(QStringLiteral("id")).toString(), "effectCount"), 2);
+
+    const QJsonObject one = call("save_effect_preset", {{QStringLiteral("clip"), clip}, {QStringLiteral("label"), QStringLiteral("Second")},
+                                                        {QStringLiteral("effect_index"), 1}});
+    QVERIFY2(one.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(one).toJson()));
+    const QString presetId = one.value(QStringLiteral("id")).toString();
+    QCOMPARE(presetCount(presetId, "effectCount"), 1);
+    QCOMPARE(call("save_effect_preset", {{QStringLiteral("clip"), clip}, {QStringLiteral("label"), QStringLiteral("x")},
+                                         {QStringLiteral("effect_index"), 9}}).value(QStringLiteral("error")).toString(),
+             QStringLiteral("bad_args"));
+    QCOMPARE(call("save_effect_preset", {{QStringLiteral("clip"), clip}, {QStringLiteral("label"), QStringLiteral("x")},
+                                         {QStringLiteral("effect_index"), 0}, {QStringLiteral("audio"), true}}).value(QStringLiteral("error")).toString(),
+             QStringLiteral("bad_args"));
+
+    QVERIFY(call("rename_effect_preset", {{QStringLiteral("preset"), presetId}, {QStringLiteral("label"), QStringLiteral("Renamed")}}).value(QStringLiteral("ok")).toBool());
+    bool renamed = false;
+    for (const QJsonValue &v : call("list_user_effect_presets", {}).value(QStringLiteral("presets")).toArray())
+        renamed = renamed || (v.toObject().value(QStringLiteral("id")).toString() == presetId
+                              && v.toObject().value(QStringLiteral("label")).toString() == QLatin1String("Renamed"));
+    QVERIFY(renamed);
+    QCOMPARE(call("rename_effect_preset", {{QStringLiteral("preset"), QStringLiteral("nope")}, {QStringLiteral("label"), QStringLiteral("x")}})
+                 .value(QStringLiteral("error")).toString(), QStringLiteral("not_found"));
+
+    QTemporaryDir dir;
+    const QString file = dir.filePath(QStringLiteral("stack.json"));
+    QVERIFY(call("export_effect_preset", {{QStringLiteral("preset"), presetId}, {QStringLiteral("path"), file}}).value(QStringLiteral("ok")).toBool());
+    QVERIFY(QFile::exists(file));
+    QVERIFY(call("delete_effect_preset", {{QStringLiteral("preset"), presetId}}).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(presetCount(presetId, "effectCount"), -1);
+    QCOMPARE(call("delete_effect_preset", {{QStringLiteral("preset"), presetId}}).value(QStringLiteral("error")).toString(), QStringLiteral("not_found"));
+
+    QCOMPARE(call("import_effect_preset", {{QStringLiteral("path"), dir.filePath(QStringLiteral("none.json"))}}).value(QStringLiteral("error")).toString(),
+             QStringLiteral("not_found"));
+    const QJsonObject imported = call("import_effect_preset", {{QStringLiteral("path"), file}});
+    QVERIFY2(imported.value(QStringLiteral("ok")).toBool(), qPrintable(QJsonDocument(imported).toJson()));
+    QCOMPARE(presetCount(imported.value(QStringLiteral("id")).toString(), "effectCount"), 1);
+}
+
 void McpTest::textResultRoundsNumbers()
 {
     const QJsonObject payload{
@@ -3675,9 +5092,9 @@ void McpTest::setTransformWrites3dPose()
     QCOMPARE(r.value(QStringLiteral("z")).toDouble(), 0.0);
     QCOMPARE(r.value(QStringLiteral("perspective")).toDouble(), drift::kDefaultClipPerspective);
 
-    const QPair<int, int> loc = state.mcpLocateClip(clip);
+    const QPair<int, int> loc = state.mcp()->locateClip(clip);
     QVariantMap box;
-    for (const QVariant &entry : state.previewClipsAtPlayhead()) {
+    for (const QVariant &entry : state.preview()->clipsAtPlayhead()) {
         const QVariantMap m = entry.toMap();
         if (m.value(QStringLiteral("track")).toInt() == loc.first
             && m.value(QStringLiteral("clip")).toInt() == loc.second)
@@ -3688,9 +5105,9 @@ void McpTest::setTransformWrites3dPose()
     // Hit-testing goes through the projection: the flat box's own edge is outside the tilted quad.
     const double cx = box.value(QStringLiteral("x")).toDouble() + box.value(QStringLiteral("width")).toDouble() / 2;
     const double cy = box.value(QStringLiteral("y")).toDouble() + box.value(QStringLiteral("height")).toDouble() / 2;
-    QCOMPARE(state.previewClipAtCanvasPoint(cx, cy).value(QStringLiteral("clip")).toInt(), loc.second);
+    QCOMPARE(state.preview()->clipAtCanvasPoint(cx, cy).value(QStringLiteral("clip")).toInt(), loc.second);
     const double flatRight = box.value(QStringLiteral("x")).toDouble() + box.value(QStringLiteral("width")).toDouble() - 1;
-    QVERIFY(state.previewClipAtCanvasPoint(flatRight, cy).isEmpty());
+    QVERIFY(state.preview()->clipAtCanvasPoint(flatRight, cy).isEmpty());
 
     const QJsonObject pushed = dispatcher.applyOne(
         QStringLiteral("set_transform"), {{QStringLiteral("clip"), clip}, {QStringLiteral("z"), -500.0}});
@@ -3701,7 +5118,7 @@ void McpTest::setTransformWrites3dPose()
         QStringLiteral("set_transform"), {{QStringLiteral("clip"), clip}, {QStringLiteral("layer3d"), false}});
     QVERIFY(flat.value(QStringLiteral("ok")).toBool());
     QVERIFY(!flat.contains(QStringLiteral("rotationY")));
-    QVERIFY(!state.previewClipAtCanvasPoint(flatRight, cy).isEmpty());
+    QVERIFY(!state.preview()->clipAtCanvasPoint(flatRight, cy).isEmpty());
     QCOMPARE(state.propertyValueAt(loc.first, loc.second, QStringLiteral("rotationY"), 0.0, 0.0), 0.0);
     QCOMPARE(state.propertyValueAt(loc.first, loc.second, QStringLiteral("z"), 0.0, 0.0), 0.0);
 
@@ -3718,9 +5135,9 @@ void McpTest::setTransformWrites3dPose()
     // A quarter turn on the gizmo's screen-plane ring writes the spin to the clip.
     box.insert(QStringLiteral("rotationY"), 0.0);
     box.insert(QStringLiteral("z"), 0.0);
-    state.setGizmoTool(QStringLiteral("rotate"));
-    state.setGizmoOrientation(QStringLiteral("global"));
-    const QVariantMap rings = state.previewGizmoGeometry(box, 1.0, 1.0);
+    state.preview()->setGizmoTool(QStringLiteral("rotate"));
+    state.preview()->setGizmoOrientation(QStringLiteral("global"));
+    const QVariantMap rings = state.preview()->gizmoGeometry(box, 1.0, 1.0);
     const QPointF origin = rings.value(QStringLiteral("origin")).toPointF();
     QPointF ringStart;
     for (const QVariant &h : rings.value(QStringLiteral("handles")).toList()) {
@@ -3731,7 +5148,7 @@ void McpTest::setTransformWrites3dPose()
     const double radius = QLineF(origin, ringStart).length();
     QVERIFY(radius > 10);
     state.previewSetClipKeyframe(loc.first, loc.second, QStringLiteral("rotationY"), 0.0, 0.0);
-    const QVariantMap turned = state.previewApplyGizmoDrag(box, QStringLiteral("z"), origin.x() + radius,
+    const QVariantMap turned = state.preview()->applyGizmoDrag(box, QStringLiteral("z"), origin.x() + radius,
                                                            origin.y(), origin.x(), origin.y() + radius,
                                                            true, 1.0);
     state.commitPreviewDrag();
@@ -3910,7 +5327,7 @@ void McpTest::transformLayerTools()
     QCOMPARE(state.project()->tracks().at(0).clips.at(0).name, QStringLiteral("Group"));
     const QString layerClip = r.value(QStringLiteral("clip")).toString();
     // A fresh transform clip has no size keys; it reports the canvas it fills, not 0x0.
-    const QVariantMap compact = state.mcpCompactClip(0, 0, true);
+    const QVariantMap compact = state.mcp()->compactClip(0, 0, true);
     QCOMPARE(compact.value(QStringLiteral("w")).toDouble(), double(state.project()->width()));
     QCOMPARE(compact.value(QStringLiteral("h")).toDouble(), double(state.project()->height()));
 
@@ -3924,7 +5341,7 @@ void McpTest::transformLayerTools()
     QCOMPARE(r.value(QStringLiteral("parented")).toArray(), QJsonArray{0});
 
     // inspect: the layer's scope and span, the covered tracks' parent, the clip's kind.
-    const QJsonObject inspect = state.mcpInspect({true, false, false, false, -1, -1, QString()});
+    const QJsonObject inspect = state.mcp()->inspect({true, false, false, false, -1, -1, QString()});
     const QJsonArray rows = inspect.value(QStringLiteral("tracks")).toArray();
     const QJsonObject layerRow = rows.at(0).toObject();
     QCOMPARE(layerRow.value(QStringLiteral("scope")).toString(), QStringLiteral("range"));
@@ -4034,7 +5451,7 @@ void McpTest::effectParamWritesRejectUnknownKeys()
     QCOMPARE(badIndex.value(QStringLiteral("error")).toString(), QStringLiteral("not_found"));
 
     // And the typo was not left behind in the project.
-    const QJsonObject row = state.mcpInspect({true, true, false, false, 0, 0, QString()});
+    const QJsonObject row = state.mcp()->inspect({true, true, false, false, 0, 0, QString()});
     QVERIFY2(!QJsonDocument(row).toJson(QJsonDocument::Compact).contains("contrastt"),
              "the rejected key was stored anyway");
 }
@@ -4270,15 +5687,64 @@ void McpTest::captureBeyondEndFlags()
     const double dur = state.durationSeconds();
     QVERIFY(dur > 0.0);
 
-    const QJsonObject result = state.mcpCaptureFrame(dur + 100.0, false);
+    const QJsonObject result = state.mcp()->captureFrame(dur + 100.0, false);
     if (result.value(QStringLiteral("isError")).toBool())
         QSKIP("Compositor could not produce a frame in this environment");
     const QJsonObject meta = firstTextPayload(result);
     QCOMPARE(meta.value(QStringLiteral("beyond_end")).toBool(), true);
     QCOMPARE(meta.value(QStringLiteral("dur")).toDouble(), dur);
 
-    const QJsonObject inside = state.mcpCaptureFrame(0.0, false);
+    const QJsonObject inside = state.mcp()->captureFrame(0.0, false);
     QVERIFY(!firstTextPayload(inside).contains(QStringLiteral("beyond_end")));
+}
+
+void McpTest::previewViewTools()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    auto call = [&](const QJsonObject &args) {
+        return dispatcher.applyOne(QStringLiteral("set_preview_view"), args);
+    };
+
+    QCOMPARE(state.mcp()->inspect(false).value(QStringLiteral("preview_mode")).toString(), QStringLiteral("2d"));
+
+    const QJsonObject on = call({{QStringLiteral("mode"), QStringLiteral("3d")}});
+    QVERIFY(on.value(QStringLiteral("ok")).toBool());
+    QCOMPARE(on.value(QStringLiteral("mode")).toString(), QStringLiteral("3d"));
+    QCOMPARE(state.preview()->mode(), QStringLiteral("3d"));
+    QCOMPARE(state.mcp()->inspect(false).value(QStringLiteral("preview_mode")).toString(), QStringLiteral("3d"));
+
+    const QJsonObject moved = call({{QStringLiteral("axis"), QStringLiteral("top")},
+                                    {QStringLiteral("orbit"), QJsonArray{30, 0}},
+                                    {QStringLiteral("dolly"), 2}});
+    QVERIFY(moved.value(QStringLiteral("ok")).toBool());
+    QVERIFY(moved.value(QStringLiteral("pitch")).toDouble() > 80.0);
+    QVERIFY(moved.value(QStringLiteral("yaw")).toDouble() != 0.0);
+
+    const QJsonObject lt = call({{QStringLiteral("look_through"), true}});
+    QCOMPARE(lt.value(QStringLiteral("look_through")).toBool(), true);
+    QCOMPARE(state.mcp()->inspect(false).value(QStringLiteral("look_through")).toBool(), true);
+
+    const QJsonObject back = call({{QStringLiteral("mode"), QStringLiteral("2d")}, {QStringLiteral("reset"), true}});
+    QCOMPARE(back.value(QStringLiteral("mode")).toString(), QStringLiteral("2d"));
+    QCOMPARE(back.value(QStringLiteral("look_through")).toBool(), false);
+
+    for (const QJsonObject &bad : {QJsonObject{{QStringLiteral("mode"), QStringLiteral("4d")}},
+                                   QJsonObject{{QStringLiteral("axis"), QStringLiteral("up")}},
+                                   QJsonObject{{QStringLiteral("orbit"), QJsonArray{1}}},
+                                   QJsonObject{{QStringLiteral("pan"), QJsonArray{1, 2, 3}}}})
+        QCOMPARE(call(bad).value(QStringLiteral("error")).toString(), QStringLiteral("bad_args"));
+    QCOMPARE(state.preview()->mode(), QStringLiteral("2d"));
+
+    QVERIFY(dispatcher.capture({{QStringLiteral("view"), QStringLiteral("sideways")}})
+                .value(QStringLiteral("isError")).toBool());
+
+    state.addTextClip(QStringLiteral("Hello"), 0.0);
+    const QJsonObject shot = state.mcp()->captureFrame(0.0, false, true);
+    if (shot.value(QStringLiteral("isError")).toBool())
+        QSKIP("Compositor could not produce a frame in this environment");
+    QCOMPARE(firstTextPayload(shot).value(QStringLiteral("view")).toString(), QStringLiteral("editor3d"));
 }
 
 namespace {
@@ -4615,7 +6081,7 @@ void McpTest::listScenesExposesThumb()
     QVERIFY2(started.value(QStringLiteral("ok")).toBool(),
              qPrintable(QJsonDocument(started).toJson(QJsonDocument::Compact)));
     QTRY_VERIFY_WITH_TIMEOUT(
-        !state.mcpInspect(false, -1, true, false).value(QStringLiteral("jobs")).toObject()
+        !state.mcp()->inspect(false, -1, true, false).value(QStringLiteral("jobs")).toObject()
              .value(QStringLiteral("sceneDetect")).toObject().value(QStringLiteral("active")).toBool()
             && dispatcher.applyOne(QStringLiteral("list_scenes"), {}).value(QStringLiteral("ok")).toBool(),
         30000);
@@ -4772,7 +6238,7 @@ void McpTest::graphicsAtTheSameTimeStackOnTheirOwnLanes()
     QVERIFY2(second.value(QStringLiteral("ok")).toBool(),
              qPrintable(QJsonDocument(second).toJson(QJsonDocument::Compact)));
 
-    const QJsonObject rows = state.mcpInspect(true, -1, true, false);
+    const QJsonObject rows = state.mcp()->inspect(true, -1, true, false);
     QList<double> starts;
     QSet<int> lanes;
     for (const QJsonValue &track : rows.value(QStringLiteral("tracks")).toArray()) {
@@ -4799,7 +6265,7 @@ void McpTest::addEffectReportsHost()
     AppController state(&library);
     state.addTextClip(QStringLiteral("Hello"), 0.0);
     drift::mcp::McpDispatcher dispatcher(&state);
-    const QJsonObject before = state.mcpInspect(false, -1, false, false);
+    const QJsonObject before = state.mcp()->inspect(false, -1, false, false);
 
     const QJsonObject added = dispatcher.applyOne(
         QStringLiteral("add_effect"),
@@ -4809,7 +6275,7 @@ void McpTest::addEffectReportsHost()
     QCOMPARE(added.value(QStringLiteral("effect")).toString(), QStringLiteral("stylize.vignette"));
     QCOMPARE(added.value(QStringLiteral("index")).toInt(), 0);
 
-    const QJsonObject after = state.mcpInspect(false, -1, false, false);
+    const QJsonObject after = state.mcp()->inspect(false, -1, false, false);
     const bool newLane = after.value(QStringLiteral("tracks")).toArray().size()
                          > before.value(QStringLiteral("tracks")).toArray().size();
     QCOMPARE(added.contains(QStringLiteral("host")), newLane);
@@ -4817,7 +6283,7 @@ void McpTest::addEffectReportsHost()
         const QJsonObject host = added.value(QStringLiteral("host")).toObject();
         QCOMPARE(host.value(QStringLiteral("kind")).toString(), QStringLiteral("adjustment"));
         QVERIFY(!host.value(QStringLiteral("clip")).toString().isEmpty());
-        const QJsonObject row = state.mcpInspect({true, true, false, false, -1, -1,
+        const QJsonObject row = state.mcp()->inspect({true, true, false, false, -1, -1,
                                                   host.value(QStringLiteral("clip")).toString()});
         QVERIFY(row.value(QStringLiteral("ok")).toBool());
     }
@@ -4847,7 +6313,7 @@ void McpTest::splitClipKeepsEffectsOnBothHalves()
              qPrintable(QJsonDocument(split).toJson(QJsonDocument::Compact)));
 
     for (const QJsonValue &id : split.value(QStringLiteral("clips")).toArray()) {
-        const QJsonObject row = state.mcpInspect({true, true, false, false, -1, -1, id.toString()});
+        const QJsonObject row = state.mcp()->inspect({true, true, false, false, -1, -1, id.toString()});
         QVERIFY2(row.value(QStringLiteral("ok")).toBool(), qPrintable(id.toString()));
         int effects = 0;
         for (const QJsonValue &track : row.value(QStringLiteral("tracks")).toArray()) {
@@ -5207,6 +6673,7 @@ void McpTest::setMaskRoundTripsFreeformPoints()
     QCOMPARE(mask.value(QStringLiteral("points")).toArray().size(), 3);
     QVERIFY(mask.value(QStringLiteral("points")).toArray().at(0).isObject());
     mask.remove(QStringLiteral("animated"));
+    mask.remove(QStringLiteral("pathKeyCount"));
     mask.remove(QStringLiteral("keyframes"));
     mask.insert(QStringLiteral("invert"), true);
     r = dispatcher.applyOne(QStringLiteral("set_mask"), {{QStringLiteral("clip"), id}, {QStringLiteral("mask"), mask}});
@@ -5748,6 +7215,64 @@ void McpTest::cloudOpsNeedKeyAndConsent()
     QCOMPARE(dispatcher.applyOne(QStringLiteral("tts_generate"), {{QStringLiteral("text"), QString(5001, QLatin1Char('a'))}})
                  .value(QStringLiteral("error")).toString(),
              QStringLiteral("bad_args"));
+}
+
+void McpTest::localVoiceOpsValidateArgs()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::mcp::McpDispatcher dispatcher(&state);
+    const auto call = [&](const char *tool, const QJsonObject &args) {
+        return dispatcher.applyOne(QString::fromLatin1(tool), args);
+    };
+    const auto code = [](const QJsonObject &r) { return r.value(QStringLiteral("error")).toString(); };
+
+    // The model addon may or may not be installed here; none of this needs it.
+    const QJsonObject status = call("local_tts_status", {});
+    QVERIFY(status.value(QStringLiteral("ok")).toBool());
+    QVERIFY(status.contains(QStringLiteral("available")));
+    QVERIFY(status.contains(QStringLiteral("model_loaded")));
+    QVERIFY(status.contains(QStringLiteral("loading")));
+    QCOMPARE(status.value(QStringLiteral("addon_id")).toString(), QStringLiteral("tts-model"));
+    QVERIFY(!status.value(QStringLiteral("languages")).toArray().isEmpty());
+    QVERIFY(!status.value(QStringLiteral("last_voice")).toString().isEmpty());
+    QVERIFY(!status.value(QStringLiteral("last_language")).toString().isEmpty());
+    QVERIFY(status.value(QStringLiteral("last_exaggeration")).toDouble() > 0.0);
+
+    const QJsonArray voices = call("list_local_voices", {}).value(QStringLiteral("voices")).toArray();
+    QVERIFY(!voices.isEmpty());
+    QCOMPARE(voices.first().toObject().value(QStringLiteral("id")).toString(), QStringLiteral("default"));
+    QVERIFY(voices.first().toObject().value(QStringLiteral("built_in")).toBool());
+
+    QCOMPARE(code(call("rename_voice", {{QStringLiteral("voice"), QStringLiteral("nope")}, {QStringLiteral("name"), QStringLiteral("x")}})),
+             QStringLiteral("not_found"));
+    QCOMPARE(code(call("rename_voice", {{QStringLiteral("voice"), QStringLiteral("default")}, {QStringLiteral("name"), QStringLiteral("x")}})),
+             QStringLiteral("bad_args"));
+    QCOMPARE(code(call("remove_voice", {{QStringLiteral("voice"), QStringLiteral("nope")}})), QStringLiteral("not_found"));
+    QCOMPARE(code(call("remove_voice", {{QStringLiteral("voice"), QStringLiteral("default")}})), QStringLiteral("bad_args"));
+
+    QCOMPARE(code(call("add_voice", {{QStringLiteral("path"), QStringLiteral("/tmp/a.wav")}})), QStringLiteral("bad_args"));
+    QCOMPARE(code(call("add_voice", {{QStringLiteral("name"), QStringLiteral("Me")}})), QStringLiteral("bad_args"));
+    QCOMPARE(code(call("add_voice", {{QStringLiteral("name"), QStringLiteral("Me")},
+                                     {QStringLiteral("path"), QStringLiteral("/nonexistent/sample.wav")}})),
+             QStringLiteral("not_found"));
+    QCOMPARE(code(call("add_voice", {{QStringLiteral("name"), QStringLiteral("Me")}, {QStringLiteral("clip"), QStringLiteral("missing")}})),
+             QStringLiteral("not_found"));
+
+    const auto local = [](QJsonObject extra) {
+        extra.insert(QStringLiteral("provider"), QStringLiteral("local"));
+        return extra;
+    };
+    QCOMPARE(code(call("tts_generate", local({}))), QStringLiteral("bad_args"));
+    QCOMPARE(code(call("tts_generate", local({{QStringLiteral("text"), QStringLiteral("Hi")}, {QStringLiteral("voice"), QStringLiteral("nope")}}))),
+             QStringLiteral("not_found"));
+    QCOMPARE(code(call("tts_generate", local({{QStringLiteral("text"), QStringLiteral("Hi")}, {QStringLiteral("language"), QStringLiteral("xx")}}))),
+             QStringLiteral("bad_args"));
+    QCOMPARE(code(call("tts_generate", local({{QStringLiteral("text"), QStringLiteral("Hi")}, {QStringLiteral("exaggeration"), 9}}))),
+             QStringLiteral("bad_args"));
+    QCOMPARE(code(call("tts_generate", local({{QStringLiteral("text"), QString(5001, QLatin1Char('a'))}}))), QStringLiteral("bad_args"));
+
+    QCOMPARE(code(call("voiceover_from_subtitles", {{QStringLiteral("clip"), QStringLiteral("missing")}})), QStringLiteral("not_found"));
 }
 
 void McpTest::scribeResponseBecomesTranscript()

@@ -2,8 +2,6 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Window
 import Drift
-import "assets"
-
 // Browsable audio-effect preset picker: category chips + card grid.
 // Drag a card onto a timeline clip, or click / tap + to apply to the selection.
 Column {
@@ -11,12 +9,23 @@ Column {
     spacing: 0
 
     readonly property string favoritesId: "__favorites__"
-    readonly property var categories: EditorState.audioEffectCategories()
-    readonly property var catalog: EditorState.audioEffectCatalog()
+    readonly property string mineId: "__mine__"
+    // Bumped when an addon changes the audio effects on disk (an imported .driftfx, a pack install).
+    property int catalogTick: 0
+    readonly property var categories: { void catalogTick; return EditorState.audioEffectCategories() }
+    readonly property var catalog: { void catalogTick; return EditorState.audioEffectCatalog() }
     property string activeCategory: categories.length > 0 ? categories[0].id : ""
     property alias searchText: search.text
     readonly property string query: search.text.trim().toLowerCase()
     property int favoritesTick: 0
+
+    Connections {
+        target: Addons
+        function onKindChanged(kind) {
+            if (kind === "audio-effects")
+                root.catalogTick++
+        }
+    }
 
     Connections {
         target: EditorState
@@ -41,6 +50,8 @@ Column {
                 return EditorState.isAssetFavorite("sounds", preset.id)
             })
         }
+        if (root.activeCategory === root.mineId)
+            return root.catalog.filter(function(preset) { return preset.user === true })
         return root.catalog.filter(function(preset) {
             return preset.category === root.activeCategory
         })
@@ -60,7 +71,7 @@ Column {
         title: qsTr("No audio effects")
         hint: qsTr("Install the Audio Effects pack from Extras to browse presets here.")
         actionText: qsTr("Install audio effects")
-        onActionTriggered: root.Window.window.openAddonManager("audio-effects")
+        onActionTriggered: ShellBridge.main.openAddonManager("audio-effects")
     }
 
     Column {
@@ -69,34 +80,22 @@ Column {
         height: parent.height
         spacing: 0
 
-        Text {
-            id: browserTip
-            width: parent.width - 24
-            leftPadding: 12
-            rightPadding: 12
-            topPadding: 8
-            bottomPadding: 4
-            wrapMode: Text.WordWrap
-            horizontalAlignment: Text.AlignHCenter
-            text: EditorState.selectedClip >= 0
-                  ? qsTr("Drag a preset onto a clip, or click to apply to the selection")
-                  : qsTr("Drag a preset onto a clip in the timeline")
-            color: Theme.mutedForeground
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeXs
-        }
-
-        ThemedTextField {
+        AssetSearchBar {
             id: search
-            width: parent.width - 24
-            x: 12
             placeholderText: qsTr("Search audio effects")
-            font.family: Theme.fontFamily
+
+            IconButton {
+                glyph: Theme.icons.download
+                variant: "ghost"
+                buttonSize: Theme.controlHeight
+                tooltip: qsTr("Install a custom audio effect or effect from a .driftfx file made in Drift Forge")
+                onClicked: ShellBridge.main.importUserPackage("")
+            }
         }
 
         Item {
             width: 1
-            height: Theme.spacingMd
+            height: Theme.spacingSm
         }
 
         AssetCategoryChips {
@@ -104,13 +103,15 @@ Column {
             width: parent.width
             categories: root.categories
             activeCategory: root.activeCategory
+            showMine: true
+            mineLabel: qsTr("My Audio Effects")
             searching: root.query.length > 0
             onCategoryActivated: (categoryId) => root.activeCategory = categoryId
         }
 
         Item {
             width: parent.width
-            height: Math.max(0, parent.height - browserTip.height - search.height - Theme.spacingMd
+            height: Math.max(0, parent.height - search.height - Theme.spacingSm
                              - categoryChips.height)
 
             Text {
@@ -119,15 +120,32 @@ Column {
                 y: 12
                 width: parent.width - 24
                 visible: root.visiblePresets.length === 0
+                         && !(root.activeCategory === root.mineId && root.query.length === 0)
                 text: root.query.length > 0
                       ? qsTr("No audio effects match “%1”.").arg(search.text.trim())
-                      : (root.activeCategory === root.favoritesId
+                      : (root.activeCategory === root.mineId
+                         ? qsTr("Nothing here yet. Import a .driftfx file to add your own.")
+                         : root.activeCategory === root.favoritesId
                          ? qsTr("No favorites yet. Star presets to save them here.")
                          : qsTr("Nothing in this category."))
-                color: Theme.mutedForeground
+                color: Theme.c.audioEffectBrowser.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeSm
                 wrapMode: Text.WordWrap
+            }
+
+            // Nothing imported yet: the Import call to action sits in the middle of the panel.
+            EmptyState {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - Theme.spacing3xl, 260)
+                visible: root.activeCategory === root.mineId && root.visiblePresets.length === 0
+                         && root.query.length === 0
+                compact: true
+                glyph: Theme.icons.download
+                title: qsTr("%1 is empty").arg(qsTr("My Audio Effects"))
+                hint: qsTr("Import a .driftfx file made in Drift Forge to add your own.")
+                actionText: qsTr("Import")
+                onActionTriggered: ShellBridge.main.importUserPackage("")
             }
 
             FontMetrics {
@@ -160,137 +178,9 @@ Column {
                 cellHeight: presetGrid.cardSize + 4 + Math.ceil(labelMetrics.height) * 2 + Theme.assetCardGap
                 model: root.visiblePresets
 
-                delegate: Column {
-                    id: presetCard
-                    required property var modelData
-                    width: presetGrid.cardSize
-                    spacing: 4
-                    opacity: presetDrag.active ? 0.85 : 1
-                    scale: presetDrag.active ? 1.04 : 1.0
-
-                    Behavior on opacity {
-                        NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                    }
-                    Behavior on scale {
-                        NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                    }
-
-                    readonly property string thumb: presetCard.modelData.thumbnailPath || ""
-                    readonly property string iconGlyph: presetCard.modelData.icon || "audio-lines"
-
-                    Drag.active: presetDrag.active
-                    Drag.dragType: Drag.Automatic
-                    Drag.supportedActions: Qt.CopyAction
-                    Drag.keys: ["application/x-drift-audio-effect"]
-                    Drag.mimeData: ({ "application/x-drift-audio-effect": presetCard.modelData.id })
-                    Drag.hotSpot.x: width / 2
-                    Drag.hotSpot.y: presetGrid.cardSize / 2
-
-                    Rectangle {
-                        width: presetGrid.cardSize
-                        height: presetGrid.cardSize
-                        radius: Theme.radiusSm
-                        color: cardHover.hovered ? Theme.panelAccent : Theme.panelBackground
-                        border.width: presetDrag.active ? 1 : 0
-                        border.color: Theme.primary
-                        clip: true
-                        scale: cardHover.hovered ? 1.03 : 1.0
-
-                        Behavior on color {
-                            ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                        }
-                        Behavior on scale {
-                            NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                        }
-                        Behavior on border.width {
-                            NumberAnimation { duration: Theme.durationFast; easing.type: Theme.easing }
-                        }
-
-                        HoverHandler { id: cardHover }
-
-                        Image {
-                            id: presetThumb
-                            anchors.fill: parent
-                            visible: presetCard.thumb.length > 0 && status === Image.Ready
-                            source: presetCard.thumb.length > 0
-                                    ? EditorState.imageUrl(presetCard.thumb) : ""
-                            fillMode: Image.PreserveAspectCrop
-                            asynchronous: true
-                            sourceSize: Qt.size(Math.ceil(presetGrid.cardSize * Screen.devicePixelRatio), Math.ceil(presetGrid.cardSize * Screen.devicePixelRatio))
-                            smooth: true
-                        }
-
-                        IconGlyph {
-                            anchors.centerIn: parent
-                            visible: presetCard.thumb.length === 0
-                                     || presetThumb.status === Image.Error
-                            glyph: presetCard.iconGlyph
-                            iconSize: 28
-                            iconColor: Theme.mutedForeground
-                        }
-
-                        TapHandler {
-                            // Touch taps arrive through TouchLiftArea below, which
-                            // holds the grab this one would need.
-                            enabled: !presetDrag.active && !Theme.touchUi
-                            onTapped: root.applyPreset(presetCard.modelData.id)
-                        }
-
-                        DragHandler {
-                            id: presetDrag
-                            target: null
-                            // Touch lifts through TouchDrag instead: a platform
-                            // drag has no touch gesture and cannot leave the sheet.
-                            enabled: !Theme.touchUi
-                            acceptedButtons: Qt.LeftButton
-                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
-                        }
-
-                        // Hold to carry the preset onto a specific clip; tap still
-                        // applies it to the selection.
-                        TouchLiftArea {
-                            dragKind: "audioEffect"
-                            payload: presetCard.modelData.id
-                            label: presetCard.modelData.label
-                            thumbnail: presetCard.thumb
-                            glyph: presetCard.iconGlyph
-                            onLiftTapped: root.applyPreset(presetCard.modelData.id)
-                        }
-
-                        AssetFavoriteButton {
-                            anchors.left: parent.left
-                            anchors.top: parent.top
-                            anchors.margins: 3
-                            tabId: "sounds"
-                            itemId: presetCard.modelData.id
-                        }
-
-                        IconButton {
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.margins: 3
-                            glyph: Theme.icons.plus
-                            variant: "ghost"
-                            buttonSize: 18
-                            iconSize: 12
-                            tooltip: qsTr("Apply to selected clip")
-                            enabled: EditorState.selectedClip >= 0
-                            onClicked: root.applyPreset(presetCard.modelData.id)
-                        }
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: presetCard.modelData.label
-                        color: Theme.panelForeground
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeCard
-                        font.weight: Font.Medium
-                        horizontalAlignment: Text.AlignHCenter
-                        elide: Text.ElideRight
-                        maximumLineCount: 2
-                        wrapMode: Text.WordWrap
-                    }
+                delegate: AudioEffectPresetCard {
+                    cardSize: presetGrid.cardSize
+                    onApplyRequested: (effectId) => root.applyPreset(effectId)
                 }
             }
         }

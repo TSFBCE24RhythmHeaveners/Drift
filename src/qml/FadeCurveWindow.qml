@@ -1,13 +1,11 @@
 import QtQuick
 import QtQuick.Window
-import Drift 1.0
-import "components"
-
+import Drift
 // Unit curve editor. X is always position through the effect; Y is what that position maps to.
 // Two modes share it: "fade" edits a clip's edge-fade gain (silent at the bottom, full at the
 // top) and "transition" edits a transition's progress curve. The geometry is identical, only the
 // session it drives differs, so the editor is parameterised rather than duplicated.
-Window {
+ToolWindow {
     id: root
 
     property int trackIndex: -1
@@ -30,27 +28,27 @@ Window {
     minimumWidth: 420
     minimumHeight: 340
     title: qsTr("Custom curve")
-    color: Theme.appBackground
+    color: Theme.c.fadeCurveWindow.background
 
     // Which session the editor is driving. Everything below goes through these four.
     function sessionPoints() {
-        return root.isTransition ? EditorState.transitionCurvePoints : EditorState.fadeCurvePoints
+        return root.isTransition ? EditorState.curves.transitionPoints : EditorState.curves.fadePoints
     }
 
     function sessionHandles() {
-        return root.isTransition ? EditorState.transitionCurveHandles : EditorState.fadeCurveHandles
+        return root.isTransition ? EditorState.curves.transitionHandles : EditorState.curves.fadeHandles
     }
 
     function sessionMode() {
-        return root.isTransition ? EditorState.transitionCurveMode : EditorState.fadeCurveMode
+        return root.isTransition ? EditorState.curves.transitionMode : EditorState.curves.fadeMode
     }
 
     function commitHandles(resync) {
         const h = root.handles
         if (root.isTransition)
-            EditorState.setTransitionCurveHandles(h[0], h[1], h[2], h[3])
+            EditorState.curves.setTransitionHandles(h[0], h[1], h[2], h[3])
         else
-            EditorState.setFadeCurveHandles(h[0], h[1], h[2], h[3])
+            EditorState.curves.setFadeHandles(h[0], h[1], h[2], h[3])
         if (resync !== false) {
             root.handles = root.sessionHandles()
             curveCanvas.requestPaint()
@@ -90,23 +88,23 @@ Window {
 
     function sessionPreset(preset) {
         if (root.isTransition)
-            EditorState.resetTransitionCurvePreset(preset)
+            EditorState.curves.resetTransitionPreset(preset)
         else
-            EditorState.resetFadeCurvePreset(preset)
+            EditorState.curves.resetFadePreset(preset)
     }
 
     function sessionApply() {
         if (root.isTransition)
-            EditorState.applyTransitionCurve()
+            EditorState.curves.applyTransition()
         else
-            EditorState.applyFadeCurve()
+            EditorState.curves.applyFade()
     }
 
     function sessionEnd() {
         if (root.isTransition)
-            EditorState.endTransitionCurveSession()
+            EditorState.curves.endTransition()
         else
-            EditorState.endFadeCurveSession()
+            EditorState.curves.endFade()
     }
 
     function applyPreset(preset) {
@@ -133,7 +131,7 @@ Window {
         root.trackIndex = track
         root.clipIndex = clip
         root.closingAfterApply = false
-        EditorState.beginFadeCurveSession(track, clip)
+        EditorState.curves.beginFade(track, clip)
         root.syncFromSession()
         root.ensureEditable()
         root.show()
@@ -148,7 +146,7 @@ Window {
         root.trackIndex = track
         root.clipIndex = -1
         root.closingAfterApply = false
-        EditorState.beginTransitionCurveSession(track, transitionId)
+        EditorState.curves.beginTransition(track, transitionId)
         root.syncFromSession()
         root.ensureEditable()
         root.show()
@@ -163,14 +161,14 @@ Window {
     }
 
     Connections {
-        target: EditorState
-        function onFadeCurveApplied() {
+        target: EditorState.curves
+        function onFadeApplied() {
             if (root.isTransition)
                 return
             root.closingAfterApply = true
             root.close()
         }
-        function onTransitionCurveApplied() {
+        function onTransitionApplied() {
             if (!root.isTransition)
                 return
             root.closingAfterApply = true
@@ -212,9 +210,9 @@ Window {
     // controller for the same values mid-drag.
     function commit(resync) {
         if (root.isTransition)
-            EditorState.setTransitionCurvePoints(root.points)
+            EditorState.curves.setTransitionPoints(root.points)
         else
-            EditorState.setFadeCurvePoints(root.points)
+            EditorState.curves.setFadePoints(root.points)
         if (resync !== false) {
             root.points = root.sessionPoints()
             curveCanvas.requestPaint()
@@ -272,13 +270,13 @@ Window {
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.isTransition
-                      ? (EditorState.transitionCurveName.length
-                         ? qsTr("Progress curve — %1").arg(EditorState.transitionCurveName)
+                      ? (EditorState.curves.transitionName.length
+                         ? qsTr("Progress curve — %1").arg(EditorState.curves.transitionName)
                          : qsTr("Progress curve"))
-                      : (EditorState.fadeCurveClipName.length
-                         ? qsTr("Fade shape — %1").arg(EditorState.fadeCurveClipName)
+                      : (EditorState.curves.fadeClipName.length
+                         ? qsTr("Fade shape — %1").arg(EditorState.curves.fadeClipName)
                          : qsTr("Fade shape"))
-                color: Theme.panelForeground
+                color: Theme.c.fadeCurveWindow.foreground
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeBase
                 font.weight: Font.Medium
@@ -302,12 +300,7 @@ Window {
                     onClicked: root.setShapeMode("bezier")
                 }
 
-                Rectangle {
-                    width: Theme.borderWidth
-                    height: 18
-                    color: Theme.panelBorder
-                    anchors.verticalCenter: parent.verticalCenter
-                }
+                FadeCurveToolbarRule { }
 
                 ThemedChip {
                     text: qsTr("Linear")
@@ -334,7 +327,7 @@ Window {
             text: root.isBezier
                   ? qsTr("Drag the two handles to shape the cubic. The ends stay pinned, and handles are held inside the box so the curve cannot fold back on itself.")
                   : qsTr("Drag the middle points to shape the ramp (ends stay silent→full). Double-click to add a point; Delete removes the selection.")
-            color: Theme.mutedForeground
+            color: Theme.c.fadeCurveWindow.foregroundMuted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs
             wrapMode: Text.WordWrap
@@ -354,115 +347,11 @@ Window {
             function tForX(x) { return (x - inset) / plotW }
             function gForY(y) { return 1.0 - (y - inset) / plotH }
 
-            Rectangle {
-                anchors.fill: parent
-                radius: Theme.radiusMd
-                color: Theme.panelAccent
-                border.width: Theme.borderWidth
-                border.color: Theme.panelBorder
-            }
+            FadeCurvePlotFrame { anchors.fill: parent }
 
-            Canvas {
-                id: curveCanvas
-                anchors.fill: parent
-                anchors.margins: plot.inset
-                onWidthChanged: requestPaint()
-                onHeightChanged: requestPaint()
-                onPaint: {
-                    const ctx = getContext("2d")
-                    ctx.reset()
-                    const w = width
-                    const h = height
-                    if (w < 2 || h < 2)
-                        return
-
-                    ctx.strokeStyle = String(Theme.panelBorder)
-                    ctx.lineWidth = 1
-                    ctx.globalAlpha = 0.45
-                    for (let i = 1; i < 4; ++i) {
-                        const y = h * i / 4
-                        ctx.beginPath()
-                        ctx.moveTo(0, y)
-                        ctx.lineTo(w, y)
-                        ctx.stroke()
-                        const x = w * i / 4
-                        ctx.beginPath()
-                        ctx.moveTo(x, 0)
-                        ctx.lineTo(x, h)
-                        ctx.stroke()
-                    }
-                    ctx.globalAlpha = 1
-
-                    if (root.isBezier) {
-                        const hd = root.handles
-                        const x1 = hd[0] * w, y1 = h * (1.0 - hd[1])
-                        const x2 = hd[2] * w, y2 = h * (1.0 - hd[3])
-
-                        const bfill = Theme.primary
-                        ctx.fillStyle = Qt.rgba(bfill.r, bfill.g, bfill.b, 0.18)
-                        ctx.beginPath()
-                        ctx.moveTo(0, h)
-                        ctx.lineTo(0, h)
-                        ctx.bezierCurveTo(x1, y1, x2, y2, w, 0)
-                        ctx.lineTo(w, h)
-                        ctx.closePath()
-                        ctx.fill()
-
-                        // Handle arms first, so the curve reads on top of them.
-                        ctx.strokeStyle = String(Theme.mutedForeground)
-                        ctx.lineWidth = 1
-                        ctx.beginPath()
-                        ctx.moveTo(0, h)
-                        ctx.lineTo(x1, y1)
-                        ctx.moveTo(w, 0)
-                        ctx.lineTo(x2, y2)
-                        ctx.stroke()
-
-                        ctx.strokeStyle = String(Theme.primary)
-                        ctx.lineWidth = 2
-                        ctx.beginPath()
-                        ctx.moveTo(0, h)
-                        ctx.bezierCurveTo(x1, y1, x2, y2, w, 0)
-                        ctx.stroke()
-                        return
-                    }
-
-                    const pts = root.points
-                    if (!pts || pts.length < 2)
-                        return
-
-                    const fill = Theme.primary
-                    ctx.fillStyle = Qt.rgba(fill.r, fill.g, fill.b, 0.18)
-                    ctx.beginPath()
-                    ctx.moveTo(0, h)
-                    for (let i = 0; i < pts.length; ++i)
-                        ctx.lineTo(pts[i].t * w, h * (1.0 - pts[i].g))
-                    ctx.lineTo(w, h)
-                    ctx.closePath()
-                    ctx.fill()
-
-                    ctx.strokeStyle = String(Theme.primary)
-                    ctx.lineWidth = 2
-                    ctx.beginPath()
-                    for (let i = 0; i < pts.length; ++i) {
-                        const x = pts[i].t * w
-                        const y = h * (1.0 - pts[i].g)
-                        if (i === 0)
-                            ctx.moveTo(x, y)
-                        else
-                            ctx.lineTo(x, y)
-                    }
-                    ctx.stroke()
-                }
-
-                Connections {
-                    target: root
-                    function onPointsChanged() { curveCanvas.requestPaint() }
-                    function onSelectedPointChanged() { curveCanvas.requestPaint() }
-                    function onHandlesChanged() { curveCanvas.requestPaint() }
-                    function onShapeModeChanged() { curveCanvas.requestPaint() }
-                    function onSelectedHandleChanged() { curveCanvas.requestPaint() }
-                }
+            FadeCurveCanvas {
+                host: root
+                inset: plot.inset
             }
 
             // Background click/double-click under the knobs. Knobs use z:4 so they win the grab.
@@ -494,11 +383,11 @@ Window {
 
                     width: 14
                     height: 14
-                    radius: 7
+                    radius: Theme.c.fadeCurveWindow.knobRadius
                     z: 4
-                    color: root.selectedPoint === index ? Theme.primary : Theme.panelBackground
-                    border.width: 2
-                    border.color: Theme.primary
+                    color: root.selectedPoint === index ? Theme.c.fadeCurveWindow.pointBackgroundSelected : Theme.c.fadeCurveWindow.pointBackground
+                    border.width: Theme.c.fadeCurveWindow.knobBorderWidth
+                    border.color: Theme.c.fadeCurveWindow.pointBorder
                     x: plot.xForT(point.t) - width / 2
                     y: plot.yForG(point.g) - height / 2
 
@@ -508,10 +397,12 @@ Window {
                     property real baseG: 0
 
                     TapHandler {
+                        margin: Theme.touchInput ? 9 : 0
                         onTapped: root.selectedPoint = knob.index
                     }
 
                     DragHandler {
+                        margin: Theme.touchInput ? 9 : 0
                         // Corner rails stay at (0,0) and (1,1); only interior knobs move.
                         enabled: !knob.isEnd
                         target: null
@@ -555,11 +446,11 @@ Window {
 
                     width: 14
                     height: 14
-                    radius: 7
+                    radius: Theme.c.fadeCurveWindow.knobRadius
                     z: 4
-                    color: root.selectedHandle === index ? Theme.primary : Theme.panelBackground
-                    border.width: 2
-                    border.color: Theme.primary
+                    color: root.selectedHandle === index ? Theme.c.fadeCurveWindow.handleBackgroundSelected : Theme.c.fadeCurveWindow.handleBackground
+                    border.width: Theme.c.fadeCurveWindow.knobBorderWidth
+                    border.color: Theme.c.fadeCurveWindow.handleBorder
                     x: plot.xForT(hx) - width / 2
                     y: plot.yForG(hy) - height / 2
 
@@ -567,10 +458,12 @@ Window {
                     property real baseY: 0
 
                     TapHandler {
+                        margin: Theme.touchInput ? 9 : 0
                         onTapped: root.selectedHandle = handleKnob.index
                     }
 
                     DragHandler {
+                        margin: Theme.touchInput ? 9 : 0
                         target: null
                         cursorShape: Qt.PointingHandCursor
                         onActiveChanged: {
@@ -607,9 +500,9 @@ Window {
                     required property int index
                     width: 9
                     height: 9
-                    radius: 4.5
+                    radius: Theme.c.fadeCurveWindow.anchorRadius
                     z: 3
-                    color: Theme.primary
+                    color: Theme.c.fadeCurveWindow.anchorBackground
                     x: plot.xForT(index === 0 ? 0.0 : 1.0) - width / 2
                     y: plot.yForG(index === 0 ? 0.0 : 1.0) - height / 2
                 }

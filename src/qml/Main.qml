@@ -2,10 +2,16 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Window
 import Drift
-import "components"
 
 ApplicationWindow {
     id: window
+    property alias editorHeader: workspace.editorHeader
+    // Null until a layout puts the panel in play; the pool creates panels on demand.
+    readonly property var assetsPanel: workspace.pool.assetsPanel
+    readonly property var previewPanel: workspace.pool.previewPanel
+    readonly property var propertiesPanel: workspace.pool.propertiesPanel
+    readonly property var timelinePanel: workspace.pool.timelinePanel
+    property alias androidMediaPreviewLoader: mediaPreviewHost.loader
 
     // Qt creates some chrome itself — most visibly the Undo/Cut/Copy/Paste menu on every
     // TextField and TextArea (Basic/TextField.qml declares ContextMenu.menu). Drift styles
@@ -14,26 +20,26 @@ ApplicationWindow {
     // rendered in that scheme's colours next to Drift's own. Palette propagates down the item
     // hierarchy, popups included, so setting the roles the Basic style reads brings Qt's own
     // chrome under Theme — and binding them keeps it following the light/dark toggle.
-    palette.window: Theme.panelBackground
-    palette.windowText: Theme.panelForeground
-    palette.base: Theme.panelAccent
-    palette.text: Theme.panelForeground
-    palette.button: Theme.panelAccent
-    palette.buttonText: Theme.panelForeground
-    palette.placeholderText: Theme.mutedForeground
+    palette.window: Theme.c.appWindow.paletteWindow
+    palette.windowText: Theme.c.appWindow.paletteWindowText
+    palette.base: Theme.c.appWindow.paletteBase
+    palette.text: Theme.c.appWindow.paletteText
+    palette.button: Theme.c.appWindow.paletteButton
+    palette.buttonText: Theme.c.appWindow.paletteButtonText
+    palette.placeholderText: Theme.c.appWindow.palettePlaceholder
     // Menu border and item states: dark draws the frame, light the hovered row,
     // midlight the pressed one.
-    palette.dark: Theme.panelBorder
-    palette.mid: Theme.panelMuted
-    palette.midlight: Theme.panelAccent
-    palette.light: Theme.popoverHover
+    palette.dark: Theme.c.appWindow.paletteDark
+    palette.mid: Theme.c.appWindow.paletteMid
+    palette.midlight: Theme.c.appWindow.paletteMidlight
+    palette.light: Theme.c.appWindow.paletteLight
     // Drawn at 12% and 50% alpha for the menu's drop shadow; appBackground would
     // make that a white glow in light mode.
-    palette.shadow: "#000000"
-    palette.highlight: Theme.primary
-    palette.highlightedText: Theme.primaryForeground
-    palette.toolTipBase: Theme.panelBackground
-    palette.toolTipText: Theme.panelForeground
+    palette.shadow: Theme.c.appWindow.paletteShadow
+    palette.highlight: Theme.c.appWindow.paletteHighlight
+    palette.highlightedText: Theme.c.appWindow.paletteHighlightedText
+    palette.toolTipBase: Theme.c.appWindow.paletteToolTipBase
+    palette.toolTipText: Theme.c.appWindow.paletteToolTipText
 
     width: 1280
     height: 800
@@ -51,20 +57,73 @@ ApplicationWindow {
     // "Conflicting properties 'visible' and 'visibility'" (Maximized + hidden).
     visibility: Window.Hidden
     title: "CutWire Drift"
-    color: Theme.appBackground
+    // Alpha stays 1 unless this process was started with a translucent surface.
+    // backgroundOpacity is read here so the binding follows theme reloads.
+    color: {
+        const opacity = ThemeManager.window.backgroundOpacity
+        const multiplier = (opacity === undefined || opacity === null) ? 1 : opacity
+        return WindowBackdrop.windowBackground(Theme.c.appWindow.background, multiplier)
+    }
 
     LayoutMirroring.enabled: Qt.application.layoutDirection === Qt.RightToLeft
     LayoutMirroring.childrenInherit: true
 
+    // This shell is reachable on Android (DeX, tablets with a mouse). Android defaults to touch
+    // metrics, which would also switch off mouse drag and tap on the asset tiles. A Binding
+    // rather than onCompleted, so it is in place before any child reads Theme.touchUi.
+    Binding {
+        target: Theme
+        property: "inputModeOverride"
+        value: PointerDevices.mousePresent ? "pointer" : "touch"
+        when: Qt.platform.os === "android"
+    }
+
+    AndroidLifecycle {
+        enabled: Qt.platform.os === "android"
+        denoiseWindow: denoiseWindowLoader.item
+    }
+
     // Set true after the unsaved prompt resolves so onClosing can finish quit.
     property bool forceClose: false
+
+    // How many Overlay-hosted dialogs/tool windows are open. Touch only: PointerHandlers on
+    // the editor hit-test their parent bounds, not z-order, so a finger on empty dialog chrome
+    // would still reach the timeline; this count drives a guard over the page.
+    property int overlayModalCount: 0
+
+    function pushOverlayModal() {
+        overlayModalCount++
+    }
+
+    function popOverlayModal() {
+        overlayModalCount = Math.max(0, overlayModalCount - 1)
+    }
+    property bool manualUpdateCheck: false
+
+    // On macOS, instantiate a native MenuBar via Qt.labs.platform.
+    // On other platforms (Windows, Linux, Android), no menu bar is created so the
+    // custom in-window header (EditorHeader) and window chrome are completely untouched.
+    Loader {
+        active: Theme.isMacOS
+        sourceComponent: Component {
+            MainMacMenuBar {
+                appWindow: window
+                header: editorHeader
+                assets: assetsPanel
+                downloadsLoader: downloadsWindowLoader
+            }
+        }
+    }
+
 
     onClosing: function (close) {
         // Before any of the branches below, so a quit that is cancelled at the
         // unsaved prompt still records where the window was.
-        window.persistLayout()
-        if (window.forceClose || !EditorState.hasUnsavedChanges)
+        window.persistWindowState()
+        if (window.forceClose || !EditorState.projectFile.hasUnsavedChanges) {
+            workspace.closeWindows()
             return
+        }
         close.accepted = false
         // Leave preview fullscreen so the save prompt isn't sitting on a blank
         // full-window preview.
@@ -73,7 +132,7 @@ ApplicationWindow {
         editorHeader.confirmIfDirty(function () {
             // Don't Save leaves dirty true; clear it so aboutToQuit does not
             // write a recovery the user just declined. Harmless after Save.
-            EditorState.discardUnsavedChanges()
+            EditorState.projectFile.discardUnsavedChanges()
             window.forceClose = true
             window.close()
         })
@@ -102,7 +161,7 @@ ApplicationWindow {
             // an ordinary window — it is only the three modes below that are not.
             const mode = window.visibility
             if (mode !== Window.Maximized && mode !== Window.FullScreen
-                    && mode !== Window.Minimized && !window.previewFullscreen)
+                    && mode !== Window.Minimized && !window.mainPreviewFullscreen)
                 window.windowedGeometry = Qt.rect(window.x, window.y, window.width, window.height)
             window.persistWindowState()
         }
@@ -116,9 +175,28 @@ ApplicationWindow {
         Theme.windowWidth = width
         geometrySettleTimer.restart()
     }
+
+    Binding {
+        target: Theme
+        property: "keyboardInset"
+        value: {
+            if (Qt.platform.os !== "android" && Qt.platform.os !== "ios")
+                return 0
+            const r = Qt.inputMethod.keyboardRectangle
+            return Qt.inputMethod.visible && r.height > 0 ? Math.max(0, window.height - r.y) : 0
+        }
+    }
     onHeightChanged: geometrySettleTimer.restart()
 
+    // System-bar and cutout insets. Desktop windows have none, so this stays 0 there.
+    function _safeMargin(side) {
+        return Qt.platform.os === "android" ? window.contentItem.SafeArea.margins[side] : 0
+    }
+
     function restoreWindowGeometry() {
+        // The platform sizes the window on Android; a stored desktop rect means nothing there.
+        if (Qt.platform.os === "android")
+            return
         const geometry = LayoutMemory.savedWindowGeometry(window.minimumWidth, window.minimumHeight)
         // Null rect: nothing stored, or the monitor it was stored on is gone. Either
         // way the window keeps the declared defaults above.
@@ -132,6 +210,10 @@ ApplicationWindow {
     }
 
     function showRestored() {
+        if (Qt.platform.os === "android") {
+            window.visibility = Window.Maximized
+            return
+        }
         // Assigning visibility shows the window too, so a session that was left
         // maximized never appears at its windowed size on the way there.
         window.visibility = LayoutMemory.savedWindowMaximized()
@@ -164,123 +246,94 @@ ApplicationWindow {
     // a teardown handler, and losing the layout to that is exactly the annoyance this
     // is here to remove.
     function persistWindowState() {
+        if (Qt.platform.os === "android")
+            return
         const maximized = window.restoreModeIsMaximized()
         if (maximized < 0)
             return
         LayoutMemory.saveWindowState(window.windowedGeometry, maximized === 1)
     }
 
-    function persistLayout() {
-        window.persistWindowState()
-        window.capturePanelFractions()
-        for (const key in window.panelFractions)
-            LayoutMemory.setPanelFraction(key, window.panelFractions[key])
-    }
-
-    // Panel sizes are kept as a fraction of the split they sit in rather than a pixel
-    // width, so a layout dragged out on a 4K display still reads on a laptop screen.
-    // Keyed by workspace, because portrait and landscape are different arrangements
-    // and each deserves to remember its own.
-    property var panelFractions: ({})
-    // Nothing is captured until the stored layout has been applied, or the defaults
-    // from the first layout pass would immediately overwrite it.
-    property bool panelLayoutRestored: false
-
-    Timer {
-        id: panelSettleTimer
-        interval: 250
-        onTriggered: {
-            window.capturePanelFractions()
-            for (const key in window.panelFractions)
-                LayoutMemory.setPanelFraction(key, window.panelFractions[key])
-        }
-    }
-
-    function schedulePanelCapture() {
-        if (!window.panelLayoutRestored || workspaceApplyTimer.running)
-            return
-        panelSettleTimer.restart()
-    }
-
-    function capturePanelFractions() {
-        // Fullscreen collapses every panel around the preview; those sizes are a mode,
-        // not a layout, and must not be written over the user's arrangement.
-        if (window.previewFullscreen)
-            return
-        const prefix = window.workspaceLayout + "/"
-        if (outerSplit.height > 0 && innerSplit.height > 0)
-            window.panelFractions[prefix + "editorRow"] = innerSplit.height / outerSplit.height
-        if (innerSplit.width > 0) {
-            window.panelFractions[prefix + "assets"] = assetsPanel.width / innerSplit.width
-            window.panelFractions[prefix + "properties"] = propertiesPanel.width / innerSplit.width
-        }
-        // Landscape hands the preview the slack in its row (fillWidth), so it has no
-        // width of its own to remember there.
-        if (window.portraitWorkspace && rootSplit.width > 0)
-            window.panelFractions[prefix + "preview"] = previewPanel.width / rootSplit.width
-    }
-
-    // Writing an attached SplitView size drops the default binding behind it — which
-    // is the point: from here on the panel keeps the size the user chose, exactly as
-    // it does after a handle drag.
-    function applySavedPanelSizes() {
-        const prefix = window.workspaceLayout + "/"
-        const editorRow = LayoutMemory.panelFraction(prefix + "editorRow", 0)
-        if (editorRow > 0 && outerSplit.height > 0)
-            innerSplit.SplitView.preferredHeight = outerSplit.height * editorRow
-        const assets = LayoutMemory.panelFraction(prefix + "assets", 0)
-        if (assets > 0 && innerSplit.width > 0)
-            assetsPanel.SplitView.preferredWidth = innerSplit.width * assets
-        const properties = LayoutMemory.panelFraction(prefix + "properties", 0)
-        if (properties > 0 && innerSplit.width > 0)
-            propertiesPanel.SplitView.preferredWidth = innerSplit.width * properties
-        if (window.portraitWorkspace) {
-            const preview = LayoutMemory.panelFraction(prefix + "preview", 0)
-            if (preview > 0 && rootSplit.width > 0)
-                previewPanel.SplitView.preferredWidth = rootSplit.width * preview
-        }
-    }
-
-    // Every extent is 0 on the first layout pass, and a fraction of 0 is 0 — so the
-    // restore waits for real sizes rather than running at Component.onCompleted.
-    function restorePanelSizesWhenReady() {
-        if (window.panelLayoutRestored)
-            return
-        if (rootSplit.width <= 0 || outerSplit.height <= 0 || innerSplit.width <= 0)
-            return
-        window.applySavedPanelSizes()
-        window.panelLayoutRestored = true
-    }
-
-    // A workspace flip moves the preview between splits, so the panels around it are
-    // still resizing on the frame the flip lands. Reapplying immediately would divide
-    // by stale extents; waiting lets the new arrangement settle first, and capture is
-    // suppressed until it has (schedulePanelCapture checks this timer).
-    Timer {
-        id: workspaceApplyTimer
-        interval: 100
-        onTriggered: window.applySavedPanelSizes()
-    }
-
     // Fullscreen preview: the window goes fullscreen *and* every panel around the
     // preview collapses, so the video actually fills the display. Toggling the
     // window alone just scaled the same three-pane layout up.
     property bool previewFullscreen: false
+    // The window that went fullscreen: the one holding the preview, which may be a secondary
+    // workspace window.
+    property var fullscreenWindow: null
+    readonly property bool mainPreviewFullscreen: previewFullscreen && fullscreenWindow === window
     // Restoring to Windowed unconditionally would silently un-maximize a window
     // that was maximized before going fullscreen.
     property int _preFullscreenVisibility: Window.Windowed
 
     function togglePreviewFullscreen() {
         if (previewFullscreen) {
+            const target = fullscreenWindow ?? window
             previewFullscreen = false
+            fullscreenWindow = null
             // KDE Plasma doesn't handle Fullscreen -> Maximized for some reason
-            visibility = _preFullscreenVisibility // Fullscreen -> Windowed
-            visibility = _preFullscreenVisibility // Windowed -> Maximized (if it was previously maximized)
+            target.visibility = _preFullscreenVisibility // Fullscreen -> Windowed
+            target.visibility = _preFullscreenVisibility // Windowed -> Maximized (if it was previously maximized)
         } else {
-            _preFullscreenVisibility = visibility
+            const target = previewPanel?.Window.window ?? window
+            _preFullscreenVisibility = target.visibility
+            fullscreenWindow = target
             previewFullscreen = true
-            visibility = Window.FullScreen
+            target.visibility = Window.FullScreen
         }
+    }
+
+    function restoreWindows() {
+        workspace.restoreWindows()
+    }
+
+    // Android's system Back, which is not Escape. Newest-on-top: a tool window is a full-screen
+    // surface over everything else, then dialogs, then fullscreen preview. Nothing to unwind does
+    // nothing: Back must not close the main window from here.
+    Shortcut {
+        sequences: [StandardKey.Back]
+        context: Qt.ApplicationShortcut
+        enabled: Qt.platform.os === "android"
+        onActivated: window.handleBack()
+    }
+
+    function handleBack() {
+        if (window.mediaPreviewPage) {
+            window.mediaPreviewPage.close()
+            return
+        }
+        const tools = [segmentationWindowLoader, denoiseWindowLoader, restoreWindowLoader,
+                       multicamWindowLoader, speedCurveWindowLoader, fadeCurveWindowLoader,
+                       downloadsWindowLoader]
+        for (var t = 0; t < tools.length; ++t) {
+            if (tools[t].shown) {
+                tools[t].item.close()
+                return
+            }
+        }
+        const modals = [shellSwitchDialogLoader.item, aboutDialogLoader.item, debugInfoDialogLoader.item,
+                        settingsDialogLoader.item, pasteAttributesDialogLoader.item, updateDialogLoader.item,
+                        addonManagerDialogLoader.item, missingAddonsDialogLoader.item, addonStartupDialog,
+                        projectSetupDialogLoader.item, layoutChooserDialogLoader.item,
+                        languageChooserDialogLoader.item, recoveryDialogLoader.item,
+                        reverseProgressDialogLoader.item, subtitleProgressDialogLoader.item]
+        for (var i = 0; i < modals.length; ++i) {
+            const m = modals[i]
+            if (!m || !m.visible)
+                continue
+            // close() skips accepted()/rejected(), so a dialog with no dismissal (recovery, the
+            // first-run choosers) would be left unanswered. Those two progress dialogs cancel their
+            // job on close; their own Cancel button stays the way out.
+            if (!(m.closePolicy & Popup.CloseOnEscape)
+                    || m === reverseProgressDialogLoader.item || m === subtitleProgressDialogLoader.item)
+                return
+            m.close()
+            return
+        }
+        if (editorHeader.closeTopDialog())
+            return
+        if (window.previewFullscreen)
+            window.togglePreviewFullscreen()
     }
 
     Shortcut {
@@ -289,25 +342,27 @@ ApplicationWindow {
         onActivated: window.togglePreviewFullscreen()
     }
 
-    // Which of the two panel arrangements the editor is in. The preference is
-    // stored as "not chosen" / portrait / landscape rather than a single bool, so
-    // the canvas can keep driving it until the user takes the decision away — the
-    // effective value is resolved here because it depends on both preference and
-    // canvas, which are separate notifiers on the C++ side.
-    readonly property string workspaceLayout: EditorState.workspaceLayoutOverridden
-                                              ? EditorState.workspaceLayoutPreferred
+    // The preference is stored as "not chosen" / portrait / landscape rather than a single
+    // bool, so the canvas can keep driving it until the user takes the decision away — the
+    // effective value is resolved here because it depends on both preference and canvas,
+    // which are separate notifiers on the C++ side.
+    readonly property string workspaceLayout: EditorState.preferences.workspaceLayoutOverridden
+                                              ? EditorState.preferences.workspaceLayoutPreferred
                                               : (EditorState.projectPortrait ? "portrait" : "landscape")
-    readonly property bool portraitWorkspace: workspaceLayout === "portrait"
 
-    onPortraitWorkspaceChanged: {
-        rootSplit.relocatePreview()
-        // The two workspaces remember their own proportions, so the flip pulls in the
-        // other one's — and any capture already in flight belongs to the old layout.
-        if (window.panelLayoutRestored) {
-            panelSettleTimer.stop()
-            workspaceApplyTimer.restart()
-        }
+    // The workspace actually on screen: the active one, or its portrait alternative when
+    // the layout preference (or the canvas, in auto) asks for portrait.
+    readonly property string effectiveWorkspaceId: {
+        Workspaces.workspaces
+        const active = Workspaces.activeId
+        const alternative = Workspaces.workspace(active).portraitAlternative
+        if (alternative && window.workspaceLayout === "portrait"
+                && Workspaces.workspace(alternative).id === alternative)
+            return alternative
+        return active
     }
+    readonly property bool portraitWorkspace: window.effectiveWorkspaceId !== Workspaces.activeId
+                                              || window.effectiveWorkspaceId === "edit-portrait"
 
     function configureAndAddAsset(assetIndex, runner) {
         if (!EditorState.shouldConfigureProjectForAsset(assetIndex)) {
@@ -325,15 +380,16 @@ ApplicationWindow {
     property bool layoutPromptDismissed: false
 
     // True only during the startup window where continueStartupAfterLanguage() has
-    // decided to ask which project to open, rather than settle on one itself.
-    // Cleared for good once that choice is made.
+    // decided to ask which project to open, rather than settle on one itself — and on
+    // first launch, behind the language chooser that runs before it. Cleared for good
+    // once that choice is made.
     property bool showStartScreen: false
 
     // Header Extras icon pulses while true; never auto-opens a dialog.
     readonly property alias addonAttentionNeeded: addonStartupDialog.needsAttention
 
     function promptLanguageChooserIfNeeded() {
-        if (!EditorState.needsUiLanguagePrompt)
+        if (!EditorState.preferences.needsUiLanguagePrompt)
             return false
         if (languageChooserDialogLoader.shown)
             return true
@@ -342,9 +398,9 @@ ApplicationWindow {
     }
 
     function promptLayoutChooserIfNeeded() {
-        if (EditorState.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
+        if (EditorState.preferences.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
             return
-        if (EditorState.recoveryAvailable || EditorState.projectLayoutChosen)
+        if (EditorState.projectFile.recoveryAvailable || EditorState.projectLayoutChosen)
             return
         if (window.layoutPromptDismissed)
             return
@@ -365,6 +421,13 @@ ApplicationWindow {
     // Settings / header: reopen platform layout picker anytime.
     function openLayoutChooser() {
         layoutChooserDialogLoader.ensure().openFromSettings()
+    }
+
+    LazyLoader {
+        id: imageSequenceDialogLoader
+        sourceComponent: Component {
+            ImageSequenceDialog { }
+        }
     }
 
     LazyLoader {
@@ -396,11 +459,16 @@ ApplicationWindow {
         }
     }
 
+    ProjectLoadDialog { }
+
     LazyLoader {
         id: recoveryDialogLoader
         sourceComponent: Component {
             RecoveryDialog {
-                onClosed: Qt.callLater(window.promptLayoutChooserIfNeeded)
+                onClosed: {
+                    Qt.callLater(window.promptLayoutChooserIfNeeded)
+                    window.openPendingLaunch()
+                }
             }
         }
     }
@@ -437,6 +505,42 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: Updates
+        function onInstallReady() {
+            window.openUpdateDialog()
+        }
+        function onDownloadStarted() {
+            downloadsWindowLoader.ensure().show()
+        }
+        function onQuitRequested() {
+            window.close()
+        }
+        function onActivityChanged() {
+            if (!Updates.checking && window.manualUpdateCheck) {
+                window.manualUpdateCheck = false
+                if (Updates.updateAvailable) {
+                    window.openUpdateDialog()
+                } else if (Updates.status.length > 0) {
+                    if (Updates.status.indexOf(Updates.currentVersion) !== -1) {
+                        Toasts.success(Updates.status)
+                    } else {
+                        Toasts.info(Updates.status)
+                    }
+                } else {
+                    Toasts.success(qsTr("Drift %1 is the latest version.").arg(Updates.currentVersion))
+                }
+            }
+        }
+    }
+
+    LazyLoader {
+        id: aboutDialogLoader
+        sourceComponent: Component {
+            AboutDialog { }
+        }
+    }
+
     LazyLoader {
         id: updateDialogLoader
         sourceComponent: Component {
@@ -461,6 +565,13 @@ ApplicationWindow {
     }
 
     LazyLoader {
+        id: shellSwitchDialogLoader
+        sourceComponent: Component {
+            ShellSwitchDialog { }
+        }
+    }
+
+    LazyLoader {
         id: pasteAttributesDialogLoader
         sourceComponent: Component {
             PasteAttributesDialog { }
@@ -475,10 +586,22 @@ ApplicationWindow {
     }
 
     Connections {
-        target: EditorState
-        function onOpenSegmentationWindowRequested(track, clip, startSeconds, durationSeconds) {
+        target: workspace.pool
+        function onSourceLabShownChanged() {
+            if (!workspace.pool.sourceLabShown)
+                EditorState.sourceLab.clear()
+        }
+    }
+
+    Connections {
+        target: EditorState.segmentation
+        function onOpenWindowRequested(track, clip, startSeconds, durationSeconds) {
             segmentationWindowLoader.ensure().openFor(track, clip, startSeconds, durationSeconds, true)
         }
+    }
+
+    Connections {
+        target: EditorState
         function onOpenPasteAttributesRequested() {
             window.openPasteAttributes()
         }
@@ -534,6 +657,13 @@ ApplicationWindow {
     }
 
     LazyLoader {
+        id: restoreWindowLoader
+        sourceComponent: Component {
+            RestoreWindow { }
+        }
+    }
+
+    LazyLoader {
         id: speedCurveWindowLoader
         sourceComponent: Component {
             SpeedCurveWindow { }
@@ -546,6 +676,8 @@ ApplicationWindow {
             FadeCurveWindow { }
         }
     }
+
+    property var mediaPreviewPage: null
 
     LazyLoader {
         id: mediaPreviewWindowLoader
@@ -560,7 +692,31 @@ ApplicationWindow {
     }
 
     function openDenoise(track, clip, durationSeconds) {
+        if (workspace.pool.denoiseInLayout && !denoiseWindowLoader.shown) {
+            workspace.pool.panel("denoise").parent?.parent?.activate?.("denoise")
+            const panel = workspace.pool.denoisePanel
+            if (panel) {
+                panel.openFor(track, clip, durationSeconds)
+                return
+            }
+        }
         denoiseWindowLoader.ensure().openFor(track, clip, durationSeconds)
+    }
+
+    function openRestore(track, clip) {
+        const w = restoreWindowLoader.ensure()
+        w.host = window
+        w.openFor(track, clip)
+    }
+
+    function openRestoreAsset(assetId) {
+        if (workspace.pool.sourceLabShown) {
+            EditorState.sourceLab.load(assetId)
+            return
+        }
+        const w = restoreWindowLoader.ensure()
+        w.host = window
+        w.openForAsset(assetId)
     }
 
     function openSpeedCurve(track, clip) {
@@ -575,11 +731,46 @@ ApplicationWindow {
         fadeCurveWindowLoader.ensure().openForTransition(track, transitionId)
     }
 
+    readonly property bool mediaPreviewWindowOpen: mediaPreviewWindowLoader.shown
+
     function openMediaPreview(assetIndex) {
+        if (workspace.pool.sourceLabShown) {
+            EditorState.sourceLab.load(AssetLibrary.assetIdAt(assetIndex))
+            return
+        }
+        // A VideoOutput in a secondary window paints black on Android, so use the in-window page.
+        if (Qt.platform.os === "android") {
+            if (window.mediaPreviewPage)
+                return
+            androidMediaPreviewLoader.active = true
+            window.mediaPreviewPage = androidMediaPreviewLoader.item
+            window.mediaPreviewPage.openFor(assetIndex)
+            return
+        }
+        const viewer = workspace.pool.sourceViewerShown ? workspace.pool.sourceViewerPanel : null
+        if (viewer && !mediaPreviewWindowLoader.shown) {
+            viewer.openAsset(assetIndex)
+            return
+        }
         mediaPreviewWindowLoader.ensure().openFor(assetIndex)
     }
 
-    function openSourceFrame(track, clip) {
+    function openCrop(track, clip) {
+        if (workspace.pool.sourceLabShown) {
+            EditorState.sourceLab.load(EditorState.clipAt(track, clip).assetId ?? "")
+            return
+        }
+        // Same reason as openMediaPreview: the secondary window paints black on Android.
+        if (Qt.platform.os === "android") {
+            if (window.mediaPreviewPage)
+                return
+            androidMediaPreviewLoader.active = true
+            window.mediaPreviewPage = androidMediaPreviewLoader.item
+            window.mediaPreviewPage.openClip(track, clip)
+            return
+        }
+        if (workspace.pool.sourceViewerShown)
+            workspace.pool.sourceViewerPanel?.release()
         mediaPreviewWindowLoader.ensure().openClip(track, clip)
     }
 
@@ -591,8 +782,37 @@ ApplicationWindow {
 
     // Opened from the header's Settings menu. Every preference lives here now; the
     // assets rail no longer carries a settings tab.
-    function openSettings() {
-        settingsDialogLoader.ensure().open()
+    function openAgentAccess() {
+        editorHeader.openAgentAccess()
+    }
+
+    function openSettings(pageId) {
+        const dialog = settingsDialogLoader.ensure()
+        if (pageId)
+            dialog.openPage(pageId)
+        else
+            dialog.open()
+    }
+
+    function switchShell(target) {
+        shellSwitchDialogLoader.ensure().openFor(target, false)
+    }
+
+    // Shell.qml only builds a shell at startup, so applying a layout change is a relaunch.
+    // Android has no quit to hang it on (aboutToQuit never runs), so the recovery snapshot
+    // carries unsaved work across instead of the prompt.
+    function restartToApplyShell() {
+        if (Qt.platform.os === "android") {
+            EditorState.projectFile.flushRecoverySnapshot()
+            EditorState.preferences.restartApp()
+            return
+        }
+        editorHeader.confirmIfDirty(function () {
+            EditorState.projectFile.discardUnsavedChanges()
+            EditorState.preferences.restartApp()
+            window.forceClose = true
+            window.close()
+        })
     }
 
     // ── Project lifecycle: New / Open / Open recent / Close ─────────────────────
@@ -613,7 +833,7 @@ ApplicationWindow {
     // on top of a *newer* one, but nothing invalidates one that is discarded by New/Close.
     // Simplest correct fix: only one project action in flight at a time.
     function rejectIfProjectOpenPending() {
-        if (!EditorState.projectLoadPending)
+        if (!EditorState.projectFile.projectLoadPending)
             return false
         Toasts.info(qsTr("Still opening a project — try again in a moment."))
         return true
@@ -623,7 +843,7 @@ ApplicationWindow {
         if (window.rejectIfProjectOpenPending())
             return
         editorHeader.confirmIfDirty(function () {
-            EditorState.newProject()
+            EditorState.projectFile.newProject()
             window.showStartScreen = false
             window.promptLayoutChooserIfNeeded()
         })
@@ -637,7 +857,7 @@ ApplicationWindow {
                                            editorHeader.projectMimeTypes)
             if (url == "")
                 return
-            EditorState.loadProject(url)
+            EditorState.projectFile.loadProject(url)
         })
     }
 
@@ -647,7 +867,7 @@ ApplicationWindow {
         if (!path || path.length === 0)
             return
         editorHeader.confirmIfDirty(function () {
-            EditorState.openRecentProject(path)
+            EditorState.projectFile.openRecentProject(path)
         })
     }
 
@@ -666,7 +886,7 @@ ApplicationWindow {
             // silent: newProject()'s own "New project" toast is right for the header's
             // New Project action, wrong here — setting lastMessage again afterwards
             // would not replace it, since every change queues its own toast.
-            EditorState.newProject(true)
+            EditorState.projectFile.newProject(true)
             EditorState.setLastMessage(qsTr("Project closed"))
         })
     }
@@ -679,6 +899,12 @@ ApplicationWindow {
             addonManagerDialogLoader.ensure().openForKind(kind)
     }
 
+    // A .driftfx from Drift Forge; an empty url asks with a file dialog. Shared with the effects
+    // panel's Import button.
+    function importUserPackage(url) {
+        addonManagerDialogLoader.ensure().importUserPackage(url)
+    }
+
     // Header Extras button: open the essential/update nudge when the icon is pulsing,
     // otherwise the full manager — same idea as the update badge vs silent check.
     function openExtras() {
@@ -688,7 +914,28 @@ ApplicationWindow {
     }
 
     // Opened from the header badge, which only exists while there is something to show.
+    function openAboutDialog() {
+        aboutDialogLoader.ensure().open()
+    }
+
+    function checkForUpdates() {
+        if (Updates.updateAvailable) {
+            openUpdateDialog()
+            return
+        }
+        if (Updates.checking) {
+            Toasts.info(qsTr("Already checking for updates…"))
+            return
+        }
+        window.manualUpdateCheck = true
+        Toasts.info(qsTr("Checking for updates…"))
+        Updates.checkNow()
+    }
+
     function openUpdateDialog() {
+        // Android updates come from the store; the dialog installs a desktop package.
+        if (Qt.platform.os === "android")
+            return
         updateDialogLoader.ensure().open()
     }
 
@@ -696,17 +943,32 @@ ApplicationWindow {
         debugInfoDialogLoader.ensure().open()
     }
 
+    // Global search opens assets tabs and labels them; the panel itself is out of the header's reach.
+    function showAssetsTab(tabId) {
+        if (window.previewFullscreen)
+            window.togglePreviewFullscreen()
+        workspace.pool.showAssetsTab(tabId)
+    }
+
+    function assetsTabLabel(tabId) {
+        return assetsPanel?.tabLabel(tabId) ?? ""
+    }
+
+    function focusEditor() {
+        editorScope.forceActiveFocus()
+    }
+
     function openPasteAttributes() {
         pasteAttributesDialogLoader.ensure().openDialog()
     }
 
     function promptRecoveryIfNeeded() {
-        if (EditorState.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
+        if (EditorState.preferences.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
             return
-        if (!EditorState.recoveryAvailable || recoveryDialogLoader.shown)
+        if (!EditorState.projectFile.recoveryAvailable || recoveryDialogLoader.shown)
             return
         // Opt-in reopen handles recovery (and last .drift) without asking.
-        if (EditorState.reopenLastProject)
+        if (EditorState.preferences.reopenLastProject)
             return
         recoveryDialogLoader.ensure().open()
     }
@@ -720,7 +982,7 @@ ApplicationWindow {
         triggeredOnStart: false
         property int attempts: 0
         onTriggered: {
-            if (!EditorState.recoveryAvailable) {
+            if (!EditorState.projectFile.recoveryAvailable) {
                 stop()
                 attempts = 0
                 Qt.callLater(window.promptLayoutChooserIfNeeded)
@@ -739,42 +1001,124 @@ ApplicationWindow {
         onTriggered: window.promptLayoutChooserIfNeeded()
     }
 
+    Component.onDestruction: if (ShellBridge.main === window) ShellBridge.main = null
+
     Component.onCompleted: {
+        WindowBackdrop.attach(window)
+        ShellBridge.main = window
         Theme.windowWidth = window.width
+        MediaImport.sequencePrompt = function (found, done) {
+            imageSequenceDialogLoader.ensure().ask(found, done)
+        }
         window.restoreWindowGeometry()
         window.beginStartupProject()
         // Independent of the project-restore sequence above — it neither gates nor is
         // gated by it, so ordering here doesn't matter.
-        EditorState.applyMcpStartOnLaunch()
+        EditorState.mcp.applyStartOnLaunch()
         // Last: the window is placed by now, and the startup flow keeps the ordering
         // it had when the window was shown at the end of completion.
         window.showRestored()
     }
 
     function beginStartupProject() {
+        // First launch: the language chooser runs before anything decides which project to
+        // open, and the empty editor behind it is a project nobody asked for. Raise the start
+        // screen first, so the chooser sits on the page the rest of first launch lands on;
+        // continueStartupAfterLanguage() lowers it again for the paths that open a project.
+        if (EditorState.preferences.needsUiLanguagePrompt)
+            window.showStartScreen = true
         if (window.promptLanguageChooserIfNeeded())
             return
         window.continueStartupAfterLanguage()
     }
 
+    // A launch or share intent from Android. Returns true when it took over startup, so the
+    // reopen-last-project and recovery paths stand down.
+    function routeAndroidIntent(intent) {
+        if (!intent || !intent.kind)
+            return false
+        const urls = intent.urls || []
+        if (intent.kind === "view") {
+            const url = urls.length > 0 ? String(urls[0]) : ""
+            if (url === "" || Market.handleIncomingUrl(url))
+                return url !== ""
+            if (Addons.isUserPackage(url)) {
+                window.importUserPackage(url)
+                return false
+            }
+            // Loading deletes the recovery snapshot unasked, so let that prompt run first.
+            if (EditorState.projectFile.recoveryAvailable && !EditorState.preferences.reopenLastProject) {
+                window._pendingLaunchUrl = url
+                recoveryOpenTimer.start()
+                return true
+            }
+            window.openLaunchedProject(url)
+            return true
+        }
+        if (intent.kind === "sendMedia") {
+            if (urls.length > 0)
+                MediaImport.importUrls(urls, false)
+            return false
+        }
+        if (intent.kind === "sendText")
+            Toasts.info(qsTr("Links can’t be opened in this layout."))
+        return false
+    }
+
+    property string _pendingLaunchUrl: ""
+
+    function openLaunchedProject(url) {
+        if (window.rejectIfProjectOpenPending())
+            return
+        window.showStartScreen = false
+        editorHeader.confirmIfDirty(function () {
+            EditorState.projectFile.loadProject(url)
+        })
+    }
+
+    function openPendingLaunch() {
+        if (window._pendingLaunchUrl === "")
+            return
+        // A recovery restore is still landing; onProjectLoadFinished comes back here so the
+        // unsaved prompt sees the recovered work.
+        if (EditorState.projectFile.projectLoadPending)
+            return
+        const url = window._pendingLaunchUrl
+        window._pendingLaunchUrl = ""
+        window.openLaunchedProject(url)
+    }
+
     function continueStartupAfterLanguage() {
+        if (Qt.platform.os === "android" && window.routeAndroidIntent(FileDialogs.takeLaunchIntent()))
+            return
         // A document the shell asked us to open (argv / QFileOpenEvent) wins over last-session
         // reopen and the recovery prompt.
-        if (EditorState.consumeStartupProject())
+        if (EditorState.projectFile.consumeStartupProject())
             return
+        // An agent's instance (launch_instance) starts on the empty timeline it asked for:
+        // no last-session restore, no recovery or layout prompt, no start screen.
+        if (EditorState.projectFile.isolatedSession) {
+            window.showStartScreen = false
+            return
+        }
         // Opt-in: restore unsaved recovery or the last clean project silently.
-        if (EditorState.restoreLastSessionIfEnabled())
+        if (EditorState.projectFile.restoreLastSessionIfEnabled())
             return
-        if (EditorState.recoveryAvailable) {
+        if (EditorState.projectFile.recoveryAvailable) {
             recoveryOpenTimer.start()
             return
         }
         // Reopen is off (or the last project could not be restored): rather than land in a
         // fresh empty project, ask which project to work on.
-        if (!EditorState.reopenLastProject) {
+        if (!EditorState.preferences.reopenLastProject) {
             window.showStartScreen = true
             return
         }
+        // Reopen is on but there was nothing to reopen: a fresh project, set up through the
+        // layout chooser — which defers to the start screen, so drop the one raised for the
+        // language chooser first. (The paths above that open a document drop it themselves,
+        // in onProjectLoadFinished, once the document is in.)
+        window.showStartScreen = false
         layoutChooserOpenTimer.start()
     }
 
@@ -782,8 +1126,21 @@ ApplicationWindow {
         // Maximizing does not have to change the window size (a window already filling
         // the work area does not), so the geometry sampler alone can miss the switch.
         window.persistWindowState()
-        if (visible && EditorState.recoveryAvailable && !EditorState.reopenLastProject)
+        if (visible && EditorState.projectFile.recoveryAvailable && !EditorState.preferences.reopenLastProject)
             recoveryOpenTimer.start()
+    }
+
+    // Warm start: a project tapped or media shared while Drift was already running.
+    Connections {
+        target: FileDialogs
+        enabled: Qt.platform.os === "android"
+        function onLaunchUrlReceived(url) {
+            window.routeAndroidIntent({ kind: "view", urls: [url] })
+        }
+        function onIncomingIntent(intent) {
+            if (intent && intent.kind !== "view")
+                window.routeAndroidIntent(intent)
+        }
     }
 
     Connections {
@@ -792,19 +1149,8 @@ ApplicationWindow {
             if (window.rejectIfProjectOpenPending())
                 return
             editorHeader.confirmIfDirty(function () {
-                EditorState.loadProject(url)
+                EditorState.projectFile.loadProject(url)
             })
-        }
-        function onRecoveryChanged() {
-            if (EditorState.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
-                return
-            if (EditorState.reopenLastProject)
-                return
-            if (EditorState.recoveryAvailable) {
-                recoveryOpenTimer.start()
-            } else {
-                Qt.callLater(window.promptLayoutChooserIfNeeded)
-            }
         }
 
         // Each of these edits one clip of the project that was just discarded, so there is
@@ -829,17 +1175,6 @@ ApplicationWindow {
             multicamWindowLoader.ensure().openSession()
         }
 
-        // Terminal result of a loadProject()/loadProjectJson() call, from any source —
-        // unlike lastMessageChanged, this does not also fire for the "Unpacking project
-        // media…" progress message a bundle with embedded media raises first, so it's
-        // safe to treat as "the open is done" rather than mistaking progress for success.
-        // rejectIfProjectOpenPending() keeps at most one load in flight at a time, so
-        // whichever request this is, it's the one the start screen (if up) is waiting on.
-        function onProjectLoadFinished(ok) {
-            if (ok)
-                window.showStartScreen = false
-        }
-
         function onProjectLayoutChosenChanged() {
             if (!EditorState.projectLayoutChosen) {
                 // New Project reasserts this even when already false, so the layout
@@ -853,28 +1188,11 @@ ApplicationWindow {
         // --- Error and status surfacing -------------------------------------
         // These signals previously had no handler anywhere in QML, so a failed
         // export or transcription was reported only to the console.
+        // Failures and cancellation surface through lastMessage, which carries the
+        // actual reason; a generic toast here used to blame disk space for everything.
         function onExportFinished(success) {
-            if (success) {
+            if (success)
                 Toasts.success(qsTr("Export finished."))
-                return
-            }
-            // Exporter reports cancellation as a failed run with this message —
-            // surface it as a neutral note, not a disk/location error.
-            if (EditorState.lastMessage === "Export cancelled")
-                Toasts.info(qsTr("Export cancelled."))
-            else
-                Toasts.error(qsTr("Export failed. Check the save location and free space on your disk."))
-        }
-
-        function onMissingAddons(addons) {
-            missingAddonsDialogLoader.ensure().openFor(addons)
-        }
-
-        function onPackageFinished(ok, message) {
-            if (ok)
-                Toasts.success(message)
-            else
-                Toasts.error(qsTr("Couldn't create the shareable copy: %1").arg(message))
         }
 
         function onSubtitleGenerationFinished(ok, message) {
@@ -910,6 +1228,54 @@ ApplicationWindow {
         // the timeline was silent.
         function onTransformBlocked(reason) {
             Toasts.warning(reason)
+        }
+    }
+
+    Connections {
+        target: EditorState.projectFile
+
+        function onRecoveryChanged() {
+            if (EditorState.preferences.needsUiLanguagePrompt || languageChooserDialogLoader.shown)
+                return
+            if (EditorState.preferences.reopenLastProject)
+                return
+            if (EditorState.projectFile.recoveryAvailable) {
+                recoveryOpenTimer.start()
+            } else {
+                Qt.callLater(window.promptLayoutChooserIfNeeded)
+            }
+        }
+
+        // Terminal result of a loadProject()/loadProjectJson() call, from any source —
+        // unlike lastMessageChanged, this does not also fire for the "Unpacking project
+        // media…" progress message a bundle with embedded media raises first, so it's
+        // safe to treat as "the open is done" rather than mistaking progress for success.
+        // rejectIfProjectOpenPending() keeps at most one load in flight at a time, so
+        // whichever request this is, it's the one the start screen (if up) is waiting on.
+        function onProjectLoadFinished(ok) {
+            if (ok)
+                window.showStartScreen = false
+            window.openPendingLaunch()
+        }
+
+        // An agent's close_project (true) / new_project or load_project (false). The agent already discarded
+        // the document without asking, so there is no unsaved prompt here — only the screen
+        // change and the same "Project closed" note requestCloseProject() posts.
+        function onStartScreenRequested(visible) {
+            window.showStartScreen = visible
+            if (visible)
+                EditorState.setLastMessage(qsTr("Project closed"))
+        }
+
+        function onMissingAddons(addons) {
+            missingAddonsDialogLoader.ensure().openFor(addons)
+        }
+
+        function onPackageFinished(ok, message) {
+            if (ok)
+                Toasts.success(message)
+            else
+                Toasts.error(qsTr("Couldn't create the shareable copy: %1").arg(message))
         }
     }
 
@@ -966,12 +1332,32 @@ ApplicationWindow {
     // Escape (clearSelection): CapCut-style — if a timeline cut tool is active,
     // first press returns to Select; only then does Escape clear the selection.
     function dispatchAction(id) {
-        if (id === "clearSelection" && EditorState.guideEditSetId !== "") {
-            EditorState.guideEditSetId = ""
+        if (ShellBridge.keyframesActionHandler && ShellBridge.keyframesActionHandler.handleAction(id))
+            return
+        if (ShellBridge.maskingActionHandler && ShellBridge.maskingActionHandler.handleAction(id))
+            return
+        if (ShellBridge.trackingActionHandler && ShellBridge.trackingActionHandler.handleAction(id))
+            return
+        if (ShellBridge.subtitleActionHandler && ShellBridge.subtitleActionHandler.handleAction(id))
+            return
+        if (ShellBridge.sourceLabActionHandler && ShellBridge.sourceLabActionHandler.handleAction(id))
+            return
+        if (ShellBridge.sourceLabRangesHandler && ShellBridge.sourceLabRangesHandler.handleAction(id))
+            return
+        if (id === "workspace.restoreWindows") {
+            window.restoreWindows()
+            return
+        }
+        if (id === "clearSelection" && previewFullscreen && fullscreenWindow !== window) {
+            window.togglePreviewFullscreen()
+            return
+        }
+        if (id === "clearSelection" && EditorState.preview.guideEditSetId !== "") {
+            EditorState.preview.guideEditSetId = ""
             return
         }
         if (id === "clearSelection"
-                && timelinePanel.visible
+                && timelinePanel?.visible
                 && timelinePanel.timelineTool !== "") {
             timelinePanel.timelineTool = ""
             return
@@ -979,24 +1365,45 @@ ApplicationWindow {
         // Tool modes are QML state, so they are dispatched here rather
         // than by triggerAction.
         if (id === "selectTool") {
-            timelinePanel.timelineTool = ""
+            if (timelinePanel)
+                timelinePanel.timelineTool = ""
             return
         }
         if (id === "bladeTool") {
-            timelinePanel.timelineTool = "split"
+            if (timelinePanel)
+                timelinePanel.timelineTool = "split"
             return
         }
         // Timeline zoom is QML state as well, and the 1.5 step matches the
         // toolbar buttons. setZoom clamps to minZoom/maxZoom and re-anchors on
         // the playhead, so holding the key walks to the end of the range and stops.
         if (id === "zoomIn") {
-            if (timelinePanel.visible)
+            if (timelinePanel?.visible)
                 timelinePanel.setZoom(timelinePanel.zoom * 1.5)
             return
         }
         if (id === "zoomOut") {
-            if (timelinePanel.visible)
+            if (timelinePanel?.visible)
                 timelinePanel.setZoom(timelinePanel.zoom / 1.5)
+            return
+        }
+        if (id === "search") {
+            if (editorHeader.visible)
+                editorHeader.focusSearch()
+            return
+        }
+        if (id === "workspace.next" || id === "workspace.prev") {
+            const list = Workspaces.workspaces
+            const step = id === "workspace.next" ? 1 : -1
+            const index = list.findIndex(w => w.id === Workspaces.activeId)
+            if (list.length > 0)
+                Workspaces.activeId = list[(index + step + list.length) % list.length].id
+            return
+        }
+        if (/^workspace\.[1-9]$/.test(id)) {
+            const ws = Workspaces.workspaces[Number(id.slice(10)) - 1]
+            if (ws)
+                Workspaces.activeId = ws.id
             return
         }
         EditorState.triggerAction(id)
@@ -1033,17 +1440,13 @@ ApplicationWindow {
 
     // There is no menu bar and no help overlay, so the only route to the shortcut
     // list was an unlabelled icon in a vertical rail that can itself be scrolled out
-    // of view on a short window. F1 is the conventional way in and reuses the tab
-    // that already exists.
+    // of view on a short window. F1 is the conventional way in and opens the
+    // keyboard shortcuts page of Settings.
     Shortcut {
         sequence: "F1"
         context: Qt.ApplicationShortcut
         enabled: !window.showStartScreen
-        onActivated: {
-            if (window.previewFullscreen)
-                window.togglePreviewFullscreen()
-            assetsPanel.showTab("shortcuts")
-        }
+        onActivated: window.openSettings("keymap")
     }
 
     // Arrow-key actions (frame step, 1s/10s jump, Alt-nudge, Alt cut-point)
@@ -1055,6 +1458,10 @@ ApplicationWindow {
     FocusScope {
         id: editorScope
         anchors.fill: parent
+        anchors.leftMargin: window._safeMargin("left")
+        anchors.topMargin: window._safeMargin("top")
+        anchors.rightMargin: window._safeMargin("right")
+        anchors.bottomMargin: window._safeMargin("bottom")
         enabled: !window.showStartScreen
         focus: true
         Keys.onPressed: function(event) {
@@ -1065,201 +1472,10 @@ ApplicationWindow {
             event.accepted = true
         }
 
-    Column {
-        anchors.fill: parent
-        spacing: 0
-        // The start screen sits on top of this document rather than replacing it (see
-        // the StartScreen instance below), so without this the editor underneath was
-        // still fully live — clickable through any gap and, worse, still reachable by
-        // keyboard even though nothing of it is visible. Disabling blocks mouse input
-        // and keyboard focus for the whole subtree, not just the pointer.
-        enabled: !window.showStartScreen
-
-        EditorHeader {
-            id: editorHeader
-            width: parent.width
-            visible: !window.previewFullscreen
+        EditorWorkspace {
+            id: workspace
             onDownloadsRequested: downloadsWindowLoader.ensure().show()
         }
-
-        Item {
-            width: parent.width
-            // Clamped so the editor body never takes a negative height while the
-            // window is being resized toward its minimum.
-            height: Math.max(0, parent.height
-                                - (window.previewFullscreen ? 0 : Theme.headerHeight))
-
-            // Two workspaces (issue #46). Landscape is the classic three-pane row
-            // above the timeline. Portrait lifts the preview out into a full-height
-            // column on the right, so a 9:16 frame is bounded by the window height
-            // instead of by the height of the top row — where it renders
-            // postage-stamp small. Only the preview moves between the two; assets,
-            // properties and the timeline keep their slots either way.
-            SplitView {
-                id: rootSplit
-                anchors.fill: parent
-                // Edge-to-edge in fullscreen; the usual page padding otherwise.
-                anchors.margins: window.previewFullscreen ? 0 : Theme.pagePadding
-                anchors.topMargin: 0
-                orientation: Qt.Horizontal
-                spacing: Theme.panelGap
-
-                handle: PanelSplitHandle { view: rootSplit }
-
-                // Container.removeItem() *destroys* what it removes — takeItem() is
-                // the one that hands the item back. That distinction matters here:
-                // the preview owns the video sink and the GL runtime, so rebuilding
-                // it (via removeItem, or a Loader) would tear down the renderer and
-                // drop playback state on every workspace switch. Moving the one live
-                // instance keeps the switch free.
-                function relocatePreview() {
-                    const wantRoot = window.portraitWorkspace
-                    if (wantRoot === (previewPanel.SplitView.view === rootSplit))
-                        return
-                    const from = wantRoot ? innerSplit : rootSplit
-                    for (let i = 0; i < from.count; ++i) {
-                        if (from.itemAt(i) === previewPanel) {
-                            from.takeItem(i)
-                            break
-                        }
-                    }
-                    // Index 1 either way: after the assets panel in the landscape
-                    // row, after the editing stack in the portrait column.
-                    if (wantRoot)
-                        rootSplit.insertItem(1, previewPanel)
-                    else
-                        innerSplit.insertItem(1, previewPanel)
-                }
-
-                // The preview is declared in its landscape slot below, so a session
-                // that starts portrait needs one move once the tree exists. Also
-                // covers a layout flip that lands before this point during startup —
-                // relocatePreview() is a no-op when nothing has to move.
-                Component.onCompleted: relocatePreview()
-
-                // The stored panel sizes need real extents to be fractions of, and
-                // these are 0 until the first layout pass lands.
-                onWidthChanged: window.restorePanelSizesWhenReady()
-                onHeightChanged: window.restorePanelSizesWhenReady()
-
-                SplitView {
-                    id: outerSplit
-                    SplitView.fillWidth: true
-                    orientation: Qt.Vertical
-                    spacing: Theme.panelGap
-
-                    handle: PanelSplitHandle { view: outerSplit }
-
-                    // In the portrait workspace the preview is a sibling of this
-                    // whole stack, so fullscreen has to collapse the stack itself —
-                    // hiding only the panels inside it would leave the preview
-                    // confined to its column. SplitView drops hidden items from the
-                    // layout, so this hands the window to the preview.
-                    visible: !(window.previewFullscreen && window.portraitWorkspace)
-
-                    onHeightChanged: window.restorePanelSizesWhenReady()
-
-                    SplitView {
-                        id: innerSplit
-                        // Sized against the enclosing SplitView by id. `parent` here
-                        // is the SplitView's own content item, which makes these
-                        // percentage constraints self-referential during a resize.
-                        // In fullscreen the timeline is hidden, so the normal 30–85%
-                        // band would leave a dead strip below the preview.
-                        //
-                        // Never set a fixed minimum larger than the current parent
-                        // size: on the first layout pass width/height are 0, and
-                        // Qt SplitView asserts when maximum < minimum (qBound).
-                        SplitView.preferredHeight: window.previewFullscreen
-                                                   ? outerSplit.height : outerSplit.height * 0.5
-                        SplitView.minimumHeight: window.previewFullscreen
-                                                 ? outerSplit.height
-                                                 : Math.min(outerSplit.height, outerSplit.height * 0.3)
-                        SplitView.maximumHeight: window.previewFullscreen
-                                                 ? outerSplit.height
-                                                 : Math.max(SplitView.minimumHeight, outerSplit.height * 0.85)
-                        orientation: Qt.Horizontal
-                        spacing: Theme.panelGap
-
-                        handle: PanelSplitHandle { view: innerSplit }
-
-                        onWidthChanged: window.restorePanelSizesWhenReady()
-                        // This split's share of the vertical one is the timeline's
-                        // height, seen from the other side.
-                        onHeightChanged: {
-                            window.restorePanelSizesWhenReady()
-                            window.schedulePanelCapture()
-                        }
-
-                        AssetsPanel {
-                            id: assetsPanel
-                            visible: !window.previewFullscreen
-                            // A quarter of the row alongside the preview. In portrait
-                            // the preview is gone from this row and the properties
-                            // panel — last, and the only one without a fill — soaks up
-                            // everything left over, so an unchanged quarter here left
-                            // the library at a third of the inspector's width. Half
-                            // splits the row evenly between the two instead.
-                            SplitView.preferredWidth: Math.max(0, innerSplit.width
-                                                               * (window.portraitWorkspace ? 0.5 : 0.25))
-                            // Cap mins to available width so 200+320+240 never exceeds a
-                            // zero/partial first layout pass (Qt asserts max < min).
-                            SplitView.minimumWidth: Math.min(200, Math.max(0, innerSplit.width * 0.2))
-                            onWidthChanged: window.schedulePanelCapture()
-                        }
-
-                        // Declared in its landscape slot; rootSplit.relocatePreview()
-                        // moves this same instance out to the portrait column.
-                        PreviewPanel {
-                            id: previewPanel
-                            previewFullscreen: window.previewFullscreen
-                            onFullscreenRequested: window.togglePreviewFullscreen()
-                            // Landscape: the pane that absorbs the slack in the top
-                            // row. Portrait: a sized column, with the editing stack
-                            // taking the slack instead — except in fullscreen, where
-                            // the stack is hidden and the preview is all there is.
-                            SplitView.fillWidth: !window.portraitWorkspace || window.previewFullscreen
-                            // Portrait default: wide enough for the tall frame once
-                            // the panel's toolbar and transport rows are discounted,
-                            // capped so the libraries and timeline keep a usable
-                            // share. Ignored while fillWidth is set, and replaced
-                            // outright once the user drags the handle — SplitView
-                            // writes this attached property, which drops the binding.
-                            SplitView.preferredWidth: Math.max(0, Math.min(rootSplit.width * 0.4,
-                                                                           (rootSplit.height - 120) * 9 / 16))
-                            SplitView.minimumWidth: window.portraitWorkspace
-                                                    ? Math.min(260, Math.max(0, rootSplit.width * 0.2))
-                                                    : Math.min(320, Math.max(0, innerSplit.width * 0.3))
-                            onWidthChanged: window.schedulePanelCapture()
-                        }
-
-                        PropertiesPanel {
-                            id: propertiesPanel
-                            visible: !window.previewFullscreen
-                            SplitView.preferredWidth: Math.max(0, innerSplit.width * 0.25)
-                            SplitView.minimumWidth: Math.min(240, Math.max(0, innerSplit.width * 0.2))
-                            // Empty-state browse CTAs jump the assets panel to the
-                            // matching library tab.
-                            onWidthChanged: window.schedulePanelCapture()
-                            onBrowseEffectsRequested: assetsPanel.showTab("effects")
-                            onBrowseAudioEffectsRequested: assetsPanel.showTab("sounds")
-                        }
-                    }
-
-                    TimelinePanel {
-                        id: timelinePanel
-                        visible: !window.previewFullscreen
-                        propertiesTab: propertiesPanel.currentTabId
-                        SplitView.preferredHeight: Math.max(0, outerSplit.height * 0.5)
-                        SplitView.minimumHeight: Math.min(140, Math.max(0, outerSplit.height * 0.2))
-                    }
-                }
-
-                // The preview is inserted here, after the editing stack, while the
-                // portrait workspace is active.
-            }
-        }
-    }
     }
 
     // Startup only: replaces a fresh empty project when "Reopen last project on
@@ -1268,6 +1484,10 @@ ApplicationWindow {
     // the already-empty document sitting underneath it.
     Loader {
         anchors.fill: parent
+        anchors.leftMargin: window._safeMargin("left")
+        anchors.topMargin: window._safeMargin("top")
+        anchors.rightMargin: window._safeMargin("right")
+        anchors.bottomMargin: window._safeMargin("bottom")
         active: window.showStartScreen
         sourceComponent: Component {
             StartScreen {
@@ -1277,10 +1497,36 @@ ApplicationWindow {
                 onNewProjectRequested: window.requestNewProject()
                 onOpenProjectRequested: window.requestOpenProjectDialog()
                 onOpenRecentRequested: (path) => window.requestOpenRecentProject(path)
+                onMobileLayoutRequested: window.switchShell("mobile")
+                onMoreSettingsRequested: window.openSettings()
+                onDebugInfoRequested: window.openDebugInfo()
+                onAgentAccessRequested: editorHeader.openAgentAccess()
             }
         }
     }
 
+    MainAndroidMediaPreviewOverlay {
+        id: mediaPreviewHost
+    }
+
+    MainOverlayInputGuard { }
+
+    // Desktop has no sheet to step aside, so the drop target is live from the lift.
+    Connections {
+        target: TouchDrag
+        function onActiveChanged() {
+            if (TouchDrag.active)
+                TouchDrag.clearOfSource = true
+        }
+    }
+
+    TouchDragGhost {
+        visible: TouchDrag.active
+        z: 10000
+    }
+
     // Notification host — above all panels, so any message lands in one place.
-    ToastHost { }
+    ToastHost {
+        topMargin: editorHeader.visible ? editorHeader.height : 0
+    }
 }

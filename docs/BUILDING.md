@@ -101,7 +101,7 @@ cmake --build build --target update_translations
 
 Commit the updated `.ts` files. `.qm` binaries are compiled into the app and are not committed.
 
-MCP tool names, JSON schemas, agent errors, and copied `mcp.json` / agent-guide text stay English on purpose (`src/mcp/` is excluded from `lupdate`). The Settings “Agent access” labels are ordinary UI and are translated.
+MCP tool names, JSON schemas, agent errors, and copied `mcp.json` / agent-guide text stay English on purpose (`src/app/mcp/` is excluded from `lupdate`). The Settings “Agent access” labels are ordinary UI and are translated.
 
 ## macOS
 
@@ -130,8 +130,11 @@ Effects, transitions, templates and audio effects are staged into `Drift.app/Con
 ### Disk image
 
 ```bash
+third_party/build-qt-ffmpeg-plugin.sh   # once per Homebrew Qt/FFmpeg upgrade
 scripts/package-macos.sh
 ```
+
+Homebrew builds Qt Multimedia without its FFmpeg backend on macOS, which leaves the media preview unable to play AVI, MKV, WebM and anything else AVFoundation does not open. The first script builds that plugin against Homebrew's Qt and FFmpeg and installs it next to Qt's other multimedia plugins; packaging refuses to continue without it. Qt from qt.io already ships it.
 
 Builds Release, runs `macdeployqt` to copy Qt, FFmpeg, OpenSSL, zstd and SoundTouch into `Contents/Frameworks`, drops the build machine's `LC_RPATH` entries, signs, and writes `dist/Drift-<version>-<arch>.dmg`. The rpath step matters: dyld searches the executable's rpaths before the `@loader_path` entries in the nested frameworks, so a bundle still listing `/opt/homebrew/opt/qt6/lib` loads the host's Qt on any Mac that has one.
 
@@ -184,7 +187,7 @@ Homebrew ships single-architecture bottles, so the image is Apple Silicon only a
 
 Fonts, emoji stickers, and speech models download at runtime rather than shipping in the binary. That keeps the install small and lets you take only what you need. Open the Addon Manager from the header (layers icon), or follow the install prompt in the font picker, stickers tab, or auto-subtitle panel.
 
-Packages are `.driftpkg` archives — zstd-compressed, Ed25519-signed, and verified before install — under `<AppDataLocation>/addons/`. Format, registry, and installer live in `src/engine/AddonPackage.*`, `src/engine/AddonRegistry.*`, and `src/models/AddonManager.*`.
+Packages are `.driftpkg` archives — zstd-compressed, Ed25519-signed, and verified before install — under `<AppDataLocation>/addons/`. Format, registry, and installer live in `src/engine/addons/AddonPackage.*`, `src/engine/addons/AddonRegistry.*`, and `src/app/online/addons/AddonManager.*`.
 
 **Effects and transitions are bundled *and* addons.** They ship next to the binary so the editor works out of the box; `effects.core` / `transitions.core` addons can ship shader fixes without an app release. Content resolves highest-priority-first:
 
@@ -214,7 +217,7 @@ Building and publishing addons lives in a separate repository, along with the Cl
 
 ### Pointing at a different service
 
-The endpoint and client token are defined in `CMakeLists.txt` and injected as compile definitions — `src/models/AddonEndpoint.h` only reads them.
+The endpoint and client token are defined in `CMakeLists.txt` and injected as compile definitions — `src/app/online/addons/AddonEndpoint.h` only reads them.
 
 ```bash
 cmake -B build -DDRIFT_ADDON_INDEX_URL=https://addons.example.com/v1/index \
@@ -415,7 +418,7 @@ Media file → ClipReader → AudioMixer (volume, fades, audio effects)
 
 ## QML entry points
 
-Singletons registered in `main.cpp`:
+Singletons registered in `app/main.cpp`:
 
 - `EditorState` / `AppController` — timeline controller
 - `AssetLibrary` — media bin
