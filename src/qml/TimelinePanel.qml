@@ -41,6 +41,10 @@ PanelFrame {
     // state lives here rather than in the backend, so Main.qml dispatches them
     // alongside Escape, which exits the tool without clearing the selection.
 
+    function trackNameAt(i) {
+        return trackLabelsArea.trackNameAt(i)
+    }
+
     // Y offset of a track row within the track column (excludes ruler/bookmark).
     function trackOffsetY(index) {
         var cursor = 0
@@ -1093,6 +1097,10 @@ PanelFrame {
         convertToSubtitleDialog.open()
     }
 
+    function requestReplaceClip(trackIndex, clipIndex) {
+        replaceClipDialog.openFor(trackIndex, clipIndex)
+    }
+
     function requestRenameClip(trackIndex, clipIndex) {
         if (trackIndex < 0 || clipIndex < 0)
             return
@@ -1794,7 +1802,7 @@ PanelFrame {
                                             return
                                         }
                                         if (isTransitionDrag(drop)) {
-                                            const kind = drop.getDataAsString("application/x-drift-transition")
+                                            const kind = AssetDrag.payloadFromDrop(drop, "transition")
                                             root.applyTransitionDrop(trackRow.trackIndex, drop.x, kind)
                                             return
                                         }
@@ -2211,6 +2219,10 @@ PanelFrame {
         }
 
         onAccepted: EditorState.convertSelectionToSubtitle()
+    }
+
+    TimelineReplaceClipDialog {
+        id: replaceClipDialog
     }
 
     ThemedDialog {

@@ -17,7 +17,7 @@ Rectangle {
     y: 2
     z: 40
     visible: owner.timelineFadeHandles && owner.selected
-             && owner.width > owner.fadeHandleMinWidth
+             && owner.width >= Theme.clipControlsMinWidth
     color: Theme.c.timelineFadeHandle.background
     border.color: Theme.c.timelineFadeHandle.border
     border.width: Theme.c.timelineFadeHandle.borderWidth
@@ -57,7 +57,7 @@ Rectangle {
             if (!pressed)
                 return
             const px = Math.max(0, Math.min(owner.width,
-                                            mapToItem(clip, mouse.x, mouse.y).x))
+                                            mapToItem(owner, mouse.x, mouse.y).x))
             handle.x = Math.max(owner.fadeHandleInset,
                                 Math.min(owner.width - owner.fadeHandleInset - handle.width,
                                          px - handle.width / 2))

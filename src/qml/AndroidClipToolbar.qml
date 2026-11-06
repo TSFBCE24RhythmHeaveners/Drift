@@ -100,12 +100,31 @@ Item {
                 { id: "more", label: qsTr("More"), icon: Theme.icons.ellipsis }
             ]
         }
+        // Desktop leaves a composite through the toolbar's sequence switcher, which a phone
+        // does not have.
+        if (root.inComposite) {
+            return [
+                { id: "exitComposite", label: qsTr("Main"), icon: Theme.icons.chevronLeft },
+                { id: "fit", label: qsTr("Fit"), icon: Theme.icons.zoomFit },
+                { id: "more", label: qsTr("More"), icon: Theme.icons.ellipsis }
+            ]
+        }
         // Honest rather than a row of greyed buttons — and the same height either way, so
         // the timeline below never shifts when the selection changes.
         return [
             { id: "fit", label: qsTr("Fit"), icon: Theme.icons.zoomFit },
             { id: "more", label: qsTr("More"), icon: Theme.icons.ellipsis }
         ]
+    }
+
+    readonly property bool inComposite: EditorState.activeSequenceId !== ""
+    readonly property string compositeName: {
+        const tabs = EditorState.sequenceTabs
+        for (var i = 0; i < tabs.length; i++) {
+            if (tabs[i].id === EditorState.activeSequenceId)
+                return tabs[i].name
+        }
+        return qsTr("Composite")
     }
 
     readonly property bool showHint: !root.hasSelection && !root.hasTransition
@@ -131,18 +150,19 @@ Item {
             root.editTextRequested()
             break
         case "fade":
-            root.fadeRequested()
+            if (ShellBridge.main.editorPage)
+                ShellBridge.main.editorPage.openTool("audio")
             break
         case "speed":
-            ShellBridge.main.openSpeedCurve(EditorState.selectedTrack, EditorState.selectedClip)
+            if (ShellBridge.main.editorPage)
+                ShellBridge.main.editorPage.openTool("speed")
             break
         case "duplicate":
             EditorState.duplicateSelectedClip()
             break
-        // The Transform tab of the properties sheet is where a transform clip is edited.
         case "transform":
             if (ShellBridge.main.editorPage)
-                ShellBridge.main.editorPage.openPropertiesSheet()
+                ShellBridge.main.editorPage.openTool("transform")
             break
         case "transformTogether":
             EditorState.makeTransformLayerFromSelection()
@@ -150,15 +170,13 @@ Item {
         case "delete":
             EditorState.deleteSelectedClip()
             break
-        // Duration is a field, not a button: the transition inspector already owns it, and
-        // the properties sheet is what shows the inspector for the current selection.
+        // Duration is a field, not a button: the transition page's inspector owns it.
         case "transitionDuration":
             if (ShellBridge.main.editorPage)
-                ShellBridge.main.editorPage.openPropertiesSheet()
+                ShellBridge.main.editorPage.openTool("transition")
             break
         case "transitionCurve":
-            ShellBridge.main.openTransitionCurve(EditorState.selectedTransitionTrack,
-                                              EditorState.selectedTransitionData.id)
+            transitionCurveHost.openPicker()
             break
         case "transitionReplace":
             if (ShellBridge.main.editorPage)
@@ -168,6 +186,9 @@ Item {
             EditorState.removeTransition(EditorState.selectedTransitionTrack,
                                          EditorState.selectedTransitionData.id)
             break
+        case "exitComposite":
+            EditorState.openSequence("")
+            break
         case "fit":
             if (root.panel)
                 root.panel.fitZoom()
@@ -175,6 +196,22 @@ Item {
         case "more":
             root.moreRequested()
             break
+        }
+    }
+
+    CurveField {
+        id: transitionCurveHost
+        visible: false
+        domain: "fade"
+        useSheet: true
+        curve: EditorState.selectedTransitionData.easingCurve || "linear"
+        handles: EditorState.selectedTransitionData.easingHandles || []
+        onCurveChosen: (curve, handles) => {
+            EditorState.setTransitionEasing(EditorState.selectedTransitionTrack,
+                                            EditorState.selectedTransitionData.id, curve, handles)
+            if (curve === "custom")
+                ShellBridge.main.openTransitionCurve(EditorState.selectedTransitionTrack,
+                                                     EditorState.selectedTransitionData.id)
         }
     }
 
@@ -203,6 +240,8 @@ Item {
             anchors.rightMargin: Theme.spacingLg
             anchors.verticalCenter: parent.verticalCenter
             visible: root.showHint
+            text: root.inComposite ? qsTr("Editing %1").arg(root.compositeName)
+                                   : qsTr("Tap a clip to edit")
         }
 
         Row {

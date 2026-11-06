@@ -38,6 +38,8 @@ class PreferencesController : public QObject
                    WRITE setAudioMixerWidth NOTIFY audioMixerWidthChanged)
     Q_PROPERTY(qreal trackLabelsWidth READ trackLabelsWidth
                    WRITE setTrackLabelsWidth NOTIFY trackLabelsWidthChanged)
+    Q_PROPERTY(qreal androidTrackLabelsWidth READ androidTrackLabelsWidth
+                   WRITE setAndroidTrackLabelsWidth NOTIFY androidTrackLabelsWidthChanged)
     // Timeline toolbar layout: action ids shown as buttons, then the ones in its More menu.
     // Empty means the QML defaults; ids are validated on the QML side, which owns the registry.
     Q_PROPERTY(QStringList timelineToolbarItems READ timelineToolbarItems
@@ -66,6 +68,12 @@ class PreferencesController : public QObject
     Q_PROPERTY(QString preferredGpu READ preferredGpu WRITE setPreferredGpu NOTIFY preferredGpuChanged)
     Q_PROPERTY(bool gpuPreferenceSupported READ gpuPreferenceSupported CONSTANT)
     Q_PROPERTY(bool gpuPreferenceInSystemSettings READ gpuPreferenceInSystemSettings CONSTANT)
+    // Graphics API the interface is drawn with (GraphicsApiChoice.h), next launch. uiGraphicsApis
+    // lists what this platform offers; uiGraphicsApiRevertedFrom names a choice this launch fell
+    // back from after it failed to start.
+    Q_PROPERTY(QString uiGraphicsApi READ uiGraphicsApi WRITE setUiGraphicsApi NOTIFY uiGraphicsApiChanged)
+    Q_PROPERTY(QStringList uiGraphicsApis READ uiGraphicsApis CONSTANT)
+    Q_PROPERTY(QString uiGraphicsApiRevertedFrom READ uiGraphicsApiRevertedFrom CONSTANT)
     Q_PROPERTY(bool invertTimelineScroll READ invertTimelineScroll WRITE setInvertTimelineScroll
                    NOTIFY invertTimelineScrollChanged)
     Q_PROPERTY(bool autoCrossfadeOverlaps READ autoCrossfadeOverlaps WRITE setAutoCrossfadeOverlaps
@@ -94,7 +102,9 @@ class PreferencesController : public QObject
     // clearCache run off the GUI thread; cacheBusy is true while either is in flight.
     Q_PROPERTY(qint64 cacheSizeBytes READ cacheSizeBytes NOTIFY cacheSizeChanged)
     Q_PROPERTY(bool cacheBusy READ cacheBusy NOTIFY cacheSizeChanged)
-    Q_PROPERTY(QString cacheLocation READ cacheLocation CONSTANT)
+    Q_PROPERTY(QString cacheLocation READ cacheLocation NOTIFY cacheLocationChanged)
+    Q_PROPERTY(bool cacheLocationCustom READ cacheLocationCustom NOTIFY cacheLocationChanged)
+    Q_PROPERTY(bool cacheLocationPendingRestart READ cacheLocationPendingRestart NOTIFY cacheLocationChanged)
     // App-wide interface language, QSettings("ui/language"). Empty means follow the OS locale.
     // "en" is the source catalog (no .qm). Other codes match i18n/drift_<code>.qm.
     // needsUiLanguagePrompt is true only on a brand-new install, before the first-launch chooser
@@ -102,8 +112,10 @@ class PreferencesController : public QObject
     Q_PROPERTY(QString uiLanguage READ uiLanguage WRITE setUiLanguage NOTIFY uiLanguageChanged)
     Q_PROPERTY(QVariantList uiLanguages READ uiLanguages NOTIFY uiLanguageChanged)
     Q_PROPERTY(bool needsUiLanguagePrompt READ needsUiLanguagePrompt NOTIFY uiLanguageChanged)
-    // Extra UI scale on top of the OS display scale. QSettings("ui/scale"), 1.0..2.0 in
-    // 0.25 steps. Applied as QT_SCALE_FACTOR before QApplication; a change needs a restart.
+    // QSettings("ui/scale"), 1.0..2.0 in 0.25 steps. Extra scale on top of the OS display scale,
+    // except where applyStoredUiScale is given the OS scale (Windows): there it is the absolute
+    // size, 1.0 being 96 DPI. Applied as QT_SCALE_FACTOR before QApplication; a change needs a
+    // restart.
     Q_PROPERTY(double uiScale READ uiScale WRITE setUiScale NOTIFY uiScaleChanged)
     Q_PROPERTY(double appliedUiScale READ appliedUiScale CONSTANT)
     Q_PROPERTY(bool uiScaleNeedsRestart READ uiScaleNeedsRestart NOTIFY uiScaleChanged)
@@ -153,6 +165,8 @@ public:
     void setAudioMixerWidth(qreal width);
     qreal trackLabelsWidth() const { return m_trackLabelsWidth; }
     void setTrackLabelsWidth(qreal width);
+    qreal androidTrackLabelsWidth() const { return m_androidTrackLabelsWidth; }
+    void setAndroidTrackLabelsWidth(qreal width);
     QStringList timelineToolbarItems() const { return m_timelineToolbarItems; }
     QStringList timelineMenuItems() const { return m_timelineMenuItems; }
     QStringList proxyNamePatterns() const { return m_proxyNamePatterns; }
@@ -175,6 +189,10 @@ public:
     void setPreferredGpu(const QString &id);
     bool gpuPreferenceSupported() const;
     bool gpuPreferenceInSystemSettings() const;
+    QString uiGraphicsApi() const { return m_uiGraphicsApi; }
+    void setUiGraphicsApi(const QString &id);
+    QStringList uiGraphicsApis() const;
+    QString uiGraphicsApiRevertedFrom() const;
     bool invertTimelineScroll() const { return m_invertTimelineScroll; }
     void setInvertTimelineScroll(bool enabled);
     bool autoCrossfadeOverlaps() const { return m_autoCrossfadeOverlaps; }
@@ -221,6 +239,10 @@ public:
     qint64 cacheSizeBytes() const { return m_cacheSizeBytes; }
     bool cacheBusy() const { return m_cacheBusy; }
     QString cacheLocation() const;
+    bool cacheLocationCustom() const;
+    bool cacheLocationPendingRestart() const;
+    Q_INVOKABLE void setCacheLocation(const QUrl &folder);
+    Q_INVOKABLE void resetCacheLocation();
     Q_INVOKABLE void refreshCacheSize();
     Q_INVOKABLE void clearCache();
 
@@ -236,9 +258,13 @@ public:
     void setUiScale(double scale);
     // Snaps to 1.0, 1.25, 1.5, 1.75, or 2.0. Safe before any PreferencesController exists.
     static double storedUiScale();
-    // Writes QT_SCALE_FACTOR from ui/scale unless the environment already set one.
+    // Once per install: sets ui/scale from the primary screen's short side, 1080 rows being 1.0,
+    // and records ui/autoScaleDone. Same preconditions as applyStoredUiScale.
+    static void autoUiScaleOnce(int shortSide, double osDisplayScale);
+    // Writes QT_SCALE_FACTOR from ui/scale unless the environment already set one. With
+    // osDisplayScale, ui/scale is the absolute size and the factor is divided by it.
     // Call once before QApplication; organization/application names must already be set.
-    static void applyStoredUiScale();
+    static void applyStoredUiScale(double osDisplayScale = 0.0);
     QString interfaceShell() const { return m_interfaceShell; }
     void setInterfaceShell(const QString &shell);
     QString appliedShell() const;
@@ -250,6 +276,11 @@ public:
     // Recorded by app/main.cpp once the shell for this run is decided.
     static void setAppliedShell(const QString &shell);
     bool canRestart() const;
+    // False once the first-run Quick Setup has been completed (and always on wasm, which skips it).
+    static bool quickSetupNeeded();
+    Q_INVOKABLE void completeQuickSetup();
+    // Clears the done flag and relaunches into setup; the caller handles unsaved work first.
+    Q_INVOKABLE void rerunQuickSetup();
     // Android relaunches the activity right away; flush recovery first. Elsewhere this only
     // arms a relaunch for aboutToQuit, so the caller still closes the window and the
     // unsaved-changes prompt gets its say.
@@ -269,12 +300,14 @@ signals:
     void audioMixerVisibleChanged();
     void audioMixerWidthChanged();
     void trackLabelsWidthChanged();
+    void androidTrackLabelsWidthChanged();
     void proxyNamePatternsChanged();
     void timelineToolbarLayoutChanged();
     void reopenLastProjectChanged();
     void vaapiZeroCopyChanged();
     void mediaCodecZeroCopyChanged();
     void preferredGpuChanged();
+    void uiGraphicsApiChanged();
     void invertTimelineScrollChanged();
     void autoCrossfadeOverlapsChanged();
     void autoSelectUnderPlayheadChanged();
@@ -283,11 +316,13 @@ signals:
     void stillDurationSecondsChanged();
     void transitionDurationSecondsChanged();
     void cacheSizeChanged();
+    void cacheLocationChanged();
     void uiLanguageChanged();
+    void quickSetupCompleted();
     void uiScaleChanged();
     void interfaceShellChanged();
     void performanceChanged();
-    // setVaapiZeroCopy, setMediaCodecZeroCopy and setPreferredGpu take effect on the next
+    // setVaapiZeroCopy, setMediaCodecZeroCopy, setPreferredGpu and setUiGraphicsApi take effect on the next
     // launch. AppController turns this into a status toast.
     void restartNoticeRequested(const QString &text);
 
@@ -300,6 +335,7 @@ private:
     bool m_audioMixerVisible = false;
     qreal m_audioMixerWidth = 0;
     qreal m_trackLabelsWidth = 130;
+    qreal m_androidTrackLabelsWidth = 80;
     QStringList m_timelineToolbarItems;
     QStringList m_proxyNamePatterns;
     QStringList m_timelineMenuItems;
@@ -307,6 +343,7 @@ private:
     bool m_vaapiZeroCopy = false;
     bool m_mediaCodecZeroCopy = false;
     QString m_preferredGpu = QStringLiteral("auto");
+    QString m_uiGraphicsApi;
     bool m_invertTimelineScroll = false;
     bool m_autoCrossfadeOverlaps = true;
     bool m_autoSelectUnderPlayhead = false;

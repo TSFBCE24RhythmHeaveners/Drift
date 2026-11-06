@@ -11,6 +11,7 @@ ApplicationWindow {
     readonly property var previewPanel: workspace.pool.previewPanel
     readonly property var propertiesPanel: workspace.pool.propertiesPanel
     readonly property var timelinePanel: workspace.pool.timelinePanel
+    readonly property var panelPool: workspace.pool
     property alias androidMediaPreviewLoader: mediaPreviewHost.loader
 
     // Qt creates some chrome itself — most visibly the Undo/Cut/Copy/Paste menu on every
@@ -110,7 +111,6 @@ ApplicationWindow {
                 appWindow: window
                 header: editorHeader
                 assets: assetsPanel
-                downloadsLoader: downloadsWindowLoader
             }
         }
     }
@@ -304,16 +304,16 @@ ApplicationWindow {
         }
         const tools = [segmentationWindowLoader, denoiseWindowLoader, restoreWindowLoader,
                        multicamWindowLoader, speedCurveWindowLoader, fadeCurveWindowLoader,
-                       downloadsWindowLoader]
+                       marketplaceWindowLoader, extrasWindowLoader]
         for (var t = 0; t < tools.length; ++t) {
             if (tools[t].shown) {
                 tools[t].item.close()
                 return
             }
         }
-        const modals = [shellSwitchDialogLoader.item, aboutDialogLoader.item, debugInfoDialogLoader.item,
-                        settingsDialogLoader.item, pasteAttributesDialogLoader.item, updateDialogLoader.item,
-                        addonManagerDialogLoader.item, missingAddonsDialogLoader.item, addonStartupDialog,
+        const modals = [shellSwitchDialogLoader.item, aboutDialogLoader.item, helpDialogLoader.item, debugInfoDialogLoader.item,
+                        settingsDialogLoader.item, imageViewerDialogLoader.item, pasteAttributesDialogLoader.item, updateDialogLoader.item,
+                        missingAddonsDialogLoader.item,
                         projectSetupDialogLoader.item, layoutChooserDialogLoader.item,
                         languageChooserDialogLoader.item, recoveryDialogLoader.item,
                         reverseProgressDialogLoader.item, subtitleProgressDialogLoader.item]
@@ -386,7 +386,8 @@ ApplicationWindow {
     property bool showStartScreen: false
 
     // Header Extras icon pulses while true; never auto-opens a dialog.
-    readonly property alias addonAttentionNeeded: addonStartupDialog.needsAttention
+    property string addonAttentionTarget: ""
+    readonly property bool addonAttentionNeeded: addonAttentionTarget !== ""
 
     function promptLanguageChooserIfNeeded() {
         if (!EditorState.preferences.needsUiLanguagePrompt)
@@ -415,7 +416,11 @@ ApplicationWindow {
 
     // Quiet catalog refresh for the header attention indicator.
     function refreshAddonAttention() {
-        addonStartupDialog.refreshAttention()
+        if (Addons.refreshing)
+            return
+        const updates = Addons.remindUpdates && Addons.updatableAddons().length > 0
+        const essential = Addons.remindEssential && Addons.missingEssentialAddons().length > 0
+        addonAttentionTarget = updates ? "updates" : (essential ? "essentials" : "")
     }
 
     // Settings / header: reopen platform layout picker anytime.
@@ -487,15 +492,16 @@ ApplicationWindow {
         }
     }
 
-    LazyLoader {
-        id: addonManagerDialogLoader
-        sourceComponent: Component {
-            AddonManagerDialog { }
-        }
-    }
+    // Imports started in this window (the effect browsers, Open With) ask and report here.
+    UserPackageImporter { id: userPackageImporter }
 
-    AddonStartupDialog {
-        id: addonStartupDialog
+    // Kept loaded so the store keeps its section and open detail between visits.
+    LazyLoader {
+        id: extrasWindowLoader
+        keepLoaded: true
+        sourceComponent: Component {
+            ExtrasWindow { }
+        }
     }
 
     LazyLoader {
@@ -505,13 +511,27 @@ ApplicationWindow {
         }
     }
 
+    LazyLoader {
+        id: accelerationFailedDialogLoader
+        sourceComponent: Component {
+            AccelerationFailedDialog { }
+        }
+    }
+
+    Connections {
+        target: Addons
+        function onAccelerationFailed(variant, error, waiting) {
+            accelerationFailedDialogLoader.ensure().openFor(variant, error, waiting)
+        }
+    }
+
     Connections {
         target: Updates
         function onInstallReady() {
             window.openUpdateDialog()
         }
         function onDownloadStarted() {
-            downloadsWindowLoader.ensure().show()
+            window.openMarketplace("downloads")
         }
         function onQuitRequested() {
             window.close()
@@ -542,6 +562,13 @@ ApplicationWindow {
     }
 
     LazyLoader {
+        id: helpDialogLoader
+        sourceComponent: Component {
+            HelpDialog { }
+        }
+    }
+
+    LazyLoader {
         id: updateDialogLoader
         sourceComponent: Component {
             UpdateDialog { }
@@ -554,6 +581,13 @@ ApplicationWindow {
         keepLoaded: true
         sourceComponent: Component {
             DebugInfoDialog { }
+        }
+    }
+
+    LazyLoader {
+        id: imageViewerDialogLoader
+        sourceComponent: Component {
+            ImageViewerDialog { }
         }
     }
 
@@ -627,25 +661,35 @@ ApplicationWindow {
         }
     }
 
+    // Kept loaded so the last page, its search and its scroll are still there on reopening.
     LazyLoader {
-        id: downloadsWindowLoader
+        id: marketplaceWindowLoader
+        keepLoaded: true
         sourceComponent: Component {
-            DownloadsWindow { }
+            MarketplaceWindow { }
         }
     }
 
-    // Shows the downloads window the first time a download starts, then stays out of the way:
+    // Shows the Downloads tab the first time a download starts, then stays out of the way:
     // reopening on every later job would yank focus mid-edit for something the header
     // badge already reports.
-    property bool downloadsWindowShownOnce: false
+    property bool downloadsAutoOpened: false
 
     Connections {
-        target: Market
-        function onDownloadStarted(itemId) {
-            if (window.downloadsWindowShownOnce)
+        target: Downloads
+        function onJobStarted(id) {
+            if (window.downloadsAutoOpened)
                 return
-            window.downloadsWindowShownOnce = true
-            downloadsWindowLoader.ensure().show()
+            window.downloadsAutoOpened = true
+            window.openMarketplace("downloads")
+        }
+    }
+
+    // MCP market_open, and anything else that asks the app to show a page or a listing.
+    Connections {
+        target: Marketplace
+        function onOpenRequested(page, tab, source, itemId) {
+            window.openMarketplace(tab.length > 0 ? tab : page, source, itemId)
         }
     }
 
@@ -780,6 +824,27 @@ ApplicationWindow {
         multicamWindowLoader.ensure().openSession()
     }
 
+    // A page id or "downloads", plus a listing to show. Empty arguments reopen the last page.
+    function openMarketplace(pageOrTab, source, itemId) {
+        marketplaceWindowLoader.ensure().open(pageOrTab || "", source || "", itemId || "")
+    }
+
+    // Panels that no workspace has room for. One window per type, kept for the session.
+    property var floatingPanels: ({})
+    function openFloatingPanel(type) {
+        if (type === "preview")
+            return
+        if (!window.floatingPanels[type])
+            window.floatingPanels[type] = floatingPanelC.createObject(window.contentItem,
+                                                                      { type: type, pool: workspace.pool })
+        window.floatingPanels[type].openPanel()
+    }
+
+    Component {
+        id: floatingPanelC
+        FloatingPanelWindow {}
+    }
+
     // Opened from the header's Settings menu. Every preference lives here now; the
     // assets rail no longer carries a settings tab.
     function openAgentAccess() {
@@ -810,6 +875,20 @@ ApplicationWindow {
         editorHeader.confirmIfDirty(function () {
             EditorState.projectFile.discardUnsavedChanges()
             EditorState.preferences.restartApp()
+            window.forceClose = true
+            window.close()
+        })
+    }
+
+    function rerunQuickSetup() {
+        if (Qt.platform.os === "android") {
+            EditorState.projectFile.flushRecoverySnapshot()
+            EditorState.preferences.rerunQuickSetup()
+            return
+        }
+        editorHeader.confirmIfDirty(function () {
+            EditorState.projectFile.discardUnsavedChanges()
+            EditorState.preferences.rerunQuickSetup()
             window.forceClose = true
             window.close()
         })
@@ -891,31 +970,33 @@ ApplicationWindow {
         })
     }
 
+    // target: "" | category id | "addon:<id>" | "kind:<kind>" | "installed" | "updates" | "custom".
+    function openExtrasTarget(target) {
+        extrasWindowLoader.ensure().open(target || "")
+    }
+
     // Opened from the header, and from every empty state that a missing addon causes.
     function openAddonManager(kind) {
-        if (kind === undefined)
-            addonManagerDialogLoader.ensure().open()
-        else
-            addonManagerDialogLoader.ensure().openForKind(kind)
+        openExtrasTarget(kind ? "kind:" + kind : "")
     }
 
-    // A .driftfx from Drift Forge; an empty url asks with a file dialog. Shared with the effects
-    // panel's Import button.
+    // A .driftfx or Drift Forge zip (or any addon file); an empty url asks with a file dialog.
+    // Shared with the effects panel's Import button.
     function importUserPackage(url) {
-        addonManagerDialogLoader.ensure().importUserPackage(url)
+        userPackageImporter.importFile(url)
     }
 
-    // Header Extras button: open the essential/update nudge when the icon is pulsing,
-    // otherwise the full manager — same idea as the update badge vs silent check.
     function openExtras() {
-        if (addonStartupDialog.openForAttention())
-            return
-        openAddonManager()
+        openExtrasTarget(addonAttentionTarget)
     }
 
     // Opened from the header badge, which only exists while there is something to show.
     function openAboutDialog() {
         aboutDialogLoader.ensure().open()
+    }
+
+    function openHelpDialog() {
+        helpDialogLoader.ensure().open()
     }
 
     function checkForUpdates() {
@@ -941,6 +1022,10 @@ ApplicationWindow {
 
     function openDebugInfo() {
         debugInfoDialogLoader.ensure().open()
+    }
+
+    function openImageViewer(entryId) {
+        imageViewerDialogLoader.ensure().show(entryId)
     }
 
     // Global search opens assets tabs and labels them; the panel itself is out of the header's reach.
@@ -1040,8 +1125,8 @@ ApplicationWindow {
         const urls = intent.urls || []
         if (intent.kind === "view") {
             const url = urls.length > 0 ? String(urls[0]) : ""
-            if (url === "" || Market.handleIncomingUrl(url))
-                return url !== ""
+            if (url === "")
+                return false
             if (Addons.isUserPackage(url)) {
                 window.importUserPackage(url)
                 return false
@@ -1306,13 +1391,7 @@ ApplicationWindow {
     }
 
     Connections {
-        target: Market
-        function onAuthFinished(ok, message) {
-            if (ok)
-                Toasts.success(message)
-            else
-                Toasts.error(message)
-        }
+        target: StockInstaller
         function onDownloadImported(itemId, name) {
             Toasts.success(name.length > 0
                            ? qsTr("Imported “%1”.").arg(name)
@@ -1474,7 +1553,7 @@ ApplicationWindow {
 
         EditorWorkspace {
             id: workspace
-            onDownloadsRequested: downloadsWindowLoader.ensure().show()
+            onDownloadsRequested: window.openMarketplace("downloads")
         }
     }
 
@@ -1497,7 +1576,7 @@ ApplicationWindow {
                 onNewProjectRequested: window.requestNewProject()
                 onOpenProjectRequested: window.requestOpenProjectDialog()
                 onOpenRecentRequested: (path) => window.requestOpenRecentProject(path)
-                onMobileLayoutRequested: window.switchShell("mobile")
+                onHelpRequested: window.openHelpDialog()
                 onMoreSettingsRequested: window.openSettings()
                 onDebugInfoRequested: window.openDebugInfo()
                 onAgentAccessRequested: editorHeader.openAgentAccess()

@@ -152,6 +152,12 @@
           "Acts on the current selection — call select_clips first. Only on the main timeline, and "
           "the selection must not already contain a composite. Returns {clip, sequence, asset}.",
           objectSchema({}) },
+        { "dissolve_composite", "timeline", "Turn a composite back into its clips",
+          "Release the selected composite clip's inner clips onto the main timeline at their original "
+          "times, cut to the composite's trim, and remove the composite. The composite's own effects, "
+          "transform, fades and keyframes are discarded. Fails when the composite is ramped, reversed "
+          "or not at 1x. Acts on the current selection — call select_clip first.",
+          objectSchema({}) },
         { "open_composite", "timeline", "Edit inside a composite",
           "Open a composite's timeline in its own tab and make it the timeline every other op edits "
           "(tracks, clips, inspect). Name it by a composite clip (clip or track+index), by sequence "
@@ -227,6 +233,36 @@
           "flipH/flipV is required.",
           objectSchema(mergeProps({{QStringLiteral("flipH"), boolProp(QStringLiteral("Flip horizontally"))},
                                    {QStringLiteral("flipV"), boolProp(QStringLiteral("Flip vertically"))}},
+                                  clipRefProps())) },
+        { "get_clip_crop", "canvas", "Read which part of the source a clip shows",
+          "Read a video or image clip's crop. Returns crop: {x, y, w, h} as fractions 0..1 of the "
+          "displayed (rotation-corrected) source, angle (straighten, degrees clockwise), cropped "
+          "false for the full, unturned frame, and, when the "
+          "source size is known, sourceWidth/sourceHeight and the same window in source pixels. The "
+          "top-level x/y/w/h are the clip's canvas box, not the crop.",
+          objectSchema(clipRefProps()),
+          true, false, true },
+        { "set_clip_crop", "canvas", "Crop a clip to part of its source",
+          "Crop a video or image clip to a window of its source, undoable like the inspector's crop. "
+          "units normalized (default) takes fractions 0..1; pixels takes source pixels and needs the "
+          "source size (see get_clip_crop). Omitted fields keep their current value; reset: true "
+          "restores the full, unturned frame. angle straightens: the picture turns clockwise by that "
+          "many degrees about its centre (negative = anticlockwise) and the window is cut from the "
+          "turned picture, so a tilted horizon can be levelled; corners the turned picture does not "
+          "reach are transparent, so shrink w/h to hide them. Omit angle to keep the current one. "
+          "The window is clamped inside the source. The clip's on-canvas "
+          "size is rescaled to the new crop's aspect, the way the inspector does it. Does not crop "
+          "the project canvas (apply_canvas_crop). Returns crop as get_clip_crop does.",
+          objectSchema(mergeProps({{QStringLiteral("x"), numberProp(QStringLiteral("Left edge"))},
+                                   {QStringLiteral("y"), numberProp(QStringLiteral("Top edge"))},
+                                   {QStringLiteral("w"), numberProp(QStringLiteral("Width, > 0"))},
+                                   {QStringLiteral("h"), numberProp(QStringLiteral("Height, > 0"))},
+                                   {QStringLiteral("angle"), numberProp(QStringLiteral("Straighten, degrees clockwise"), -180, 180)},
+                                   {QStringLiteral("units"),
+                                    propWithDefault(enumProp(QStringLiteral("Units of x/y/w/h"),
+                                                             {QStringLiteral("normalized"), QStringLiteral("pixels")}),
+                                                    QStringLiteral("normalized"))},
+                                   {QStringLiteral("reset"), boolProp(QStringLiteral("Restore the full frame; ignores x/y/w/h/angle"))}},
                                   clipRefProps())) },
         { "set_blend_mode", "canvas", "Multiply/screen/overlay a clip onto the layers below",
           "Set how the clip composites over the layers below it. Unrecognised values silently fall back "
@@ -620,18 +656,23 @@
         { "add_model3d", "model3d", "Place a 3D model (.glb) or Gaussian splat",
           "Add a glTF binary, or a Gaussian splat scene (.sog, a 3DGS .ply, a .zip or folder bundle holding meta.json/lod-meta.json, or that meta.json), as a model clip on a graphic track, creating one when needed. A model "
           "clip is a 3D layer like any other: its rect (x, y, w, h) is the front face of the "
-          "model's bounding box, z pushes it in depth, rotationX/rotationY/rotation turn it "
-          "(intrinsic, X then Y then the in-plane spin, the same as a tilted clip), and "
+          "model's bounding box, z pushes it in depth (+ away from the viewer), rotationX/rotationY/rotation "
+          "turn it about the clip's anchor (intrinsic, X then Y then the in-plane spin, the same as a "
+          "tilted clip; the world is right-handed, y down, z away), and "
           "perspective is the eye it is seen through when there is no scene camera — set them with "
           "set_transform or set_keyframe like any clip. It occludes and is occluded by other 3D "
           "layers when \"Occlude by depth\" is on in the editor. It starts centred with its largest extent half "
           "the canvas height. scale/depth/rotX/rotY/rotZ are older shorthands still accepted: scale "
           "resizes the box about its centre to that fraction of canvas height, depth sets the "
-          "perspective, rotX/rotY/rotZ set the rotations about the model's glTF axes (+y up). "
+          "perspective, rotX/rotY/rotZ set the rotations about the model's glTF axes (+y up, +z toward "
+          "the viewer; written as rotationX = rotX, rotationY = -rotY, rotation = -rotZ). "
+          "modelScale (default 1) resizes the model about the anchor and modelScaleZ (default 1) "
+          "multiplies its depth, which is otherwise the geometric mean of the box's width and height "
+          "scales. "
           "It is lit by ambient plus up to four point or spot lights (lights), placed like 3D "
           "Relight's across the clip's rect and near or far of the model's centre; they follow the "
           "clip's position and size but not its rotation. Their numbers are keyframable as "
-          "model3d.ambient and model3d.light<n>_<x|y|z|intensity|radius|cone|aimX|aimY>. An animated file plays its first animation at its own length unless "
+          "model3d.ambient, model3d.modelScale, model3d.modelScaleZ and model3d.light<n>_<x|y|z|intensity|radius|cone|aimX|aimY>. A light's z is in clip heights, + away from the viewer, like the world's. An animated file plays its first animation at its own length unless "
           "duration is given; loop decides what happens past the end. Returns {id, track, index, "
           "animations:[{name, durationSec}], vertexCount, warning?, model3d:{…}}. A splat has no animations or lights "
           "(those options have no effect) and reports splatCount instead of vertexCount.",
@@ -645,11 +686,13 @@
                         {QStringLiteral("offset"), numberProp(QStringLiteral("Seconds into the animation at the clip's start (default 0)"))},
                         {QStringLiteral("scale"), numberProp(QStringLiteral("Shorthand: largest extent as a fraction of canvas height (default 0.5); writes w/h"), 0.01, 10.0)},
                         {QStringLiteral("depth"), numberProp(QStringLiteral("Shorthand: perspective strength 0 (flat) .. 1 (strong); writes perspective"), 0.0, 1.0)},
-                        {QStringLiteral("rotX"), numberProp(QStringLiteral("Shorthand: degrees about the model's X axis; writes rotationX = -rotX"))},
-                        {QStringLiteral("rotY"), numberProp(QStringLiteral("Shorthand: degrees about the model's up axis; writes rotationY"))},
+                        {QStringLiteral("rotX"), numberProp(QStringLiteral("Shorthand: degrees about the model's X axis; writes rotationX = rotX"))},
+                        {QStringLiteral("rotY"), numberProp(QStringLiteral("Shorthand: degrees about the model's up axis; writes rotationY = -rotY"))},
                         {QStringLiteral("rotZ"), numberProp(QStringLiteral("Shorthand: degrees about the model's Z axis; writes rotation = -rotZ"))},
                         {QStringLiteral("lights"), model3dLightsProp()},
                         {QStringLiteral("ambient"), numberProp(QStringLiteral("Ambient light 0..1 (default 0.35)"), 0.0, 1.0)},
+                        {QStringLiteral("modelScale"), numberProp(QStringLiteral("Uniform size multiplier about the anchor (default 1)"), 0.01, 100.0)},
+                        {QStringLiteral("modelScaleZ"), numberProp(QStringLiteral("Extra multiplier on the model's depth only (default 1)"), 0.01, 100.0)},
                         {QStringLiteral("name"), stringProp(QStringLiteral("Clip name (default: the file name)"))}},
                        {QStringLiteral("path")}) },
         { "inspect_model3d", "model3d", "Check a .glb or splat before or after placing it",
@@ -678,11 +721,13 @@
                                    {QStringLiteral("offset"), numberProp(QStringLiteral("Seconds into the animation at the clip's start"))},
                                    {QStringLiteral("scale"), numberProp(QStringLiteral("Shorthand: largest extent as a fraction of canvas height; writes w/h"), 0.01, 10.0)},
                                    {QStringLiteral("depth"), numberProp(QStringLiteral("Shorthand: perspective strength 0..1; writes perspective"), 0.0, 1.0)},
-                                   {QStringLiteral("rotX"), numberProp(QStringLiteral("Shorthand: writes rotationX = -rotX"))},
-                                   {QStringLiteral("rotY"), numberProp(QStringLiteral("Shorthand: writes rotationY"))},
+                                   {QStringLiteral("rotX"), numberProp(QStringLiteral("Shorthand: writes rotationX = rotX"))},
+                                   {QStringLiteral("rotY"), numberProp(QStringLiteral("Shorthand: writes rotationY = -rotY"))},
                                    {QStringLiteral("rotZ"), numberProp(QStringLiteral("Shorthand: writes rotation = -rotZ"))},
                                    {QStringLiteral("lights"), model3dLightsProp()},
                                    {QStringLiteral("ambient"), numberProp(QStringLiteral("Ambient light 0..1"), 0.0, 1.0)},
+                                   {QStringLiteral("modelScale"), numberProp(QStringLiteral("Uniform size multiplier about the anchor"), 0.01, 100.0)},
+                                   {QStringLiteral("modelScaleZ"), numberProp(QStringLiteral("Extra multiplier on the model's depth only"), 0.01, 100.0)},
                                    {QStringLiteral("name"), stringProp(QStringLiteral("Clip name"))}},
                                   clipRefProps())) },
 
@@ -1296,35 +1341,44 @@
         { "get_camera_state", "timeline", "Read the scene camera's pose at a time",
           "The camera clip covering `at` (default the playhead), or `clip`, as it is posed then, "
           "keyframes included. Returns {active, at, clip, track, x, y, z, rotationX, rotationY, "
-          "rotation, perspective, eye:[x,y,z]}; active:false when no camera covers that time. Units: "
-          "x/y/z are camera translation in canvas px (+x moves the camera right so the picture goes "
-          "left, +y down, +z back from the scene); rotationX/Y pitch/yaw in degrees (+rotationX "
-          "tips the camera's top away from the scene, -rotationX looks up; +rotationY looks left); "
-          "rotation is roll in degrees, clockwise on screen; perspective is the eye distance in px "
-          "(the lens). eye is the viewpoint in world px about the canvas centre (y down, +z toward "
-          "the viewer). Read-only.",
+          "rotation, aimAtTarget, poi:[x,y,z], zoom, focalLength, fov, eye:[x,y,z]}; active:false when "
+          "no camera covers that time. Units: x/y/z (and eye) are the camera's position in the 3D "
+          "world: canvas px from the top-left, y down, +z away from the viewer, so a camera at rest "
+          "has eye [w/2, h/2, -zoom]. rotationX/Y/rotation are pitch/yaw/roll in degrees, right-handed "
+          "in that world and applied yaw first (+rotationX looks up, +rotationY looks toward +x, "
+          "+rotation rolls clockwise on screen); the horizon stays level when roll is 0. With "
+          "aimAtTarget the camera faces poi (a world point, level horizon) and the rotation is an "
+          "extra offset in the camera's own frame. zoom is the distance in px at which the canvas "
+          "fills the frame; focalLength is the same value in mm on a 36 x 24 mm film back and fov the "
+          "vertical field of view in degrees (set zoom, i.e. perspective, to change any of them). "
+          "Read-only.",
           objectSchema(mergeProps({{QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds (default: the playhead)"))}},
                                   clipRefProps())),
           true, false, true },
         { "reset_camera", "timeline", "Return the scene camera to rest",
-          "Clears the camera clip's pan, dolly, pitch, yaw and roll, keyframes included, so it looks "
-          "exactly like no camera; the lens (perspective) is kept. One undo step. `clip` defaults to "
+          "Clears the camera clip's position, rotation and point of interest, keyframes included, and "
+          "switches aimAtTarget off, and clears the zoom (perspective) back to its default, so it "
+          "looks exactly like no camera. One undo step. `clip` defaults to "
           "the camera covering the playhead; not_found when there is no camera (add_camera).",
           objectSchema(clipRefProps()) },
         { "camera_look_at", "timeline", "Aim the scene camera at a clip or point",
-          "Turns the camera in place (its eye stays put) so `target` lands at the canvas centre, by "
-          "setting rotationX/rotationY and re-solving x/y/z to hold the eye; roll and lens are kept. "
+          "Turns the camera in place (its eye stays put) so `target` lands at the canvas centre with a "
+          "level horizon: rotationX/rotationY are set and the roll is reset to 0; zoom is kept. With "
+          "aimAtTarget:true the camera instead stays locked on the target (a two-node camera): the "
+          "point of interest is written (anchorX/Y/Z) and the rotation offset cleared; aimAtTarget:false "
+          "switches that off again. "
           "target is a clip id (its centre in the 3D world, including z; transform-layer parents "
-          "are ignored) or a world point {x,y,z} in canvas px about the canvas centre (y down, +z "
-          "toward the viewer; z defaults to 0). `at` (default the playhead) is where the aim is "
+          "are ignored) or a world point {x,y,z} in canvas px from the top-left (y down, +z away "
+          "from the viewer; z defaults to 0). `at` (default the playhead) is where the aim is "
           "computed and, with keyframe:true, where keys are written; a property that is already "
           "animated always takes a key, otherwise the plain value is written (like set_transform). "
           "One undo step. Returns the new pose and eye. Needs a camera: add_camera first.",
           objectSchema(mergeProps(
               {{QStringLiteral("target"), QJsonObject{{QStringLiteral("type"), QJsonArray{QStringLiteral("string"), QStringLiteral("object")}},
-                                                      {QStringLiteral("description"), QStringLiteral("Clip id to look at, or a world point {x,y,z} in canvas px about the canvas centre")}}},
+                                                      {QStringLiteral("description"), QStringLiteral("Clip id to look at, or a world point {x,y,z} in canvas px from the canvas top-left (+z away)")}}},
                {QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds (default: the playhead)"))},
-               {QStringLiteral("keyframe"), boolProp(QStringLiteral("Write keyframes at `at` instead of plain values"))}},
+               {QStringLiteral("keyframe"), boolProp(QStringLiteral("Write keyframes at `at` instead of plain values"))},
+               {QStringLiteral("aimAtTarget"), boolProp(QStringLiteral("true = lock on the target via the point of interest; false = free rotation (default: unchanged)"))}},
               clipRefProps()),
                        {QStringLiteral("target")}) },
         { "camera_move", "timeline", "Animate a classic camera move",
@@ -1334,8 +1388,8 @@
           "(px, 200); pan_left/pan_right and tilt_up/tilt_down turn the camera in place (degrees, 20 and "
           "15); orbit_left/orbit_right circle `target` about the vertical axis while keeping it "
           "centred (degrees, 45; target is a clip id or {x,y,z} world point, default the canvas "
-          "centre); push_in/pull_out change the lens (perspective x(1-amount) or x(1+amount), a "
-          "fraction 0..0.9, default 0.35) — that is perspective strength, not framing; use dolly to "
+          "centre); push_in/pull_out zoom the lens in or out (zoom x(1+amount) or x(1-amount), a "
+          "fraction 0..0.9, default 0.35) without moving the eye; use dolly to "
           "move closer. Orbit keys interpolate pose linearly, so an orbit past ~90 degrees is a "
           "chord rather than an arc; split it. easing is ease (default) or linear. start..end must "
           "lie inside the camera clip (default: the one covering `start`). Needs add_camera first.",
@@ -1356,19 +1410,22 @@
               clipRefProps()),
                        {QStringLiteral("move"), QStringLiteral("start"), QStringLiteral("end")}) },
 
-        { "set_preview_view", "ui", "Move the preview's 2D/3D mode and free 3D viewpoint",
+        { "set_preview_view", "ui", "Move the 3D viewport's free viewpoint",
           "Drive the preview panel's view; only supplied keys act, in this order: mode, reset, axis, "
-          "frame_selection, orbit, pan, dolly, look_through. mode switches the preview between the "
-          "camera's picture (2d) and the world from a free viewpoint with the scene camera and stage "
-          "drawn in it (3d). reset returns to the overview. axis snaps to a standard view of the "
+          "ortho, fov, orientation, frame_selection, frame_all, orbit, pan, dolly, look_through. mode 3d shows the 3D "
+          "viewport (the world from a free viewpoint with the scene camera and stage drawn in it) by "
+          "opening a workspace that has one; 2d changes nothing, the Edit preview is always the "
+          "camera's picture. reset returns to the overview. axis snaps to a standard view of the "
           "current target (leaves look_through). frame_selection frames the selected clip, or the "
-          "whole stage when none. orbit [dx,dy] is degrees, pan [dx,dy] canvas px, dolly wheel steps "
+          "whole stage when none. frame_all frames every clip at the playhead, the stage and the camera. ortho "
+          "toggles the orthographic projection, fov is the editor lens in degrees (10-120), orientation is the "
+          "gizmo's axes (world|local|view). orbit [dx,dy] is degrees, pan [dx,dy] canvas px, dolly wheel steps "
           "(+ toward the target). look_through true views through the scene camera (what exports), "
-          "false returns to the free viewpoint. Navigation changes the viewpoint even in 2d mode but "
-          "is only seen in 3d. Editor state: not part of the project, not undoable. Returns {mode, "
-          "look_through, target:[x,y,z], yaw, pitch, distance, fov, eye:[x,y,z]} in world px about the "
-          "canvas centre. See it with capture({view:\"editor3d\"}).",
-          objectSchema({{QStringLiteral("mode"), enumProp(QStringLiteral("2d is the camera's picture, 3d the free viewpoint"),
+          "false returns to the free viewpoint. Navigation changes the viewpoint even while the 3D "
+          "viewport is closed but is only seen in it. Editor state: not part of the project, not undoable. Returns {mode, "
+          "look_through, target:[x,y,z], yaw, pitch, distance, fov, ortho, orientation, eye:[x,y,z]} in the 3D world (canvas "
+          "px from the top-left, y down, +z away from the viewer). See it with capture({view:\"editor3d\"}).",
+          objectSchema({{QStringLiteral("mode"), enumProp(QStringLiteral("3d shows the 3D viewport; 2d is accepted and does nothing"),
                                                          {QStringLiteral("2d"), QStringLiteral("3d")})},
                         {QStringLiteral("axis"), enumProp(QStringLiteral("Standard view of the current target"),
                                                          {QStringLiteral("front"), QStringLiteral("back"), QStringLiteral("left"),
@@ -1377,6 +1434,10 @@
                         {QStringLiteral("pan"), arrayProp(numberProp(QStringLiteral("Canvas px")), QStringLiteral("[dx, dy] canvas px the scene follows"))},
                         {QStringLiteral("dolly"), numberProp(QStringLiteral("Wheel steps; + moves toward the target"))},
                         {QStringLiteral("frame_selection"), boolProp(QStringLiteral("Frame the selected clip, or the whole stage"))},
+                        {QStringLiteral("ortho"), boolProp(QStringLiteral("Orthographic projection for the free viewpoint"))},
+                        {QStringLiteral("fov"), numberProp(QStringLiteral("Editor lens, vertical degrees (10-120, default 32)"))},
+                        {QStringLiteral("orientation"), enumProp(QStringLiteral("Gizmo axes"), {QStringLiteral("world"), QStringLiteral("local"), QStringLiteral("view")})},
+                        {QStringLiteral("frame_all"), boolProp(QStringLiteral("Frame every clip at the playhead, the stage and the camera"))},
                         {QStringLiteral("look_through"), boolProp(QStringLiteral("true = through the scene camera, false = free viewpoint"))},
                         {QStringLiteral("reset"), boolProp(QStringLiteral("Return to the overview viewpoint"))}}) },
 
@@ -1649,13 +1710,30 @@
           "bin asset of its own, so point the clip back at the original instead.",
           objectSchema(clipRefProps()), false, true },
         { "list_addons", "ai", "What add-ons exist",
-          "Returns {addons:[{id, name, kind, version, state, installed}]}. Use id with install_addon.",
+          "Returns {addons:[{id, name, kind, version, state, installed, categories, tagline, requires}]}. "
+          "state is available, queued, downloading, installing, installed, update-available, failed or "
+          "needs-newer-app. requires lists the add-on ids it needs. Use id with install_addon; "
+          "addon_details has the full store entry.",
           objectSchema({}), true, false, true },
         { "install_addon", "ai", "Install a model or pack",
-          "Start downloading and installing an add-on from list_addons. Async: poll list_addons for "
-          "state. Not undoable.",
+          "Queue an add-on from list_addons for download and install, after whatever it requires "
+          "(an AI model pulls in the AI engine). Downloads run one at a time. Async: poll list_addons "
+          "for state. Returns the plan {ids, added:[{id, name, reason, forName}], missing, downloadSize}; "
+          "ids is empty when nothing needed doing. Not undoable.",
           objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Add-on id from list_addons"))}},
                        {QStringLiteral("id")}) },
+        { "install_addons", "ai", "Install several add-ons",
+          "install_addon for a list, planned together so shared requirements download once. Returns the "
+          "same plan. Not undoable.",
+          objectSchema({{QStringLiteral("ids"),
+                         arrayProp({{QStringLiteral("type"), QStringLiteral("string")}},
+                                   QStringLiteral("Add-on ids from list_addons"))}},
+                       {QStringLiteral("ids")}) },
+        { "addon_details", "ai", "Describe an add-on",
+          "The store entry for one add-on: name, tagline, summary, useCases, howTo, unlocks, requires "
+          "(with installed flags), recommends, size, state and categories.",
+          objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Add-on id from list_addons"))}},
+                       {QStringLiteral("id")}), true, false, true },
         { "cancel_addon_install", "ai", "Stop an add-on install",
           "Cancel an in-flight install_addon. Not undoable.",
           objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Add-on id"))}},
@@ -1825,6 +1903,157 @@
                {QStringLiteral("duration"), numberProp(QStringLiteral("Range length seconds (timeline mode)"))}},
               clipRefProps())),
           true, false, true },
+        { "audio_measure", "audio", "Full loudness report",
+          "Everything a loudness meter shows over a range: integrated LUFS, loudness range (LRA, needs 6 s), "
+          "4x-oversampled true peak, sample peak, loudest momentary (0.4 s) and short-term (3 s) readings, "
+          "clipping runs, and gaps (0.1 s loudness under max(-60, integrated-20) LUFS for at least 0.25 s: "
+          "{start,end,level_lufs,kind:digital silence|near silence|drop,where?:lead-in|tail|whole file}). "
+          "curve:true adds the momentary and short-term LUFS curves (thinned to 600 points; dt says the step). "
+          "Three modes like get_waveform: clip (or track+index) measures that clip through its volume and fades "
+          "on the timeline, asset a media file in source seconds (omit duration for the whole file), neither "
+          "(with start and duration) the MIXED TIMELINE as it would export, master clipper off. Range is capped at "
+          "3600 s. BLOCKS. A missing lufs/lra/true_peak_db key means it cannot be computed (all gated out, too "
+          "short, or digital silence — then silent:true).",
+          objectSchema(mergeProps(
+              {{QStringLiteral("asset"), assetRefProp()},
+               {QStringLiteral("curve"), propWithDefault(boolProp(QStringLiteral("Include the momentary and short-term loudness curves")), false)},
+               {QStringLiteral("start"), numberProp(QStringLiteral("Range start in seconds. Timeline seconds in timeline mode, source seconds in asset mode. Ignored in clip mode."))},
+               {QStringLiteral("duration"), numberProp(QStringLiteral("Range length in seconds, max 3600. Required for timeline mode; in asset mode omit it for the whole file."))}},
+              clipRefProps())),
+          true, false, true },
+        { "audio_events", "audio", "Find the hits and swells",
+          "Sound events in a range: transient hits (superflux onsets on a 96-band log-mel, refined to the attack "
+          "on 1 ms envelopes, so at is where the sound actually begins) and swells (whoosh / riser build-ups, "
+          "timed at their peak). Each event has strength 0..1, level_db (dBFS peak), prominence_db (rise of the "
+          "K-weighted level over the bed just before — the number to rank by; a hit after silence is huge), band "
+          "(full, low < 200 Hz, high > 2 kHz) and length_ms. Use it to find where a sound effect lands, what is "
+          "loud enough to be an accent, or to place a cut on a hit. Same clip / asset / timeline modes as "
+          "audio_measure; range capped at 600 s. BLOCKS. Returns {n, swells, truncated, events:[{at,kind:hit|swell,"
+          "strength,level_db,prominence_db,band,length_ms}]} in chronological order; over limit keeps the most "
+          "prominent. Dense music always has some onset nearby, so read audio_sync's chance figures before "
+          "trusting a match.",
+          objectSchema(mergeProps(
+              {{QStringLiteral("asset"), assetRefProp()},
+               {QStringLiteral("limit"), propWithDefault(integerProp(QStringLiteral("Most events to return, strongest kept"), 1, 500), 200)},
+               {QStringLiteral("min_prominence_db"), propWithDefault(numberProp(QStringLiteral("Skip events less than this many dB over their bed (6 = deliberate accents)")), 0)},
+               {QStringLiteral("start"), numberProp(QStringLiteral("Range start in seconds. Timeline seconds in timeline mode, source seconds in asset mode. Ignored in clip mode."))},
+               {QStringLiteral("duration"), numberProp(QStringLiteral("Range length in seconds, max 600. Required for timeline mode; in asset mode omit it for the whole file."))}},
+              clipRefProps())),
+          true, false, true },
+        { "audio_sync", "audio", "Check sound lands on the cuts",
+          "For each cut, the audio event that answers it. Cuts are the video-track clip boundaries inside the "
+          "range, or pass at:[…] for explicit times (required in asset mode, which has no timeline). status: ok = "
+          "an onset within tolerance_ms; near = within 100 ms; swell = a build-up peaking within 300 ms; peak = no "
+          "onset, only a soft level peak within 150 ms (check it); off = only a strong onset within 250 ms; "
+          "no_sound = nothing. offset_ms = sound minus picture (negative = sound early). stats carry hit rates "
+          "next to chance_* — what random cue times would score at this event density — and accent_* for strong "
+          "accents only (>= 6 dB over the bed, top 20%): on a dense mix read those, a plain hit rate means little "
+          "when chance is high. no_sound lists the cuts with no hit. Same clip / asset / timeline modes as "
+          "audio_measure; range capped at 600 s; at beyond 400 cues is trimmed (truncated:true). BLOCKS. Fix a "
+          "miss by moving the sound clip by offset_ms.",
+          objectSchema(mergeProps(
+              {{QStringLiteral("asset"), assetRefProp()},
+               {QStringLiteral("at"), arrayProp(numberProp(QStringLiteral("Seconds")), QStringLiteral("Cue times to check instead of the timeline's cuts (timeline seconds, or source seconds in asset mode)"))},
+               {QStringLiteral("tolerance_ms"), propWithDefault(numberProp(QStringLiteral("How close an onset must be to count as ok (a frame is 33 at 30 fps)"), 5, 250), 40)},
+               {QStringLiteral("start"), numberProp(QStringLiteral("Range start in seconds. Timeline seconds in timeline mode, source seconds in asset mode. Ignored in clip mode."))},
+               {QStringLiteral("duration"), numberProp(QStringLiteral("Range length in seconds, max 600. Required for timeline mode; in asset mode omit it for the whole file."))}},
+              clipRefProps())),
+          true, false, true },
+        { "audio_tag", "audio", "Name the sounds and sections",
+          "What a range sounds like, from the audio.clap addon (and audio.ast for speech and music). sections: the "
+          "range cut where the sound changes (3 s windows merged while neighbours stay alike, split at strong "
+          "timbre or level changes), each with a label (genre, instruments, mood, 'also:' sources from AST, ambience, "
+          "voice), the top two vocabulary tags per category (music_genre, music_mood, instruments, ambience, voice) "
+          "with z, and speech / music / silence probabilities. events: the most important hits and swells of "
+          "audio_events (limit of them; those at a cut first), each with sound (WHOOSH, RISER, HIT, KEY, UI, STEP, "
+          "FOLEY, NOTE, DRUM, VOICE), label, the top 3 sound tags with z, exposed (>= 12 dB over its bed, so the tag "
+          "is more reliable) and sounds_like (calibrated vocabulary terms with verdict strong|plausible|weak). "
+          "Tags on music mixes are guesses; trust exposed hits and z >= 2.5 sections. Same clip / asset / timeline "
+          "modes as audio_measure; range capped at 600 s. BLOCKS (about a second per tagged event and per 2 s of "
+          "section; a minute of audio takes tens of seconds on CPU). Missing addons return addon_missing.",
+          objectSchema(mergeProps(
+              {{QStringLiteral("asset"), assetRefProp()},
+               {QStringLiteral("limit"), propWithDefault(integerProp(QStringLiteral("Most events to tag, most important first"), 1, 96), 20)},
+               {QStringLiteral("sections"), propWithDefault(boolProp(QStringLiteral("Also split the range into labelled sections")), true)},
+               {QStringLiteral("at"), arrayProp(numberProp(QStringLiteral("Seconds")), QStringLiteral("Cut or cue times: events within 100 ms of one are always tagged (timeline seconds, or source seconds in asset mode)"))},
+               {QStringLiteral("start"), numberProp(QStringLiteral("Range start in seconds. Timeline seconds in timeline mode, source seconds in asset mode. Ignored in clip mode."))},
+               {QStringLiteral("duration"), numberProp(QStringLiteral("Range length in seconds, max 600. Required for timeline mode; in asset mode omit it for the whole file."))}},
+              clipRefProps())),
+          true, false, true },
+        { "audio_find", "audio", "Find a sound by name",
+          "Where in a range a described sound happens. term is one of the 322 vocabulary terms (sound, music "
+          "and ambience descriptions such as \"heavy rain\", \"a fast whoosh\", \"applause\", \"crisp hi-hats\"), or "
+          "words that all appear in one (\"whoosh\" picks the shortest such term); the reply's term is the one used. "
+          "There is no free-text search: anything else returns error unknown_term with the closest vocabulary terms in "
+          "closest. Sliding windows plus excerpts around the strongest hits are scored with the calibrated CLAP "
+          "match. Returns moments:[{start,end,z,cosine,verdict,source:window|event}] best first, non-overlapping, "
+          "in the scope's seconds (timeline seconds, or source seconds in asset mode). z >= 3 strong (right 98% of "
+          "the time on a held-out set), 2.5 plausible, 2 weak, below 2 nothing in this range sounds like the term. "
+          "Same clip / asset / timeline modes as audio_measure; range capped at 600 s. BLOCKS (up to ~90 model "
+          "runs). Needs the audio.clap addon (addon_missing otherwise).",
+          objectSchema(mergeProps(
+              {{QStringLiteral("term"), stringProp(QStringLiteral("A vocabulary term, e.g. \"heavy rain\", \"a door slam\", \"upbeat pop music\""))},
+               {QStringLiteral("asset"), assetRefProp()},
+               {QStringLiteral("top"), propWithDefault(integerProp(QStringLiteral("Most moments to return"), 1, 20), 5)},
+               {QStringLiteral("start"), numberProp(QStringLiteral("Range start in seconds. Timeline seconds in timeline mode, source seconds in asset mode. Ignored in clip mode."))},
+               {QStringLiteral("duration"), numberProp(QStringLiteral("Range length in seconds, max 600. Required for timeline mode; in asset mode omit it for the whole file."))}},
+              clipRefProps()), {QStringLiteral("term")}),
+          true, false, true },
+        { "audio_rank", "audio", "Rank media by a sound",
+          "Rank media-bin audio and video assets by how well their sound matches one vocabulary term (same terms as "
+          "audio_find; unknown_term lists the closest). Each file is embedded from up to six 10 s windows spread "
+          "over it. Returns results:[{asset,name,z,cosine,verdict,near_silent,sounds_most_like}] best first; "
+          "near-silent files (peak under -60 dBFS) rank last with verdict no match. z >= 3 strong, 2.5 plausible, "
+          "2 weak. Pick a sound effect or a clip from the bin by what it sounds like. Files without an audio track "
+          "are listed in skipped_no_audio. At most 100 assets per call. BLOCKS (roughly a second per asset). Needs "
+          "the audio.clap addon.",
+          objectSchema(
+              {{QStringLiteral("term"), stringProp(QStringLiteral("A vocabulary term, e.g. \"a deep cinematic whoosh\", \"applause\""))},
+               {QStringLiteral("assets"), arrayProp(assetRefProp(), QStringLiteral("Assets to rank; omit for every audio and video asset in the bin"))},
+               {QStringLiteral("top"), propWithDefault(integerProp(QStringLiteral("Most results to return"), 1, 100), 5)}},
+              {QStringLiteral("term")}),
+          true, false, true },
+        { "audio_presence", "audio", "Where speech and music are",
+          "Speech, music and silence along a range, from the audio.ast addon (AudioSet classifier, 5.12 s windows "
+          "every 2.56 s). Returns segments:[{start,end,kind}] with kind speech | music | speech+music | silence | "
+          "other (sound that is neither), plus speech_seconds, music_seconds and silence_seconds. Music under "
+          "speech reads as speech+music. A window counts as speech or music from probability 0.3. Use it to find "
+          "where dialogue is before ducking music, or where nothing is said. Same clip / asset / timeline modes as "
+          "audio_measure; range capped at 600 s. BLOCKS. Needs the audio.ast addon.",
+          objectSchema(mergeProps(
+              {{QStringLiteral("asset"), assetRefProp()},
+               {QStringLiteral("start"), numberProp(QStringLiteral("Range start in seconds. Timeline seconds in timeline mode, source seconds in asset mode. Ignored in clip mode."))},
+               {QStringLiteral("duration"), numberProp(QStringLiteral("Range length in seconds, max 600. Required for timeline mode; in asset mode omit it for the whole file."))}},
+              clipRefProps())),
+          true, false, true },
+        { "audio_sheet", "audio", "See the soundtrack",
+          "One annotated image of the sound over a range, on a shared time axis: a frame after each cut, "
+          "labelled hits and swells, a 30 Hz-16 kHz spectrogram (silence is black), the waveform, momentary and "
+          "short-term loudness with the integrated level and gaps shaded yellow, beat ticks, and a marker per cut "
+          "coloured by sync (green onset within tolerance, amber within 100 ms, blue swell, violet level peak "
+          "only, red no hit) with dashed cut lines through every lane. Use it to judge a whole mix at a glance "
+          "— where the sound dies, what clips, whether hits land on the cuts. Same clip / asset / timeline modes "
+          "as audio_measure; range capped at 600 s (zoom with start+duration). BLOCKS. Returns a summary, the "
+          "measure numbers, events, cuts, sync stats and items (as audio_measure / audio_sync) and an inline "
+          "JPEG (long edge <= 1600 px); return:\"path\" writes the full-width PNG next to the project's frame "
+          "captures and returns its path instead. Asset mode draws frames only for video files and only at the "
+          "at times. With the audio.clap / audio.ast addons installed the sheet also gets a sections lane, sound "
+          "names on the hits and a speech / music lane (tags:false skips that and its model time; the reply then "
+          "carries sections, tagged_events and presence, or tags_missing naming the addons to install). image "
+          "result cannot run inside apply unless return is path.",
+          objectSchema(mergeProps(
+              {{QStringLiteral("asset"), assetRefProp()},
+               {QStringLiteral("at"), arrayProp(numberProp(QStringLiteral("Seconds")), QStringLiteral("Cue times to mark and sync-check instead of the timeline's cuts (timeline seconds, or source seconds in asset mode)"))},
+               {QStringLiteral("frames"), propWithDefault(boolProp(QStringLiteral("Draw a frame after each cut")), true)},
+               {QStringLiteral("tags"), propWithDefault(boolProp(QStringLiteral("Add sections, sound names and speech / music when audio.clap / audio.ast are installed")), true)},
+               {QStringLiteral("width"), propWithDefault(integerProp(QStringLiteral("Sheet width in px"), 1000, 2400), 2000)},
+               {QStringLiteral("return"), propWithDefault(enumProp(QStringLiteral("image is an inline JPEG; path writes the full-size PNG to disk"),
+                                                                   {QStringLiteral("image"), QStringLiteral("path")}),
+                                                          QStringLiteral("image"))},
+               {QStringLiteral("start"), numberProp(QStringLiteral("Range start in seconds. Timeline seconds in timeline mode, source seconds in asset mode. Ignored in clip mode."))},
+               {QStringLiteral("duration"), numberProp(QStringLiteral("Range length in seconds, max 600. Required for timeline mode; in asset mode omit it for the whole file."))}},
+              clipRefProps())),
+          true, false, true },
         { "normalize_volume", "audio", "Match a LUFS target",
           "Measure the clip, then set its scalar volume so integrated loudness matches target_lufs. "
           "Clamped to 0..2.",
@@ -1858,62 +2087,113 @@
         { "save_multicam_combined", "multicam", "Bake a single program track",
           "Write the session as one combined program track and end it.",
           objectSchema({}) },
-        { "market_status", "market", "Check the marketplace before searching it",
-          "Whether this build has a marketplace, whether the user has accepted its terms, the "
-          "account (if connected), and the catalog: types (video, photo, audio, …) with their "
-          "providers, each provider's capabilities (search, featured, resolve), filters and quota. "
-          "consented:false means every other market op will fail consent_required — the user "
-          "accepts in the app (Assets → Market); an agent cannot accept for them.",
-          objectSchema({}), true, false, true },
-        { "market_search", "market", "Find stock video, photos or audio to import",
-          "Search one provider of one type and return up to `limit` listings as {id, title, type, "
-          "provider, dur, w, h, coins?, by?, thumb?, variants?}. Omit q for a provider's featured "
-          "listing. filters takes the ids from market_status. more:true fetches the next page of "
-          "the previous search (has_more says whether there is one; offset is where the page starts "
-          "in the accumulated results, so market_item still resolves earlier ids). Blocks until the "
-          "service answers. A resolve-only provider (no search capability) needs market_resolve instead. "
-          "thumb is a URL an agent can fetch with its own tools to look at the item.",
-          objectSchema({{QStringLiteral("q"), stringProp(QStringLiteral("Free-text query; empty = featured"))},
-                        {QStringLiteral("type"), stringProp(QStringLiteral("Type id from market_status (default: the current one)"))},
-                        {QStringLiteral("provider"), stringProp(QStringLiteral("Provider id from market_status (default: the current one)"))},
-                        {QStringLiteral("filters"), QJsonObject{{QStringLiteral("type"), QStringLiteral("object")}, {QStringLiteral("description"), QStringLiteral("Filter id → value, using the filters market_status lists for the provider")}}},
-                        {QStringLiteral("limit"), propWithDefault(integerProp(QStringLiteral("Max listings to return"), 1, 30), 30)},
-                        {QStringLiteral("more"), boolProp(QStringLiteral("Fetch the next page of the last search instead of a new one"))}}),
+        { "market_status", "market", "See what the marketplace offers before searching it",
+          "Whether this build has a marketplace and what it serves: {configured, offline, revision, features, "
+          "sources:[{id, kind, label, mediaKind, searchable, canResolve, categories (with children), providers?, sorts?}]}. "
+          "Sources are stock.<type> (video, photo, audio, music, greenscreen), drift-assets, sfx and "
+          "community.<kind> (effect, transition, audio-effect, look, theme, effect-template). "
+          "source:<id> returns that one source in full. layout:true adds pages:[{id, title, sections:[{id, type, "
+          "title, source}]}] so a section can be searched by its \"page/section\" name. refresh:true re-reads the "
+          "server's manifest first (waits up to 15 s).",
+          objectSchema({{QStringLiteral("source"), stringProp(QStringLiteral("Source id for the full detail of one source"))},
+                        {QStringLiteral("layout"), boolProp(QStringLiteral("Include the pages and sections"))},
+                        {QStringLiteral("refresh"), boolProp(QStringLiteral("Re-fetch the manifest from the server first"))}}),
+          true, false, true },
+        { "market_search", "market", "Find stock media, Drift assets, sounds or community add-ons",
+          "List one source, or run a section's own binding with section:\"page/section\" (its sort, category and "
+          "page size become defaults). Returns {source, items:[{id, title, kind, dur?, w?, h?, by?, tags, category?, "
+          "thumb, preview?, variants:n, installed}], next_cursor?, has_more, quota?, warnings?}. Omit q for the "
+          "featured listing. category, sort and period use the values market_status lists for the source; "
+          "provider \"*\" asks every provider; filters is a map of filter id to value. more:true fetches the next "
+          "page of the previous search of that source (earlier ids stay valid); cursor restarts from a returned "
+          "next_cursor. type is an alias for source:\"stock.<type>\". Blocks until the service answers. "
+          "A resolve-only source needs market_resolve. Errors rate_limited, app_too_old and quota_exceeded come back "
+          "as {ok:false, error, detail}.",
+          objectSchema({{QStringLiteral("source"), stringProp(QStringLiteral("Source id from market_status"))},
+                        {QStringLiteral("section"), stringProp(QStringLiteral("page/section from market_status({layout:true}); runs that section's binding"))},
+                        {QStringLiteral("q"), stringProp(QStringLiteral("Free-text query; empty = featured"))},
+                        {QStringLiteral("category"), stringProp(QStringLiteral("Category id from market_status"))},
+                        {QStringLiteral("sort"), stringProp(QStringLiteral("Sort id from market_status"))},
+                        {QStringLiteral("period"), stringProp(QStringLiteral("Trending window, for sources that have one"))},
+                        {QStringLiteral("provider"), stringProp(QStringLiteral("Provider id; * searches all of them"))},
+                        {QStringLiteral("filters"), QJsonObject{{QStringLiteral("type"), QStringLiteral("object")}, {QStringLiteral("description"), QStringLiteral("Filter id -> value, using the filters market_status lists for the source")}}},
+                        {QStringLiteral("limit"), propWithDefault(integerProp(QStringLiteral("Items per page"), 1, 50), 24)},
+                        {QStringLiteral("cursor"), stringProp(QStringLiteral("next_cursor from an earlier result"))},
+                        {QStringLiteral("more"), boolProp(QStringLiteral("Fetch the next page of the previous search instead of a new one"))},
+                        {QStringLiteral("type"), stringProp(QStringLiteral("Alias for source:\"stock.<type>\""))}}),
           true, false, false },
-        { "market_resolve", "market", "Turn a pasted page URL into a downloadable listing",
-          "For providers that resolve links (YouTube-style) rather than search. Returns {item} "
-          "with variants; pass its id to market_download. Can take a while — it blocks up to 90 s.",
-          objectSchema({{QStringLiteral("url"), stringProp(QStringLiteral("Page URL the user pasted"))}},
+        { "market_item", "market", "Read one listing in full",
+          "One item fetched from the service: description, license, variants:[{id, label, w, h}], thumb, preview, "
+          "web_url, min_app_version, installed, install_state, extra. Use it to pick a variant for market_install.",
+          objectSchema({{QStringLiteral("source"), stringProp(QStringLiteral("Source id"))},
+                        {QStringLiteral("id"), stringProp(QStringLiteral("Item id from market_search"))}},
+                       {QStringLiteral("source"), QStringLiteral("id")}),
+          true, false, true },
+        { "market_resolve", "market", "Turn a pasted page URL into a listing",
+          "For sources that resolve links (YouTube-style) rather than search. Returns {item} with variants; pass its "
+          "source and id to market_install. Can take a while: blocks for wait seconds (default 90).",
+          objectSchema({{QStringLiteral("url"), stringProp(QStringLiteral("Page URL the user pasted"))},
+                        {QStringLiteral("wait"), propWithDefault(integerProp(QStringLiteral("Seconds to wait for the link to resolve"), 1, 300), 90)}},
                        {QStringLiteral("url")}),
           true, false, false },
-        { "market_item", "market", "Read one listing's variants and license",
-          "Full detail of an item from the last market_search or market_resolve result, including "
-          "variants:[{id, label, w, h, coins?}] for market_download and preview/license when present.",
-          objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Item id from market_search or market_resolve"))}},
-                       {QStringLiteral("id")}),
+        { "market_preview", "market", "Look at a listing's thumbnail or preview",
+          "Fetches the item's thumbnail (what:thumb) or preview (what:preview), caches it under the app cache and "
+          "returns a downscaled JPEG as image content with meta {path, w, h, mime}. Video and audio previews return "
+          "meta {path, mime, dur} only, no image. image:false returns just the meta. Not batchable in apply: call it "
+          "directly.",
+          objectSchema({{QStringLiteral("source"), stringProp(QStringLiteral("Source id"))},
+                        {QStringLiteral("id"), stringProp(QStringLiteral("Item id"))},
+                        {QStringLiteral("what"), propWithDefault(enumProp(QStringLiteral("Which image"), {QStringLiteral("thumb"), QStringLiteral("preview")}), QStringLiteral("thumb"))},
+                        {QStringLiteral("image"), propWithDefault(boolProp(QStringLiteral("Return the image itself")), true)},
+                        {QStringLiteral("max"), propWithDefault(integerProp(QStringLiteral("Longest side in pixels"), 128, 1024), 512)}},
+                       {QStringLiteral("source"), QStringLiteral("id")}),
           true, false, true },
-        { "market_download", "market", "Fetch a listing into the media bin",
-          "Start downloading an item; when it finishes the file is imported and the job carries "
-          "its asset id, ready for place_clip. SPENDS the provider's per-machine quota (see "
-          "market_status) and cannot be undone. Async: returns the job at once; pass wait:<seconds> "
-          "to block until it finishes (max 600), or poll market_downloads. With wait, a job that "
-          "ends failed or cancelled comes back {ok:false, error, detail, job}. A job for an item "
-          "that is still running fails conflict; an id not in the last search/resolve result fails "
-          "not_found.",
-          objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Item id from market_search or market_resolve"))},
-                        {QStringLiteral("variant"), stringProp(QStringLiteral("Variant id from market_item (default: the provider's default)"))},
-                        {QStringLiteral("dir"), stringProp(QStringLiteral("Absolute folder to write the file into (default: Drift's own media area)"))},
-                        {QStringLiteral("wait"), propWithDefault(integerProp(QStringLiteral("Seconds to block for completion; 0 returns immediately"), 0, 600), 0)}},
+        { "market_install", "market", "Install a listing into the project or the app",
+          "Install an item: stock media, Drift assets and sounds land in the media bin; community items install as an "
+          "effect, theme, look or template; face props go to the face-prop library. Stock items SPEND the provider's "
+          "per-machine quota (see market_search quota). Not undoable. Without wait it returns {job} at once; with wait:<seconds> "
+          "(max 600) it blocks and returns {ok, job, result} where result is {asset} | {prop} | {effect} | {theme} | "
+          "{look} | {template}. A failed or cancelled install comes back {ok:false, error, detail, job}. variant is a "
+          "variant id from market_item; dir (stock only) is an absolute folder to save into. place:{at, track, new_track} "
+          "puts the asset on the timeline once installed (needs wait > 0 and a bin asset) and adds {clip, placed, "
+          "requested, reason?}; the placement is one undo step. An item that is still installing fails conflict.",
+          objectSchema({{QStringLiteral("source"), stringProp(QStringLiteral("Source id"))},
+                        {QStringLiteral("id"), stringProp(QStringLiteral("Item id from market_search or market_resolve"))},
+                        {QStringLiteral("variant"), stringProp(QStringLiteral("Variant id from market_item (default: the source's default)"))},
+                        {QStringLiteral("dir"), stringProp(QStringLiteral("Absolute folder to save into (stock sources only; default: Drift's own media area)"))},
+                        {QStringLiteral("wait"), propWithDefault(integerProp(QStringLiteral("Seconds to block for completion; 0 returns immediately"), 0, 600), 0)},
+                        {QStringLiteral("place"), objectSchema({{QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds (default: playhead)"))},
+                                                                {QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
+                                                                {QStringLiteral("new_track"), boolProp(QStringLiteral("Place on a new track"))}})}},
+                       {QStringLiteral("source"), QStringLiteral("id")}),
+          false, false, false },
+        { "market_downloads", "market", "Poll marketplace, add-on and update downloads",
+          "Every transfer the app runs: {active, jobs:[{id, kind, title, status, phase, progress, bytes, total, speed, "
+          "error?, error_code?, retryable, cancellable, result?}]}. kind is stock | community | drift-asset | sfx | "
+          "addon | update. status runs waiting -> queued/processing -> downloading -> importing/installing -> done, "
+          "or failed/cancelled. result carries the asset id or path once done. kind filters; clear:true forgets "
+          "finished jobs.",
+          objectSchema({{QStringLiteral("kind"), stringProp(QStringLiteral("Only jobs of this kind"))},
+                        {QStringLiteral("clear"), boolProp(QStringLiteral("Forget finished, failed and cancelled jobs"))}}),
+          true, false, true },
+        { "market_cancel_download", "market", "Stop a running download",
+          "Cancel a running job of any kind by its id from market_downloads. Finished jobs fail conflict. Not undoable.",
+          objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Job id from market_downloads"))}},
+                       {QStringLiteral("id")}),
+          false, true, true },
+        { "market_retry_download", "market", "Retry a failed or cancelled download",
+          "Restart a failed or cancelled job of any kind by its id from market_downloads. Stock retries spend quota "
+          "again. Jobs that are not retryable fail conflict.",
+          objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Job id from market_downloads"))}},
                        {QStringLiteral("id")}),
           false, false, false },
-        { "market_downloads", "market", "Poll marketplace downloads",
-          "Every download this session as {id, title, kind, status, phase, progress, error?, path?, "
-          "asset?}. status runs waiting → queued/processing → downloading → importing → done, or "
-          "failed/cancelled; asset is the bin id once done. clear:true forgets finished jobs.",
-          objectSchema({{QStringLiteral("clear"), boolProp(QStringLiteral("Forget finished, failed and cancelled jobs"))}}),
-          true, false, true },
-        { "market_cancel_download", "market", "Stop a marketplace download",
-          "Cancel a running download by item id. Not undoable.",
-          objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Item id of the running download"))}},
-                       {QStringLiteral("id")}),
-          false, true, true }
+        { "market_open", "market", "Show the user a marketplace page",
+          "Ask the app window to open the Marketplace on a page (ids from market_status({layout:true})), on the "
+          "downloads tab (tab:\"downloads\"), or on one item's detail. Returns {opened:true} once requested; "
+          "a headless instance has no window to show it in.",
+          objectSchema({{QStringLiteral("page"), stringProp(QStringLiteral("Page id"))},
+                        {QStringLiteral("tab"), stringProp(QStringLiteral("\"downloads\" for the downloads tab"))},
+                        {QStringLiteral("item"), objectSchema({{QStringLiteral("source"), stringProp(QStringLiteral("Source id"))},
+                                                               {QStringLiteral("id"), stringProp(QStringLiteral("Item id"))}},
+                                                              {QStringLiteral("source"), QStringLiteral("id")})}}),
+          false, false, true }

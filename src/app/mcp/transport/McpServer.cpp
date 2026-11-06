@@ -261,6 +261,7 @@ QJsonValue McpServer::handleRpc(const QString &toolbox, const QJsonValue &body)
                 error = content.first().toObject().value(QStringLiteral("text")).toString().left(600);
         }
         emit toolCallFinished(id, !failed, error, timer.elapsed());
+        emit toolCallResult(id, name, args, result);
         return result;
     });
 }
@@ -295,3 +296,5 @@ QJsonObject McpServer::dispatchTool(const QString &name, const QJsonObject &args
 }
 
 } // namespace drift::mcp
+
+#include "moc_McpServer.cpp"

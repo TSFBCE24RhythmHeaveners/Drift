@@ -1,4 +1,5 @@
 #include "playback/PlaybackEngine.h"
+#include "playback/AudioOutputChannel.h"
 
 #include "playback/stats/PerfLog.h"
 #include "engine/EngineTuning.h"
@@ -15,6 +16,7 @@
 #include <QVariantMap>
 
 #ifdef Q_OS_ANDROID
+#include <QCoreApplication>
 #include <QJniEnvironment>
 #include <QJniObject>
 #include <QtCore/qcoreapplication_platform.h>
@@ -191,8 +193,9 @@ QString loadSavedDecodeMode()
 
 PlaybackEngine::PlaybackEngine(QObject *parent)
     : QObject(parent)
-    , m_audio(QStringLiteral("PlaybackAudio"), this)
+    , m_audio(std::make_unique<AudioOutputChannel>(QStringLiteral("PlaybackAudio"), this))
 {
+    m_streams[int(PreviewStream::Camera)].enabled = true;
     const QString saved = QSettings().value(QStringLiteral("preview/quality")).toString().toLower();
     if (isKnownPreviewQuality(saved))
         m_previewQuality = saved;
@@ -213,10 +216,10 @@ PlaybackEngine::PlaybackEngine(QObject *parent)
     m_compositor.setAdaptiveQuality(isAutoQuality());
     m_compositor.setStats(&m_stats);
 
-    m_audio.setFillCallback([this](float *stereo, int frames) { return fillAudio(stereo, frames); });
-    connect(&m_audio, &AudioOutputChannel::sinkRebuilt, this, &PlaybackEngine::onAudioSinkRebuilt);
-    connect(&m_audio, &AudioOutputChannel::errorOccurred, this, &PlaybackEngine::audioError);
-    m_sampleRate = m_audio.sampleRate();
+    m_audio->setFillCallback([this](float *stereo, int frames) { return fillAudio(stereo, frames); });
+    connect(m_audio.get(), &AudioOutputChannel::sinkRebuilt, this, &PlaybackEngine::onAudioSinkRebuilt);
+    connect(m_audio.get(), &AudioOutputChannel::errorOccurred, this, &PlaybackEngine::audioError);
+    m_sampleRate = m_audio->sampleRate();
 
     m_compositeTimer.setTimerType(Qt::PreciseTimer);
     // Zero interval, single shot: fires at the end of the current event-loop turn, so a drag
@@ -229,7 +232,7 @@ PlaybackEngine::PlaybackEngine(QObject *parent)
         // Before the composite, which then reuses this same snapshot: one copy per edit batch.
         if (m_playing)
             pushAudioSnapshot();
-        m_compositor.requestComposite(m_playheadUs, playbackRenderOptions());
+        requestStreams(m_playheadUs);
     });
     // A finger resting mid-scrub should see the exact frame, not wait for the lift.
     m_scrubSettleTimer.setSingleShot(true);
@@ -238,7 +241,7 @@ PlaybackEngine::PlaybackEngine(QObject *parent)
         if (m_playing)
             return;
         m_scrubSeeks = 0;
-        m_compositor.requestComposite(m_playheadUs, playbackRenderOptions());
+        requestStreams(m_playheadUs);
     });
     connect(&m_compositeTimer, &QTimer::timeout, this, &PlaybackEngine::onCompositeTick);
     connect(&m_compositor, &CompositorService::frameReady, this, &PlaybackEngine::onFrameReady);
@@ -264,12 +267,21 @@ PlaybackEngine::PlaybackEngine(QObject *parent)
 #endif
 }
 
+void PlaybackEngine::setAudioDeviceId(const QByteArray &id)
+{
+    m_audio->setDeviceId(id);
+}
+
 PlaybackEngine::~PlaybackEngine()
 {
 #ifdef Q_OS_ANDROID
     // A focus change already in flight on the Android UI thread must not find this engine.
     g_audioFocusEngine.store(nullptr, std::memory_order_release);
-    abandonAudioFocus();
+    // The editor is a static in main(), so this usually runs from exit() after the application and
+    // Qt's own globals are gone; runOnAndroidMainThread() then crashes. Android releases a dead
+    // process's focus itself.
+    if (QCoreApplication::instance())
+        abandonAudioFocus();
 #endif
     m_playing = false;
     m_compositeTimer.stop();
@@ -277,14 +289,14 @@ PlaybackEngine::~PlaybackEngine()
 
     // Blocking, so the audio thread cannot be inside fillAudio() while the members it reads are
     // torn down under it. The channel closes the sink and joins its thread from its own destructor.
-    m_audio.stop();
+    m_audio->stop();
 }
 
 void PlaybackEngine::ensureAudioSink()
 {
     if (m_project)
-        m_audio.setPreferredSampleRate(m_project->sampleRate());
-    m_sampleRate = m_audio.sampleRate();
+        m_audio->setPreferredSampleRate(m_project->sampleRate());
+    m_sampleRate = m_audio->sampleRate();
 }
 
 // The sink was reopened, possibly at a rate other than the project's. Its played position restarts
@@ -294,7 +306,7 @@ void PlaybackEngine::onAudioSinkRebuilt()
 {
     if (m_playing)
         m_playheadUs = m_clock.currentTimeUs();
-    m_sampleRate = m_audio.sampleRate();
+    m_sampleRate = m_audio->sampleRate();
     m_mixer.resetClipAudioState();
     m_audioStreamGeneration.fetch_add(1, std::memory_order_release);
     m_clock.reset(m_playheadUs, m_sampleRate);
@@ -375,7 +387,7 @@ void PlaybackEngine::setPlayheadUs(drift::TimeUs us)
         ++m_scrubSeeks;
         m_scrubSettleTimer.start();
     }
-    m_compositor.requestComposite(m_playheadUs, playbackRenderOptions());
+    requestStreams(m_playheadUs);
 }
 
 void PlaybackEngine::beginScrub()
@@ -392,7 +404,7 @@ void PlaybackEngine::endScrub()
     m_scrubSeeks = 0;
     m_scrubSettleTimer.stop();
     if (!m_playing)
-        m_compositor.requestComposite(m_playheadUs, playbackRenderOptions());
+        requestStreams(m_playheadUs);
 }
 
 void PlaybackEngine::resyncAudioAt(drift::TimeUs us)
@@ -415,22 +427,28 @@ void PlaybackEngine::resyncAudioAt(drift::TimeUs us)
     }
 }
 
+GpuFrameTexture PlaybackEngine::previewFrame(PreviewStream stream) const
+{
+    QMutexLocker lock(&m_frameMutex);
+    return m_streams[int(stream)].frame;
+}
+
 int PlaybackEngine::previewTextureId() const
 {
     QMutexLocker lock(&m_frameMutex);
-    return static_cast<int>(m_currentFrame.textureId);
+    return static_cast<int>(m_streams[int(PreviewStream::Camera)].frame.textureId);
 }
 
 QSize PlaybackEngine::previewTextureSize() const
 {
     QMutexLocker lock(&m_frameMutex);
-    return m_currentFrame.size;
+    return m_streams[int(PreviewStream::Camera)].frame.size;
 }
 
 QImage PlaybackEngine::previewImage() const
 {
     QMutexLocker lock(&m_frameMutex);
-    return m_currentFrame.image;
+    return m_streams[int(PreviewStream::Camera)].frame.image;
 }
 
 QString PlaybackEngine::previewQuality() const
@@ -670,15 +688,20 @@ drift::TimeUs PlaybackEngine::frameStepUs() const
     return drift::frameDurationUs(m_project ? qMax(1, m_project->fps()) : 30);
 }
 
-void PlaybackEngine::setPreviewRenderSize(int width, int height)
+void PlaybackEngine::setPreviewRenderSize(int stream, int width, int height)
 {
+    if (stream < 0 || stream >= kPreviewStreamCount)
+        return;
     width = qMax(0, width);
     height = qMax(0, height);
-    if (m_previewRenderWidth == width && m_previewRenderHeight == height)
+    Stream &s = m_streams[stream];
+    if (s.renderWidth == width && s.renderHeight == height)
         return;
 
-    m_previewRenderWidth = width;
-    m_previewRenderHeight = height;
+    s.renderWidth = width;
+    s.renderHeight = height;
+    if (!s.enabled)
+        return;
     // Every quality mode sizes the canvas from the panel, so a resize has to
     // rebuild the frame. Decode size is quantized, which keeps the reader cache
     // from dropping on every pixel of a drag.
@@ -691,7 +714,7 @@ void PlaybackEngine::setPreviewRenderSize(int width, int height)
 bool PlaybackEngine::hasFrame() const
 {
     QMutexLocker lock(&m_frameMutex);
-    return m_currentFrame.isValid();
+    return m_streams[int(PreviewStream::Camera)].frame.isValid();
 }
 
 void PlaybackEngine::play()
@@ -720,7 +743,7 @@ void PlaybackEngine::play()
 
     // Opening the device may settle on a rate the project did not ask for, which comes back as
     // sinkRebuilt and re-anchors the clock — so this has to follow m_playing being set.
-    m_audio.start();
+    m_audio->start();
 
     emit playingChanged();
 
@@ -822,7 +845,7 @@ void PlaybackEngine::requestFrameForPresentation()
         return;
     m_lastRequestedFrameUs = frameUs;
 
-    m_compositor.requestComposite(frameUs, playbackRenderOptions());
+    requestStreams(frameUs);
 }
 
 void PlaybackEngine::pause()
@@ -851,8 +874,8 @@ void PlaybackEngine::refreshFrame()
     // Edits / seeks take a fresh project snapshot; the play loop reuses one.
     m_compositor.invalidateSnapshot();
     // Use the same RenderOptions as the play loop so paused/scrubbed frames
-    // match what playback shows (preview scale + temporal-effect history).
-    m_compositor.requestComposite(m_playheadUs, playbackRenderOptions());
+    // match what playback shows (preview scale).
+    requestStreams(m_playheadUs);
 }
 
 void PlaybackEngine::checkEndOfTimeline(drift::TimeUs timeUs)
@@ -862,6 +885,11 @@ void PlaybackEngine::checkEndOfTimeline(drift::TimeUs timeUs)
 
     drift::TimeUs loopIn = 0;
     drift::TimeUs loopOut = 0;
+    if (hasPreviewRange()) {
+        if (timeUs >= m_previewRangeEndUs)
+            setPlayheadUs(m_previewRangeStartUs);
+        return;
+    }
     if (shouldLoopWorkArea(&loopIn, &loopOut)) {
         if (timeUs >= loopOut) {
             setPlayheadUs(loopIn);
@@ -944,7 +972,33 @@ void PlaybackEngine::onCompositeTick()
     requestFrameForPresentation();
 }
 
-void PlaybackEngine::onFrameReady(const GpuFrameTexture &frame)
+void PlaybackEngine::setStreamEnabled(int stream, bool enabled)
+{
+    if (stream < 0 || stream >= kPreviewStreamCount)
+        return;
+    Stream &s = m_streams[stream];
+    if (s.enabled == enabled)
+        return;
+    s.enabled = enabled;
+    if (!enabled) {
+        m_compositor.cancelStream(PreviewStream(stream));
+        return;
+    }
+    if (m_playing)
+        requestStreams(m_playheadUs);
+    else
+        refreshFrame();
+}
+
+void PlaybackEngine::requestStreams(drift::TimeUs timeUs)
+{
+    for (int i = 0; i < kPreviewStreamCount; ++i) {
+        if (m_streams[i].enabled)
+            m_compositor.requestComposite(PreviewStream(i), timeUs, playbackRenderOptions(PreviewStream(i)));
+    }
+}
+
+void PlaybackEngine::onFrameReady(int stream, const GpuFrameTexture &frame)
 {
     checkHardwareFallback();
     checkZeroCopyFallback();
@@ -954,9 +1008,9 @@ void PlaybackEngine::onFrameReady(const GpuFrameTexture &frame)
 
     {
         QMutexLocker lock(&m_frameMutex);
-        m_currentFrame = frame;
+        m_streams[stream].frame = frame;
     }
-    if (!frame.scopeImage.isNull()) {
+    if (stream == int(PreviewStream::Camera) && !frame.scopeImage.isNull()) {
         m_scopeTimer.restart();
         emit scopeFrame(frame.scopeImage);
     }
@@ -964,12 +1018,16 @@ void PlaybackEngine::onFrameReady(const GpuFrameTexture &frame)
     if (drift::perf::enabled() && !frame.image.isNull())
         drift::perf::record("frame.readback", 0.0);
     const drift::perf::Scope perfScope("frame.arrive");
-    emit currentFrameChanged();
+    if (stream == int(PreviewStream::Camera))
+        emit currentFrameChanged();
+    emit streamFrameChanged(stream);
 }
 
-FrameCompositor::RenderOptions PlaybackEngine::playbackRenderOptions() const
+FrameCompositor::RenderOptions PlaybackEngine::playbackRenderOptions(PreviewStream stream) const
 {
+    const Stream &streamState = m_streams[int(stream)];
     FrameCompositor::RenderOptions options;
+    options.stream = int(stream);
     double qualityFraction = 1.0;
     // Eighth is for machines that cannot keep up even at Quarter — dual-core laptops on
     // integrated graphics — where a soft preview beats a stuttering one.
@@ -984,19 +1042,14 @@ FrameCompositor::RenderOptions PlaybackEngine::playbackRenderOptions() const
     // the export frame. Until the panel has reported a size, stay at project
     // resolution so the first composite is not a stub.
     double fit = 1.0;
-    if (m_project && m_previewRenderWidth > 0 && m_previewRenderHeight > 0) {
+    if (m_project && streamState.renderWidth > 0 && streamState.renderHeight > 0) {
         const double widthScale =
-            static_cast<double>(m_previewRenderWidth) / qMax(1, m_project->width());
+            static_cast<double>(streamState.renderWidth) / qMax(1, m_project->width());
         const double heightScale =
-            static_cast<double>(m_previewRenderHeight) / qMax(1, m_project->height());
+            static_cast<double>(streamState.renderHeight) / qMax(1, m_project->height());
         fit = qMin(1.0, qMin(widthScale, heightScale));
     }
     options.previewScale = qBound(kMinPreviewScale, fit * qualityFraction, 1.0);
-
-    // During playback, cap temporal history so time_echo cannot multiply decode
-    // work unboundedly. Paused and scrubbed frames keep the full history: those
-    // are exactly the cases where fidelity is the point.
-    options.maxTimeEchoHistoryFrames = m_playing ? 12 : -1;
 
     // Buffer decoded frames ahead of the playhead only while playback is actually
     // running: paused frames have no deadline to miss, and read-ahead during
@@ -1010,7 +1063,7 @@ FrameCompositor::RenderOptions PlaybackEngine::playbackRenderOptions() const
 
     options.allowProxies = true;
     options.deferAudioAnalysis = true;
-    options.editor = m_editorView;
+    options.editor = streamState.editorView;
     options.maskView = m_maskView;
     if (m_scopeConsumers > 0
         && (!m_playing || !m_scopeTimer.isValid() || m_scopeTimer.hasExpired(kScopeIntervalMs)))
@@ -1018,29 +1071,30 @@ FrameCompositor::RenderOptions PlaybackEngine::playbackRenderOptions() const
     // The 3D view fills the panel, and is antialiased by rendering it at twice the panel's
     // resolution, which the scene graph's linear filter averages back down. Orbiting re-renders
     // the whole scene per step, so it drops to one sample per pixel until the release.
-    if (m_editorView.active && m_previewRenderWidth > 0 && m_previewRenderHeight > 0) {
-        const double area = double(m_previewRenderWidth) * double(m_previewRenderHeight);
-        const double factor = m_editorView.navigating ? 1.0 : qBound(1.0, std::sqrt(3840.0 * 2160.0 / area), 2.0);
-        options.editor.target = QSize(qMax(1, int(std::lround(m_previewRenderWidth * factor))),
-                                      qMax(1, int(std::lround(m_previewRenderHeight * factor))));
+    if (streamState.editorView.active && streamState.renderWidth > 0 && streamState.renderHeight > 0) {
+        const double area = double(streamState.renderWidth) * double(streamState.renderHeight);
+        const double factor =
+            streamState.editorView.navigating ? 1.0 : qBound(1.0, std::sqrt(3840.0 * 2160.0 / area), 2.0);
+        options.editor.target = QSize(qMax(1, int(std::lround(streamState.renderWidth * factor))),
+                                      qMax(1, int(std::lround(streamState.renderHeight * factor))));
     }
 
     // The first seek of a scrub is often all there is (a tap on the ruler), so it stays exact;
     // the ones after it are passing through.
     if (m_scrubbing && !m_playing && m_scrubSeeks >= 2) {
         options.approximateSeek = true;
-        // Same cap as playback: full time_echo history multiplies decode work per frame.
-        options.maxTimeEchoHistoryFrames = 12;
     }
     return options;
 }
 
-void PlaybackEngine::setEditorView(const FrameCompositor::RenderOptions::EditorView &view)
+void PlaybackEngine::setStreamEditorView(PreviewStream stream,
+                                         const FrameCompositor::RenderOptions::EditorView &view)
 {
-    if (m_editorView.active == view.active && m_editorView.serial == view.serial
-        && m_editorView.navigating == view.navigating)
+    Stream &s = m_streams[int(stream)];
+    if (s.editorView.active == view.active && s.editorView.serial == view.serial
+        && s.editorView.navigating == view.navigating)
         return;
-    m_editorView = view;
+    s.editorView = view;
     if (!m_playing)
         refreshFrame();
 }
@@ -1080,7 +1134,7 @@ int PlaybackEngine::fillAudio(float *buffer, int sampleCount)
     const quint64 generation = m_audioStreamGeneration.load(std::memory_order_acquire);
     if (generation != m_anchoredGeneration) {
         m_anchoredGeneration = generation;
-        m_sinkPlayedUsOffset = m_audio.deliveredUSecs();
+        m_sinkPlayedUsOffset = m_audio->deliveredUSecs();
     }
 
     // Mix at the produce position (audio we are generating into the buffer),
@@ -1117,7 +1171,7 @@ int PlaybackEngine::fillAudio(float *buffer, int sampleCount)
         m_stats.noteAudioMixLoad(double(PlaybackClock::nowNs() - mixStartNs) / blockNs);
     }
     m_clock.onAudioSamplesRendered(sampleCount);
-    const qint64 playedUs = qMax(qint64(0), m_audio.processedUSecs() - m_sinkPlayedUsOffset);
+    const qint64 playedUs = qMax(qint64(0), m_audio->processedUSecs() - m_sinkPlayedUsOffset);
     m_clock.syncPlaybackUs(static_cast<drift::TimeUs>(playedUs));
     return sampleCount;
 }
@@ -1162,3 +1216,5 @@ bool PlaybackEngine::masterMuted() const
 {
     return m_mixer.masterMuted();
 }
+
+#include "moc_PlaybackEngine.cpp"

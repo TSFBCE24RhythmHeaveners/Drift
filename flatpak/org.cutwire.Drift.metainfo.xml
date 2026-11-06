@@ -52,43 +52,157 @@
   <url type="homepage">https://cutwire.org/drift</url>
   <url type="bugtracker">https://github.com/CutWire-Studios/Drift/issues</url>
   <url type="vcs-browser">https://github.com/CutWire-Studios/Drift</url>
-  <!-- Screenshot URLs are pinned to the release tag: Flathub rejects branch-based git URLs
+  <!-- Screenshot URLs are pinned to a commit: Flathub rejects branch-based git URLs
        because their contents change under the published listing. -->
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/v0.1.1/docs/screenshots/main-window.png</image>
-      <caption>The editor with the preview, timeline and panels</caption>
+      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/02a7e56c4c665ecce55239553cae91230086b8f1/docs/screenshots/main-window.png</image>
+      <caption>The editor with the media bin, preview, inspector and timeline</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/v0.1.1/docs/screenshots/effects-panel.png</image>
-      <caption>Browsing effects to drop onto a clip</caption>
+      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/02a7e56c4c665ecce55239553cae91230086b8f1/docs/screenshots/color-workspace.png</image>
+      <caption>Grading in the Color workspace with looks and scopes</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/v0.1.1/docs/screenshots/transitions-panel.png</image>
-      <caption>Choosing a transition between two clips</caption>
+      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/02a7e56c4c665ecce55239553cae91230086b8f1/docs/screenshots/keyframes.png</image>
+      <caption>Shaping motion in the keyframe curve editor</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/v0.1.1/docs/screenshots/text-styles.png</image>
-      <caption>Styling a title with presets and colors</caption>
+      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/02a7e56c4c665ecce55239553cae91230086b8f1/docs/screenshots/masking-tracking.png</image>
+      <caption>Masking and tracking part of a shot</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/v0.1.1/docs/screenshots/stickers-panel.png</image>
-      <caption>Adding stickers and emoji to a shot</caption>
+      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/02a7e56c4c665ecce55239553cae91230086b8f1/docs/screenshots/subtitles.png</image>
+      <caption>Editing styled captions generated from speech</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/v0.1.1/docs/screenshots/subtitle-editor.png</image>
-      <caption>Editing captions generated from speech</caption>
+      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/02a7e56c4c665ecce55239553cae91230086b8f1/docs/screenshots/audio.png</image>
+      <caption>Mixing music with audio effects and meters</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/v0.1.1/docs/screenshots/subject-cutout.png</image>
-      <caption>Cutting a subject out of the frame</caption>
+      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/02a7e56c4c665ecce55239553cae91230086b8f1/docs/screenshots/3d-model.png</image>
+      <caption>Lighting a 3D model on the timeline</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/v0.1.1/docs/screenshots/addon-manager.png</image>
-      <caption>Installing optional fonts, stickers and models</caption>
+      <image>https://raw.githubusercontent.com/CutWire-Studios/Drift/02a7e56c4c665ecce55239553cae91230086b8f1/docs/screenshots/text-styles.png</image>
+      <caption>Styling a title with built-in text packs</caption>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.9.1" date="2026-11-05">
+      <url type="details">https://github.com/CutWire-Studios/Drift/releases/tag/v0.9.1</url>
+      <description>
+        <p>Drift 0.9.1 is a bug fix update for the interface, with updates to the 3D workspace
+        as well.</p>
+        <ul>
+          <li>3D workspace: two live views side by side, After Effects-style coordinates and a
+          reworked camera</li>
+          <li>Undo history is saved in the project file, with no 50-step limit, and projects save
+          in the background</li>
+          <li>Shape crops: crop a clip to a circle, polygon, star or heart and pan and zoom the
+          content inside it</li>
+          <li>The Crop window opens on the frame under the playhead and can rotate and flip</li>
+          <li>New Privacy Blur effect with blur, mosaic and solid bar modes, and a new Reverb
+          audio effect</li>
+          <li>Remove silence and Sync by audio clip actions</li>
+          <li>Timeline: replace a clip's media with another library asset, a Move to track menu,
+          remove all empty tracks, dissolve a composite clip back into its clips, and tabs to
+          switch between composite sequences</li>
+          <li>Moving a linked video to another track takes its audio with it</li>
+          <li>A shared curve picker for animations, with custom curves</li>
+          <li>A miter limit for text and shape strokes</li>
+          <li>Choose where Drift keeps its cache</li>
+          <li>Text, shapes and Lottie clips render sharply at their on-screen size, including
+          fractional text sizes</li>
+          <li>Relinking a missing file updates every clip that uses it and offers to relink files
+          next to it</li>
+          <li>Timeline fixes: clips can be split and trimmed down to one frame, the playhead no
+          longer steps backwards during playback, dropped transitions are added as chosen, fade
+          handles drag again and follow in/out animations, clips shrink with zoom, and track and
+          keyframe headers resize</li>
+          <li>Interface fixes: context menus stay on screen and scroll when tall, transform grips
+          work outside the canvas, the scale link toggle works again, number fields no longer
+          change on hover, empty panels and toasts draw inside their bounds, and the library tab
+          rail can be resized</li>
+          <li>Render fixes: exports above the project size render at the output resolution,
+          transition edges no longer show dark fringes, and star masks draw five points</li>
+          <li>Android: more reliable clip drag and trim handles on the timeline</li>
+          <li>Translations: Japanese, Portuguese (Portugal) and Vietnamese updated</li>
+        </ul>
+        <p>Thanks to Idelson Queiroz Boone for undo history in the project, shape crops, privacy
+        blur, reverb, remove silence and sync by audio; to @mightycrystal7, @CesarSullen and
+        @Gamistano for reporting issues fixed here; to @Ricardo-Simoes for Portuguese (Portugal);
+        to @coolvitto for Japanese; and to Nguyễn Lam for Vietnamese.</p>
+      </description>
+    </release>
+    <release version="0.9.0" date="2026-11-01">
+      <url type="details">https://github.com/CutWire-Studios/Drift/releases/tag/v0.9.0</url>
+      <description>
+        <p>Drift 0.9 lets you shape the editor around the job: workspaces with your own
+        layouts, themes, a colour grading workspace and a much better keyframe editor.</p>
+        <ul>
+          <li>Workspaces: design your own layouts, open panels in extra windows and switch
+          between preset views for editing, colour, keyframes, subtitles, masking and tracking,
+          and Source Lab</li>
+          <li>Themes: dark and light plus the translucent Graphite and Frost themes, window
+          backdrops, and importing your own themes</li>
+          <li>Colour grading: a Color workspace with a Color Grade effect, colour wheels, curves,
+          hue curves and per-colour HSL, looks with .cube LUT import, and histogram, waveform and
+          vectorscope readings</li>
+          <li>Keyframe editor: a Keyframes workspace with a property tree, lanes and a curve
+          editor; multi-key selection, copy and paste, stretching and scaling keys; per-segment
+          easing presets including elastic and bounce, saved easings and optional bezier
+          handles</li>
+          <li>Source Lab replaces Cut / Trim: a frame-accurate source viewer with JKL and
+          timecode entry, favourite and reject ranges, markers and scene splits, plus crop,
+          speed, loudness, denoise, stabilize and upscale, with replace in bin, add as copy or
+          export to a file</li>
+          <li>Masking and Tracking workspace: brush and polygon masks, point and planar
+          tracking, AI object masks, Blur this area, per-frame brush fixes on AI cutouts and
+          locking a tracked object to the screen</li>
+          <li>Subtitles workspace with a cue grid, lane, text and timing panels and VTT
+          support</li>
+          <li>Quick Setup on first run: language, theme, interface size, essential addons and
+          tips</li>
+          <li>Extras store and marketplace in their own windows, with an install queue,
+          automatic dependencies and every download tracked in one place</li>
+          <li>Search everything with Ctrl+K, including panels, settings and controls</li>
+          <li>A redesigned settings dialog with search, a network proxy, an interface graphics
+          API choice and import and export of preferences</li>
+          <li>Select several clips in the preview and transform them together, in 2D and
+          3D</li>
+          <li>Timeline: sub-clips from a source's in/out range, automatic crossfades on
+          overlaps, trim to playhead buttons, auto-select under the playhead, alignment guides
+          and waveforms scaled by clip volume</li>
+          <li>Inspector: drag numeric fields to scrub them, pick the scale origin from an
+          anchor grid, and straighten crops</li>
+          <li>Effects: audio spectrum and waveform visualizers, text case
+          and strikethrough, and miter, round and bevel stroke joins</li>
+          <li>AMD GPUs can run AI features through MIGraphX, and Drift offers another engine
+          when the chosen one fails</li>
+          <li>Faster playback: background decoding pauses during playback, a 1/8 preview
+          quality, and panels that load only when shown</li>
+          <li>New builds for Intel macOS, Windows on ARM and Linux on ARM</li>
+          <li>Android: a redesigned phone interface with a tabbed home and full-page tools,
+          touch mask editing, and headphones used for playback</li>
+          <li>MCP: themes, crop and rotation, media bin folders, the marketplace, audio analysis
+          and running several Drift instances at once</li>
+          <li>Fixes: changing a clip's speed keeps its source range, playback stays in sync
+          after the audio device changes, large blurs stay smooth, edited media is kept on
+          save, and Android imports files with unusual names</li>
+          <li>Translations: Chinese (Simplified) and Portuguese (Portugal) completed; Japanese,
+          Polish, Russian, Spanish (Colombia), Tagalog and Vietnamese updated</li>
+        </ul>
+        <p>Thanks to @jmn8718 for straightening crops, multiple instances, the MCP crop tools,
+        faster playback and start screen access to settings; to @jgafarias for timeline
+        alignment guides, separated embedded audio and export and preview
+        fixes; to @thilakshan2003 for keeping the source range on speed changes; to @wklxd for
+        Chinese (Simplified); to @Ricardo-Simoes for Portuguese (Portugal); to @coolvitto for
+        Japanese; to Paweł Korobajło for Polish; to Nguyễn Lam for Vietnamese; to Dmitry for
+        Russian; to Kamitazic for Spanish (Colombia); and to @TSFBCE24RhythmHeaveners for
+        Tagalog.</p>
+      </description>
+    </release>
     <release version="0.8.0" date="2026-10-13">
       <url type="details">https://github.com/CutWire-Studios/Drift/releases/tag/v0.8.0</url>
       <description>

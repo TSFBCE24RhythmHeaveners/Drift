@@ -323,10 +323,20 @@ QtObject {
     readonly property color gizmoUniform: ThemeManager.semantic.gizmo.uniform
     readonly property color gizmoHot: ThemeManager.semantic.gizmo.hot
 
+    // A token group as a plain object, for C++ items whose style property is a QVariantMap.
+    function plainMap(group) {
+        const out = {}
+        for (const key of group.keys())
+            out[key] = group[key]
+        return out
+    }
+
     // --- Colors: keyframe curves ------------------------------------------------
     readonly property var keyframeCurveColors: ThemeManager.semantic.keyframe.curves
     readonly property var keyframeCurveRamp: ThemeManager.semantic.keyframe.ramp
     function keyframeCurveColor(prop) {
+        if (!prop)
+            return keyframeCurveRamp[0]
         if (keyframeCurveColors[prop])
             return keyframeCurveColors[prop]
         let hash = 0
@@ -497,8 +507,8 @@ QtObject {
     readonly property real clipHeaderBandHeight: ThemeManager.metrics.timeline.clipHeaderBandHeight
     readonly property real clipTrimHandleWidth: ThemeManager.metrics.timeline.clipTrimHandleWidth
     readonly property real clipMinInteractiveWidth: ThemeManager.metrics.timeline.clipMinInteractiveWidth
-    readonly property real clipMinWidth: clipMinInteractiveWidth * 2
-    readonly property real clipMinDurationSeconds: ThemeManager.metrics.timeline.clipMinDurationSeconds
+    readonly property real clipControlsMinWidth: clipMinInteractiveWidth
+    readonly property real clipMinWidth: 2
 
     // --- Layout: Android / touch -----------------------------------------------
     readonly property real androidIconButtonSize: ThemeManager.metrics.android.iconButtonSize
@@ -610,9 +620,15 @@ QtObject {
         shapes: "shapes",
         chevronDown: "chevron-down",
         chevronUp: "chevron-up",
+        chevronsUpDown: "chevrons-up-down",
         chevronsRight: "chevrons-right",
         x: "x",
         messageSquare: "message-square",
+        messageCircle: "message-circle",
+        mail: "mail",
+        bookOpen: "book-open",
+        help: "circle-help",
+        externalLink: "external-link",
         moon: "moon",
         sun: "sun",
         grid: "grid-3x3",
@@ -665,6 +681,7 @@ QtObject {
         chevronLeft: "chevron-left",
         check: "check",
         pencil: "pencil",
+        spline: "spline",
         clock: "clock",
         lock: "lock",
         lockOpen: "lock-open",
@@ -695,6 +712,10 @@ QtObject {
         smartphone: "smartphone",
         monitor: "monitor",
         square: "square",
+        circle: "circle",
+        pentagon: "pentagon",
+        brush: "brush",
+        crosshair: "crosshair",
         ratio: "ratio",
 
         // Brand marks (layout chooser)

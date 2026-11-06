@@ -11,11 +11,63 @@ ThemedContextMenu {
     property bool canPasteEffects: false
     property bool canPasteAttributes: false
     property bool canMergeTrackSubtitles: false
+    property bool canRemoveSilence: false
+    property bool canSyncByAudio: false
+    property bool canReplaceMedia: false
     onAboutToShow: {
+        canRemoveSilence = EditorState.audioAlign.canRemoveSilence(owner.trackIndex, owner.clipIndex)
+        canSyncByAudio = EditorState.audioAlign.canSyncByAudio()
+        canReplaceMedia = typeof owner.panel.requestReplaceClip === "function"
+                && EditorState.replaceCandidatesForClip(owner.trackIndex, owner.clipIndex).length > 0
         canPasteEffects = EditorState.clipboardHasEffects()
         canPasteAttributes = EditorState.canPasteAttributes()
         canMergeTrackSubtitles = owner.trackType === "subtitle"
                 && EditorState.canMergeAllSubtitlesOnTrack(owner.trackIndex)
+        rebuildMoveToTrackMenu()
+    }
+
+    property var moveToTrackMenu: null
+
+    function rebuildMoveToTrackMenu() {
+        if (moveToTrackMenu) {
+            removeMenu(moveToTrackMenu)
+            moveToTrackMenu = null
+        }
+        const targets = EditorState.compatibleTracksForClip(owner.trackIndex, owner.clipIndex)
+        if (targets.length === 0)
+            return
+        const sub = moveToTrackMenuComponent.createObject(null)
+        for (let i = 0; i < targets.length; i++) {
+            const label = targets[i].name || owner.panel.trackNameAt(targets[i].index)
+            sub.addItem(moveToTrackItemComponent.createObject(null,
+                { text: label, targetTrack: targets[i].index }))
+        }
+        let at = count
+        for (let i = 0; i < count; i++) {
+            if (itemAt(i) === moveToOwnTrackItem) {
+                at = i + 1
+                break
+            }
+        }
+        insertMenu(at, sub)
+        moveToTrackMenu = sub
+    }
+
+    Component {
+        id: moveToTrackMenuComponent
+        ThemedContextMenu {
+            title: qsTr("Move to track")
+        }
+    }
+
+    Component {
+        id: moveToTrackItemComponent
+        ThemedMenuItem {
+            required property int targetTrack
+            onTriggered: EditorState.moveClipToTrack(clipContextMenu.owner.trackIndex,
+                                                     clipContextMenu.owner.clipIndex, targetTrack,
+                                                     clipContextMenu.owner.clipData.start || 0)
+        }
     }
     // Deferred: onClosed runs inside the Popup's own close path, and dropping the
     // Loader's item there would destroy an object still unwinding.
@@ -51,6 +103,13 @@ ThemedContextMenu {
         visible: owner.clipData.kind === "composite"
         enabled: !EditorState.exportInProgress
         onTriggered: EditorState.flattenComposite(owner.trackIndex, owner.clipIndex)
+    }
+    ThemedMenuItem {
+        text: qsTr("Dissolve composite")
+        icon.name: Theme.icons.layers
+        visible: owner.clipData.kind === "composite"
+        enabled: EditorState.canDissolveComposite(owner.trackIndex, owner.clipIndex)
+        onTriggered: EditorState.dissolveComposite(owner.trackIndex, owner.clipIndex)
     }
     ThemedMenuItem {
         text: qsTr("Make composite")
@@ -125,7 +184,28 @@ ThemedContextMenu {
         onTriggered: EditorState.separateAllAudioTracks(owner.trackIndex, owner.clipIndex)
     }
     ThemedMenuItem {
-        text: qsTr("Convert to mask")
+        text: qsTr("Remove silence")
+        icon.name: Theme.icons.audioLines
+        visible: clipContextMenu.canRemoveSilence
+        enabled: !EditorState.audioAlign.running
+        onTriggered: EditorState.audioAlign.removeSilence(owner.trackIndex, owner.clipIndex)
+    }
+    ThemedMenuItem {
+        text: qsTr("Sync by audio")
+        icon.name: Theme.icons.audioLines
+        visible: clipContextMenu.canSyncByAudio
+        enabled: !EditorState.audioAlign.running
+        onTriggered: EditorState.audioAlign.syncByAudio()
+    }
+    ThemedMenuItem {
+        text: qsTr("Cancel audio analysis")
+        icon.name: Theme.icons.x
+        visible: EditorState.audioAlign.running
+        onTriggered: EditorState.audioAlign.cancel()
+    }
+    ThemedMenuItem {
+        readonly property string blocker: EditorState.masking.convertClipToMaskBlocker(owner.trackIndex, owner.clipIndex)
+        text: blocker !== "" ? qsTr("Convert to mask") + " — " + blocker : qsTr("Convert to mask")
         icon.name: Theme.icons.mask
         visible: owner.trackType === "video"
         enabled: EditorState.masking.canConvertClipToMask(owner.trackIndex, owner.clipIndex)
@@ -220,6 +300,12 @@ ThemedContextMenu {
         icon.name: Theme.icons.pencil
         onTriggered: owner.panel.requestRenameClip(owner.trackIndex, owner.clipIndex)
     }
+    ThemedMenuItem {
+        text: qsTr("Replace with…")
+        icon.name: Theme.icons.repeat
+        visible: clipContextMenu.canReplaceMedia
+        onTriggered: owner.panel.requestReplaceClip(owner.trackIndex, owner.clipIndex)
+    }
     ThemedMenuSeparator { visible: !owner.isTransformClip }
     ThemedMenuItem {
         text: qsTr("Copy effects")
@@ -254,12 +340,29 @@ ThemedContextMenu {
         }
     }
     ThemedMenuItem {
+        text: qsTr("Blur area…")
+        icon.name: Theme.icons.eyeOff
+        visible: owner.trackType === "video" && !owner.isTransformClip
+        onTriggered: EditorState.addEffect(owner.trackIndex, owner.clipIndex,
+                                           "builtin.effects.privacy_blur")
+    }
+    ThemedMenuItem {
         text: qsTr("Edit keyframes…")
         icon.name: Theme.icons.diamondPlus
         onTriggered: {
             if (!owner.selected)
                 EditorState.selectClip(owner.trackIndex, owner.clipIndex)
             Workspaces.activeId = "keyframes"
+        }
+    }
+    ThemedMenuItem {
+        text: qsTr("Mask & track…")
+        icon.name: Theme.icons.mask
+        visible: owner.trackType === "video"
+        onTriggered: {
+            if (!owner.selected)
+                EditorState.selectClip(owner.trackIndex, owner.clipIndex)
+            Workspaces.activeId = "masking-tracking"
         }
     }
     ThemedMenuSeparator { visible: owner.clipData.kind === "adjustment" && !owner.isTransformClip }
@@ -270,6 +373,7 @@ ThemedContextMenu {
         onTriggered: EditorState.unlinkAdjustment(owner.trackIndex, owner.clipIndex)
     }
     ThemedMenuItem {
+        id: moveToOwnTrackItem
         text: qsTr("Move to its own track")
         icon.name: Theme.icons.layers
         // Only meaningful for a nested one: a standalone adjustment already has one.

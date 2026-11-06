@@ -11,6 +11,9 @@ ThemedContextMenu {
     property var deleteDialog
     signal coversRequested()
 
+    property bool hasEmptyTracks: false
+    onAboutToShow: hasEmptyTracks = EditorState.hasEmptyTracks()
+
     ThemedMenuItem {
         text: qsTr("Rename…")
         icon.name: Theme.icons.pencil
@@ -30,6 +33,28 @@ ThemedContextMenu {
         icon.name: header.trackMuted ? Theme.icons.volumeHigh
                                             : Theme.icons.volumeOff
         onTriggered: EditorState.setTrackMuted(header.index, !header.trackMuted)
+    }
+    ThemedMenuItem {
+        visible: header.wantMic
+        text: header.isRecordingHere ? qsTr("Stop recording") : qsTr("Record voiceover")
+        icon.name: Theme.icons.mic
+        onTriggered: {
+            if (EditorState.isRecordingAudio)
+                EditorState.stopAudioRecording()
+            else
+                EditorState.startAudioRecording(header.index)
+        }
+    }
+    ThemedMenuItem {
+        visible: header.wantLanes
+        text: header.lanesOn ? qsTr("Show one combined waveform") : qsTr("Show each channel separately")
+        icon.name: Theme.icons.split
+        onTriggered: {
+            const on = !header.lanesOn
+            EditorState.setTrackShowChannelWaveforms(header.index, on)
+            if (on)
+                column.growRowForChannelLanes(header.index, header.laneChannels)
+        }
     }
     ThemedMenuItem {
         text: header.trackHidden ? qsTr("Show track")
@@ -151,5 +176,11 @@ ThemedContextMenu {
             column.pendingDeleteTrack = header.index
             deleteDialog.open()
         }
+    }
+    ThemedMenuItem {
+        text: qsTr("Remove empty tracks")
+        icon.name: Theme.icons.trash
+        enabled: trackContextMenu.hasEmptyTracks
+        onTriggered: EditorState.removeEmptyTracks()
     }
 }

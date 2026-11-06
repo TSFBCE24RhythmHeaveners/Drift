@@ -80,6 +80,9 @@ AndroidBottomSheet {
                 { id: "flattenComposite", label: qsTr("Flatten composite"),
                   detail: qsTr("Render it into a single video clip"),
                   icon: Theme.icons.film },
+                { id: "dissolveComposite", label: qsTr("Dissolve composite"),
+                  detail: qsTr("Release the clips inside back onto the timeline"),
+                  icon: Theme.icons.layers },
                 { id: "makeComposite", label: qsTr("Make composite"),
                   detail: qsTr("Group the selected clips into one"),
                   icon: Theme.icons.layers },
@@ -234,6 +237,7 @@ AndroidBottomSheet {
             return root.hasSelection
         case "openComposite":
         case "flattenComposite":
+        case "dissolveComposite":
             return root.hasSelection && root.clipInfo.kind === "composite"
         case "makeComposite":
             return EditorState.makeCompositeAvailable
@@ -299,6 +303,8 @@ AndroidBottomSheet {
             return root.canPasteEffects
         case "flattenComposite":
             return !EditorState.exportInProgress
+        case "dissolveComposite":
+            return EditorState.canDissolveComposite(EditorState.selectedTrack, EditorState.selectedClip)
         case "mergeSubtitles":
             return EditorState.mergeAvailable
         case "mergeAllSubtitles":
@@ -350,6 +356,9 @@ AndroidBottomSheet {
         case "flattenComposite":
             EditorState.flattenComposite(track, clipIndex)
             break
+        case "dissolveComposite":
+            EditorState.dissolveComposite(track, clipIndex)
+            break
         case "makeComposite":
             EditorState.makeCompositeFromSelection()
             break
@@ -363,7 +372,8 @@ AndroidBottomSheet {
             EditorState.selectTransformChildren(track, clipIndex)
             break
         case "transformCovers":
-            root.panel.openClipProperties()
+            if (ShellBridge.main.editorPage)
+                ShellBridge.main.editorPage.openTool("transform")
             break
         case "unlink":
             EditorState.unlinkSelectedClips()

@@ -39,6 +39,7 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | beatOnset | #ffffff8c | #2121218c |
 | textStylePreviewBorder | #3a3a3a | #2a2a2a |
 | primary | #F8B81C | #F8B81C |
+| searchHighlight | #4DF8B81C | #4DF8B81C |
 | primaryForeground | #221900 | #221900 |
 | destructive | #e91616 | #e91616 |
 | constructive | #23d160 | #23d160 |
@@ -104,6 +105,14 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | gradeHue | #f59e0b | #f59e0b |
 | gradeSat | #22d3ee | #22d3ee |
 | gradeLum | #e5e7eb | #374151 |
+| gradeWheelNeutral | #5a5c62 | #9c9ea4 |
+| gradeTempCool | #4f8dff | #4f8dff |
+| gradeTrackNeutral | #d9d9d9 | #d9d9d9 |
+| gradeTempWarm | #ffb347 | #ffb347 |
+| gradeTintGreen | #5ccf7a | #5ccf7a |
+| gradeTintMagenta | #e45cd0 | #e45cd0 |
+| gradeTrackBlack | #000000 | #000000 |
+| gradeTrackWhite | #ffffff | #ffffff |
 | gradeCurveRed | #ef5350 | #ef5350 |
 | gradeCurveGreen | #66bb6a | #66bb6a |
 | gradeCurveBlue | #42a5f5 | #42a5f5 |
@@ -563,6 +572,12 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | editorHeaderExportButton | foreground | $semantic.primaryForeground | $semantic.primaryForeground |
 | editorHeaderExportButton | icon | $semantic.primaryForeground | $semantic.primaryForeground |
 | startScreen | background | $semantic.surface.app | $semantic.surface.app |
+| startupSplash | background | $semantic.surface.app | $semantic.surface.app |
+| startupSplash | border | $semantic.border | $semantic.border |
+| startupSplash | foreground | $semantic.foreground | $semantic.foreground |
+| startupSplash | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| startupSplash | progressTrack | $semantic.panel.sliderTrack | $semantic.panel.sliderTrack |
+| startupSplash | progressFill | $semantic.primary | $semantic.primary |
 | startScreenRecents | foreground | $semantic.mutedForeground | $semantic.mutedForeground |
 | startScreenTitle | foreground | $semantic.foreground | $semantic.foreground |
 | startScreenTitle | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
@@ -610,6 +625,51 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | settingsCloudProvidersSection | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | settingsCloudProvidersSection | divider | $semantic.panel.border | $semantic.panel.border |
 | settingsCloudProvidersSection | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| quickSetup | background | $semantic.surface.app | $semantic.surface.app |
+| quickSetup | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
+| quickSetup | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| quickSetup | iconBackground | $semantic.panel.accent | $semantic.panel.accent |
+| quickSetup | iconForeground | $semantic.primary | $semantic.primary |
+| quickSetup | dotActive | $semantic.primary | $semantic.primary |
+| quickSetup | dotInactive | $semantic.panel.border | $semantic.panel.border |
+| quickSetup | divider | $semantic.panel.border | $semantic.panel.border |
+| quickSetup | panelBackground | $semantic.surface.panel | $semantic.surface.panel |
+| quickSetup | panelBorder | $semantic.panel.border | $semantic.panel.border |
+| quickSetup | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| quickSetup | radius | $metrics.radius.md | $metrics.radius.md |
+| quickSetup | warning | $semantic.warning | $semantic.warning |
+| quickSetup | danger | $semantic.destructive | $semantic.destructive |
+| quickSetup | success | $semantic.constructive | $semantic.constructive |
+| quickSetupCard | background | $semantic.panel.accent | $semantic.panel.accent |
+| quickSetupCard | backgroundSelected | $semantic.panel.secondary.background | $semantic.panel.secondary.background |
+| quickSetupCard | backgroundHover | $semantic.popoverHover | $semantic.popoverHover |
+| quickSetupCard | border | $semantic.panel.border | $semantic.panel.border |
+| quickSetupCard | borderSelected | $semantic.primary | $semantic.primary |
+| quickSetupCard | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| quickSetupCard | borderWidthSelected | 2 | 2 |
+| quickSetupCard | radius | $metrics.radius.md | $metrics.radius.md |
+| quickSetupCard | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
+| quickSetupCard | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| quickSetupCard | badgeBackground | $semantic.primary | $semantic.primary |
+| quickSetupCard | badgeForeground | $semantic.primaryForeground | $semantic.primaryForeground |
+| quickSetupCard | check | $semantic.primary | $semantic.primary |
+| quickSetupMockEditor | window | $semantic.surface.app | $semantic.surface.app |
+| quickSetupMockEditor | panel | $semantic.surface.panel | $semantic.surface.panel |
+| quickSetupMockEditor | border | $semantic.panel.border | $semantic.panel.border |
+| quickSetupMockEditor | tile | $semantic.panel.accent | $semantic.panel.accent |
+| quickSetupMockEditor | text | $semantic.panel.foreground | $semantic.panel.foreground |
+| quickSetupMockEditor | textMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| quickSetupMockEditor | primary | $semantic.primary | $semantic.primary |
+| quickSetupMockEditor | primaryForeground | $semantic.primaryForeground | $semantic.primaryForeground |
+| quickSetupMockEditor | track | $semantic.panel.muted | $semantic.panel.muted |
+| quickSetupMockEditor | clipVideo | $semantic.clip.graphic | $semantic.clip.graphic |
+| quickSetupMockEditor | clipAudio | $semantic.clip.audio | $semantic.clip.audio |
+| quickSetupMockEditor | clipText | $semantic.clip.text | $semantic.clip.text |
+| quickSetupMockEditor | clipEffect | $semantic.clip.effect | $semantic.clip.effect |
+| quickSetupMockEditor | playhead | $semantic.primary | $semantic.primary |
+| quickSetupMockEditor | toggleTrack | $semantic.panel.sliderTrack | $semantic.panel.sliderTrack |
+| quickSetupMockEditor | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| quickSetupMockEditor | radius | $metrics.radius.sm | $metrics.radius.sm |
 | settingsThemeList | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
 | settingsThemeEntry | background | $semantic.panel.accent | $semantic.panel.accent |
 | settingsThemeEntry | backgroundSelected | $semantic.panel.secondary.background | $semantic.panel.secondary.background |
@@ -670,6 +730,8 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | globalSearchPopup | border | $semantic.panel.border | $semantic.panel.border |
 | globalSearchPopup | radius | $metrics.radius.md | $metrics.radius.md |
 | globalSearchPopup | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| searchHighlight | background | $palette.searchHighlight | $palette.searchHighlight |
+| searchHighlight | radius | $metrics.radius.sm | $metrics.radius.sm |
 | editorHeaderProjectsButton | radius | $metrics.radius.sm | $metrics.radius.sm |
 | editorHeaderProjectsButton | backgroundHover | $semantic.popoverHover | $semantic.popoverHover |
 | editorHeaderProjectsButton | background | $semantic.accent | $semantic.accent |
@@ -702,6 +764,10 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | editorHeaderSearchField | placeholder | $semantic.mutedForeground | $semantic.mutedForeground |
 | editorHeaderSearchField | selectionForeground | $semantic.primaryForeground | $semantic.primaryForeground |
 | editorHeaderSearchField | selection | $semantic.primary | $semantic.primary |
+| editorHeaderSearchField | workspacePrefix | $semantic.mutedForeground | $semantic.mutedForeground |
+| editorHeaderSearchField | workspaceForeground | $semantic.panel.foreground | $semantic.panel.foreground |
+| editorHeaderSearchField | workspaceBackgroundHover | $semantic.popoverHover | $semantic.popoverHover |
+| editorHeaderSearchField | divider | $semantic.panel.border | $semantic.panel.border |
 | editorHeaderHairline | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
 | editorHeaderHairline | border | $semantic.panel.border | $semantic.panel.border |
 | editorHeaderSeparator | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
@@ -778,6 +844,31 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | panelSplitHandle | grip | $semantic.panel.border | $semantic.panel.border |
 | circularProgress | track | $semantic.panel.muted | $semantic.panel.muted |
 | circularProgress | progress | $semantic.primary | $semantic.primary |
+| imageViewer | canvas | $semantic.panel.muted | $semantic.panel.muted |
+| imageViewer | border | $semantic.panel.border | $semantic.panel.border |
+| imageViewer | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
+| imageViewer | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| agentViews | tileBackground | $semantic.panel.muted | $semantic.panel.muted |
+| agentViews | tileBorder | $semantic.panel.border | $semantic.panel.border |
+| agentViews | tileHover | $semantic.popoverHover | $semantic.popoverHover |
+| agentViews | tileRadius | $metrics.radius.md | $metrics.radius.md |
+| agentViews | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
+| agentViews | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| audioSheetPanel | statBackground | $semantic.panel.muted | $semantic.panel.muted |
+| audioSheetPanel | statBorder | $semantic.panel.border | $semantic.panel.border |
+| audioSheetPanel | statRadius | $metrics.radius.md | $metrics.radius.md |
+| audioSheetPanel | label | $semantic.mutedForeground | $semantic.mutedForeground |
+| audioSheetPanel | value | $semantic.panel.foreground | $semantic.panel.foreground |
+| audioSheetPanel | good | $semantic.constructive | $semantic.constructive |
+| audioSheetPanel | warn | $semantic.warning | $semantic.warning |
+| audioSheetPanel | bad | $semantic.destructive | $semantic.destructive |
+| audioSheetPanel | error | $semantic.destructive | $semantic.destructive |
+| audioSheetPanel | listBackground | $semantic.panel.muted | $semantic.panel.muted |
+| audioSheetPanel | listBorder | $semantic.panel.border | $semantic.panel.border |
+| audioSheetPanel | rowHover | $semantic.popoverHover | $semantic.popoverHover |
+| audioSheetPanel | rowTime | $semantic.mutedForeground | $semantic.mutedForeground |
+| audioSheetPanel | speech | $semantic.primary | $semantic.primary |
+| audioSheetPanel | music | $semantic.accentOnPanel | $semantic.accentOnPanel |
 | emptyState | radius | $metrics.radius.md | $metrics.radius.md |
 | emptyState | background | $semantic.panel.accent | $semantic.panel.accent |
 | emptyState | icon | $semantic.mutedForeground | $semantic.mutedForeground |
@@ -816,24 +907,6 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | debugInfoDialog | divider | $semantic.panel.border | $semantic.panel.border |
 | debugInfoDialog | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
 | debugInfoDialog | link | $semantic.primary | $semantic.primary |
-| addonStartupPackRow | radius | $metrics.radius.md | $metrics.radius.md |
-| addonStartupPackRow | background | $semantic.panel.secondary.background | $semantic.panel.secondary.background |
-| addonStartupPackRow | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| addonStartupPackRow | border | $semantic.panel.secondary.border | $semantic.panel.secondary.border |
-| addonStartupDialog | divider | $semantic.panel.border | $semantic.panel.border |
-| addonStartupDialog | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| addonManagerRow | radius | $metrics.radius.md | $metrics.radius.md |
-| addonManagerRow | backgroundHover | $semantic.popoverHover | $semantic.popoverHover |
-| addonManagerRow | background | $semantic.panel.secondary.background | $semantic.panel.secondary.background |
-| addonManagerRow | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| addonManagerRow | borderHighlight | $semantic.primary | $semantic.primary |
-| addonManagerRow | border | $semantic.panel.secondary.border | $semantic.panel.secondary.border |
-| addonManagerRow | foregroundError | $semantic.destructive | $semantic.destructive |
-| addonManagerRow | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
-| addonManagerDialog | statusBusy | $semantic.mutedForeground | $semantic.mutedForeground |
-| addonManagerDialog | status | $semantic.destructive | $semantic.destructive |
-| addonManagerDialog | restartForeground | $semantic.destructive | $semantic.destructive |
-| addonManagerDialog | skeletonRadius | $metrics.radius.md | $metrics.radius.md |
 | layoutChooserDialog | listBackground | $semantic.surface.app | $semantic.surface.app |
 | layoutChooserDialog | listBorder | $semantic.panel.border | $semantic.panel.border |
 | layoutChooserDialog | listBorderWidth | $metrics.borderWidth | $metrics.borderWidth |
@@ -1127,11 +1200,12 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | timelineToolbarCustomizeRow | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | timelineToolbarCustomizeRow | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
 | timelineToolbarHairline | border | $semantic.panel.border | $semantic.panel.border |
-| timelineToolbarSceneBadge | radius | $metrics.radius.sm | $metrics.radius.sm |
-| timelineToolbarSceneBadge | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| timelineToolbarSceneBadge | border | $semantic.panel.foreground | $semantic.panel.foreground |
-| timelineToolbarSceneBadge | icon | $semantic.mutedForeground | $semantic.mutedForeground |
-| timelineToolbarSceneBadge | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
+| timelineSequenceTabs | radius | $metrics.radius.sm | $metrics.radius.sm |
+| timelineSequenceTabs | backgroundActive | $semantic.panel.accent | $semantic.panel.accent |
+| timelineSequenceTabs | backgroundHover | $semantic.panel.muted | $semantic.panel.muted |
+| timelineSequenceTabs | foreground | $semantic.mutedForeground | $semantic.mutedForeground |
+| timelineSequenceTabs | foregroundActive | $semantic.panel.foreground | $semantic.panel.foreground |
+| timelineSequenceTabs | icon | $semantic.mutedForeground | $semantic.mutedForeground |
 | timelineToolbarSeparator | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
 | timelineToolbarSeparator | foreground | $semantic.panel.border | $semantic.panel.border |
 | timelineToolbarTimecode | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
@@ -1177,6 +1251,7 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | trackHeaderMicButton | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | trackHeaderMuteButton | destructive | $semantic.destructive | $semantic.destructive |
 | trackHeaderMuteButton | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| trackHeaderOverflowButton | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | trackHeaderResizeHandle | foreground | $semantic.primary | $semantic.primary |
 | trackHeaderRow | background | $semantic.timeline.headerBackground | $semantic.timeline.headerBackground |
 | trackHeaderWash | background | $semantic.clip.transform | $semantic.clip.transform |
@@ -1312,6 +1387,28 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | facePropTile | radius | $metrics.radius.sm | $metrics.radius.sm |
 | scopes | background | $palette.scopesBackground | $palette.scopesBackground |
 | scopes | label | $palette.scopesLabel | $palette.scopesLabel |
+| colorWheel | discNeutral | $palette.gradeWheelNeutral | $palette.gradeWheelNeutral |
+| colorWheel | rimStrength | 0.6 | 0.6 |
+| colorWheel | ring | $semantic.panel.border | $semantic.panel.border |
+| colorWheel | ringActive | $semantic.primary | $semantic.primary |
+| colorWheel | ringWidth | $metrics.borderWidth | $metrics.borderWidth |
+| colorWheel | crosshair | $semantic.panel.foreground | $semantic.panel.foreground |
+| colorWheel | crosshairOpacity | 0.18 | 0.18 |
+| colorWheel | puck | $semantic.primary | $semantic.primary |
+| colorWheel | puckBorder | $semantic.panel.foreground | $semantic.panel.foreground |
+| colorWheel | puckBorderWidth | $metrics.borderWidthFocus | $metrics.borderWidthFocus |
+| colorWheel | vector | $semantic.panel.foreground | $semantic.panel.foreground |
+| colorWheel | vectorOpacity | 0.5 | 0.5 |
+| colorGradeTracks | temperature | ["$palette.gradeTempCool", "$palette.gradeTrackNeutral", "$palette.gradeTempWarm"] | ["$palette.gradeTempCool", "$palette.gradeTrackNeutral", "$palette.gradeTempWarm"] |
+| colorGradeTracks | tint | ["$palette.gradeTintGreen", "$palette.gradeTrackNeutral", "$palette.gradeTintMagenta"] | ["$palette.gradeTintGreen", "$palette.gradeTrackNeutral", "$palette.gradeTintMagenta"] |
+| colorGradeTracks | luma | ["$palette.gradeTrackBlack", "$palette.gradeTrackWhite"] | ["$palette.gradeTrackBlack", "$palette.gradeTrackWhite"] |
+| lookCard | background | $semantic.panel.secondary.background | $semantic.panel.secondary.background |
+| lookCard | backgroundHover | $semantic.panel.accent | $semantic.panel.accent |
+| lookCard | selectedBorder | $semantic.primary | $semantic.primary |
+| lookCard | selectedBorderWidth | $metrics.borderWidthFocus | $metrics.borderWidthFocus |
+| lookCard | label | $semantic.mutedForeground | $semantic.mutedForeground |
+| lookCard | labelSelected | $semantic.panel.foreground | $semantic.panel.foreground |
+| lookCard | radius | $metrics.radius.md | $metrics.radius.md |
 | colorGradeBands | red | $palette.gradeHslRed | $palette.gradeHslRed |
 | colorGradeBands | orange | $palette.gradeHslOrange | $palette.gradeHslOrange |
 | colorGradeBands | yellow | $palette.gradeHslYellow | $palette.gradeHslYellow |
@@ -1511,17 +1608,25 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | keyframesKeyDot | scaleHover | 1.15 | 1.15 |
 | keyframesKeyDot | scaleSelected | 1.3 | 1.3 |
 | keyframesKeyDot | summary | $semantic.mutedForeground | $semantic.mutedForeground |
+| keyframesKeyDot | borderCollision | $semantic.destructive | $semantic.destructive |
 | keyframesKeyDot | opacityDisabled | 0.35 | 0.35 |
 | keyframesLane | backgroundAlt | $semantic.panel.muted | $semantic.panel.muted |
 | keyframesLane | opacityAlt | 0.3 | 0.3 |
 | keyframesLane | clipSpan | $semantic.panel.accent | $semantic.panel.accent |
 | keyframesLane | opacityClipSpan | 0.35 | 0.35 |
 | keyframesLane | groupBackground | $semantic.panel.secondary.background | $semantic.panel.secondary.background |
+| keyframesLane | backgroundHover | $semantic.panel.accent | $semantic.panel.accent |
+| keyframesLane | opacityHover | 0.4 | 0.4 |
 | keyframesLane | border | $semantic.panel.border | $semantic.panel.border |
 | keyframesMarquee | background | $semantic.primary | $semantic.primary |
 | keyframesMarquee | backgroundOpacity | 0.12 | 0.12 |
 | keyframesMarquee | border | $semantic.primary | $semantic.primary |
 | keyframesMarquee | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| keyframesReadout | background | $semantic.panel.secondary.background | $semantic.panel.secondary.background |
+| keyframesReadout | foreground | $semantic.panel.secondary.foreground | $semantic.panel.secondary.foreground |
+| keyframesReadout | border | $semantic.panel.border | $semantic.panel.border |
+| keyframesReadout | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| keyframesReadout | radius | $metrics.radius.sm | $metrics.radius.sm |
 | keyframesRuler | background | $semantic.surface.panel | $semantic.surface.panel |
 | keyframesRuler | border | $semantic.panel.border | $semantic.panel.border |
 | keyframesRuler | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
@@ -1562,6 +1667,21 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | maskingPanel | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | maskingPanel | rowHover | $semantic.panel.muted | $semantic.panel.muted |
 | maskingPanel | rowSelected | $semantic.panel.accent | $semantic.panel.accent |
+| viewport3dPanel | divider | $semantic.panel.border | $semantic.panel.border |
+| viewport3dPanel | dividerWidth | $metrics.borderWidth | $metrics.borderWidth |
+| viewport3dPanel | toolbarBackground | $semantic.surface.panel | $semantic.surface.panel |
+| outliner3dPanel | divider | $semantic.panel.border | $semantic.panel.border |
+| outliner3dPanel | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
+| outliner3dPanel | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| outliner3dPanel | rowHover | $semantic.panel.muted | $semantic.panel.muted |
+| outliner3dPanel | rowSelected | $semantic.panel.accent | $semantic.panel.accent |
+| transform3dPanel | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
+| transform3dPanel | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| camera3dPanel | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
+| camera3dPanel | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| camera3dPanel | rowHover | $semantic.panel.muted | $semantic.panel.muted |
+| camera3dPanel | rowSelected | $semantic.panel.accent | $semantic.panel.accent |
+| view3dPanel | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | masksInspector | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | model3DInspector | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
 | model3DInspector | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
@@ -1976,6 +2096,8 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | mediaPreviewWindow | stripBorder | $semantic.panel.border | $semantic.panel.border |
 | mediaPreviewWindow | stripBorderWidth | $metrics.borderWidth | $metrics.borderWidth |
 | mediaPreviewWindow | stripRadius | $metrics.radius.sm | $metrics.radius.sm |
+| previewHost | background | $semantic.surface.app | $semantic.surface.app |
+| previewHost | error | $semantic.destructive | $semantic.destructive |
 | multicamAngleBadge | background | $semantic.scrimStrong | $semantic.scrimStrong |
 | multicamAngleBadge | backgroundActive | $semantic.primary | $semantic.primary |
 | multicamAngleBadge | foreground | $semantic.onMedia | $semantic.onMedia |
@@ -2022,12 +2144,6 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | preview3DFlyHint | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
 | preview3DFlyHint | radius | $metrics.radius.md | $metrics.radius.md |
 | preview3DFlyHint | foreground | $semantic.foreground | $semantic.foreground |
-| preview3DTools | background | $semantic.surface.panel | $semantic.surface.panel |
-| preview3DTools | border | $semantic.panel.border | $semantic.panel.border |
-| preview3DTools | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| preview3DTools | radius | $metrics.radius.md | $metrics.radius.md |
-| preview3DToolsDivider | background | $semantic.panel.border | $semantic.panel.border |
-| preview3DToolsDivider | strokeWidth | $metrics.borderWidth | $metrics.borderWidth |
 | previewCompactGpuCaption | foreground | $semantic.guide.medium | $semantic.guide.medium |
 | previewDropCanvasFrame | background | $semantic.primary | $semantic.primary |
 | previewDropCanvasFrame | border | $semantic.primary | $semantic.primary |
@@ -2037,15 +2153,6 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | previewDropClipFrame | borderWidth | 2 | 2 |
 | previewFullscreenTransportScrim | background | $semantic.surface.panel | $semantic.surface.panel |
 | previewGapCaption | foreground | $semantic.guide.medium | $semantic.guide.medium |
-| previewModeSwitch | background | $semantic.panel.accent | $semantic.panel.accent |
-| previewModeSwitch | border | $semantic.panel.border | $semantic.panel.border |
-| previewModeSwitch | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| previewModeSwitchPill | background | $semantic.panel.secondary.background | $semantic.panel.secondary.background |
-| previewModeSwitchPill | border | $semantic.panel.secondary.border | $semantic.panel.secondary.border |
-| previewModeSwitchPill | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| previewModeSwitchSegment | icon | $semantic.mutedForeground | $semantic.mutedForeground |
-| previewModeSwitchSegment | iconHover | $semantic.panel.foreground | $semantic.panel.foreground |
-| previewModeSwitchSegment | iconSelected | $semantic.panel.secondary.foreground | $semantic.panel.secondary.foreground |
 | previewOptionsDecodeWarning | icon | $semantic.warning | $semantic.warning |
 | previewOptionsMenu | background | $semantic.surface.panel | $semantic.surface.panel |
 | previewOptionsMenu | border | $semantic.panel.border | $semantic.panel.border |
@@ -2136,10 +2243,7 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | viewAxisWidget | x | $semantic.gizmo.x | $semantic.gizmo.x |
 | viewAxisWidget | y | $semantic.gizmo.y | $semantic.gizmo.y |
 | viewAxisWidget | z | $semantic.gizmo.z | $semantic.gizmo.z |
-| viewNavPad | background | $semantic.surface.panel | $semantic.surface.panel |
-| viewNavPad | border | $semantic.panel.border | $semantic.panel.border |
-| viewNavPad | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| viewNavPad | radius | $metrics.radius.md | $metrics.radius.md |
+| scrollStrip | fade | $semantic.surface.panel | $semantic.surface.panel |
 | assetCategoryChips | divider | $semantic.panel.border | $semantic.panel.border |
 | assetCategoryChips | dividerWidth | $metrics.borderWidth | $metrics.borderWidth |
 | assetsPanel | background | $semantic.surface.panel | $semantic.surface.panel |
@@ -2199,10 +2303,6 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | downloadsJobRow | icon | $semantic.mutedForeground | $semantic.mutedForeground |
 | downloadsJobRow | iconBackground | $semantic.panel.accent | $semantic.panel.accent |
 | downloadsJobRow | iconRadius | $metrics.radius.sm | $metrics.radius.sm |
-| downloadsWindow | background | $semantic.surface.app | $semantic.surface.app |
-| downloadsWindow | border | $semantic.border | $semantic.border |
-| downloadsWindow | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| downloadsWindow | foreground | $semantic.foreground | $semantic.foreground |
 | driftAssetCard | accent | $semantic.primary | $semantic.primary |
 | driftAssetCard | background | $semantic.panel.accent | $semantic.panel.accent |
 | driftAssetCard | borderFocus | $semantic.focusRing | $semantic.focusRing |
@@ -2212,34 +2312,6 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | driftAssetCard | icon | $semantic.mutedForeground | $semantic.mutedForeground |
 | driftAssetCard | radius | $metrics.radius.md | $metrics.radius.md |
 | driftAssetCard | radiusPill | $metrics.radius.pill | $metrics.radius.pill |
-| driftAssetDetail | accent | $semantic.accentOnPanel | $semantic.accentOnPanel |
-| driftAssetDetail | background | $semantic.surface.panel | $semantic.surface.panel |
-| driftAssetDetail | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
-| driftAssetDetail | foregroundHover | $semantic.panel.foreground | $semantic.panel.foreground |
-| driftAssetDetail | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
-| driftAssetDetail | previewBackground | $semantic.panel.accent | $semantic.panel.accent |
-| driftAssetDetail | previewRadius | $metrics.radius.md | $metrics.radius.md |
-| driftAssetDetail | styleBackground | $semantic.panel.accent | $semantic.panel.accent |
-| driftAssetDetail | styleBorder | $semantic.panel.border | $semantic.panel.border |
-| driftAssetDetail | styleBorderSelected | $semantic.primary | $semantic.primary |
-| driftAssetDetail | styleBorderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| driftAssetDetail | styleBorderWidthFocus | $metrics.borderWidthFocus | $metrics.borderWidthFocus |
-| driftAssetDetail | styleRadius | $metrics.radius.sm | $metrics.radius.sm |
-| driftAssetDetail | styleRadiusPill | $metrics.radius.pill | $metrics.radius.pill |
-| driftAssetDetail | swatchBorder | $semantic.panel.border | $semantic.panel.border |
-| driftAssetDetail | swatchBorderHover | $semantic.primary | $semantic.primary |
-| driftAssetDetail | swatchBorderWidth | $metrics.borderWidth | $metrics.borderWidth |
-| driftAssetDetail | swatchBorderWidthFocus | $metrics.borderWidthFocus | $metrics.borderWidthFocus |
-| driftAssetDetail | swatchRadius | $metrics.radius.sm | $metrics.radius.sm |
-| driftAssetsHome | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
-| driftAssetsHome | foregroundHover | $semantic.panel.foreground | $semantic.panel.foreground |
-| driftAssetsHome | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
-| driftAssetsHome | icon | $semantic.mutedForeground | $semantic.mutedForeground |
-| driftAssetsHome | rowBackgroundHover | $semantic.popoverHover | $semantic.popoverHover |
-| driftAssetsHome | rowRadius | $metrics.radius.sm | $metrics.radius.sm |
-| driftAssetsHome | scrim | $semantic.scrim | $semantic.scrim |
-| driftAssetsHome | sheetRadius | $metrics.radius.lg | $metrics.radius.lg |
-| driftAssetsHome | skeletonRadius | $metrics.radius.md | $metrics.radius.md |
 | effectBrowser | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
 | effectBrowser | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | effectPresetCard | background | $semantic.panel.accent | $semantic.panel.accent |
@@ -2272,11 +2344,6 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | effectTemplateCard | mosaicDividerWidth | $metrics.borderWidth | $metrics.borderWidth |
 | effectTemplateCard | radius | $metrics.radius.sm | $metrics.radius.sm |
 | effectTemplateCard | scrim | $semantic.scrimStrong | $semantic.scrimStrong |
-| marketConsentPanel | bullet | $semantic.mutedForeground | $semantic.mutedForeground |
-| marketConsentPanel | bulletRadius | $metrics.radius.pill | $metrics.radius.pill |
-| marketConsentPanel | icon | $semantic.warning | $semantic.warning |
-| marketConsentPanel | iconBackground | $semantic.panel.accent | $semantic.panel.accent |
-| marketConsentPanel | iconRadius | $metrics.radius.md | $metrics.radius.md |
 | marketSearchField | background | $semantic.panel.accent | $semantic.panel.accent |
 | marketSearchField | borderFocus | $semantic.focusRing | $semantic.focusRing |
 | marketSearchField | borderWidth | $metrics.borderWidthFocus | $metrics.borderWidthFocus |
@@ -2291,8 +2358,83 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | marketSectionTab | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | marketSectionTab | indicatorHeight | 2 | 2 |
 | marketSectionTab | indicatorRadius | 1 | 1 |
-| marketTab | border | $semantic.panel.border | $semantic.panel.border |
-| marketTab | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| marketplace | background | $semantic.surface.app | $semantic.surface.app |
+| marketplace | badge | $semantic.primary | $semantic.primary |
+| marketplace | badgeForeground | $semantic.primaryForeground | $semantic.primaryForeground |
+| marketplace | badgeRadius | $metrics.radius.pill | $metrics.radius.pill |
+| marketplace | bannerBackground | $semantic.panel.accent | $semantic.panel.accent |
+| marketplace | bannerForeground | $semantic.foreground | $semantic.foreground |
+| marketplace | bannerIcon | $semantic.warning | $semantic.warning |
+| marketplace | bannerRadius | $metrics.radius.md | $metrics.radius.md |
+| marketplace | border | $semantic.border | $semantic.border |
+| marketplace | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| marketplace | cardBackground | $semantic.panel.accent | $semantic.panel.accent |
+| marketplace | cardBackgroundHover | $semantic.popoverHover | $semantic.popoverHover |
+| marketplace | cardForeground | $semantic.panel.foreground | $semantic.panel.foreground |
+| marketplace | cardForegroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| marketplace | cardIcon | $semantic.mutedForeground | $semantic.mutedForeground |
+| marketplace | cardRadius | $metrics.radius.md | $metrics.radius.md |
+| marketplace | detailBackground | $semantic.surface.panel | $semantic.surface.panel |
+| marketplace | detailRadius | $metrics.radius.lg | $metrics.radius.lg |
+| marketplace | detailScrim | $semantic.scrim | $semantic.scrim |
+| marketplace | error | $semantic.destructive | $semantic.destructive |
+| marketplace | foreground | $semantic.foreground | $semantic.foreground |
+| marketplace | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| marketplace | heroBackground | $semantic.panel.accent | $semantic.panel.accent |
+| marketplace | heroForeground | $semantic.onMedia | $semantic.onMedia |
+| marketplace | heroRadius | $metrics.radius.lg | $metrics.radius.lg |
+| marketplace | heroScrim | $semantic.scrimStrong | $semantic.scrimStrong |
+| marketplace | itemHover | $semantic.popoverHover | $semantic.popoverHover |
+| marketplace | itemRadius | $metrics.radius.md | $metrics.radius.md |
+| marketplace | itemSelected | $semantic.panel.accent | $semantic.panel.accent |
+| marketplace | link | $semantic.accentOnPanel | $semantic.accentOnPanel |
+| marketplace | linkHover | $semantic.panel.foreground | $semantic.panel.foreground |
+| marketplace | noticeInfoBackground | $semantic.panel.accent | $semantic.panel.accent |
+| marketplace | noticeInfoForeground | $semantic.foreground | $semantic.foreground |
+| marketplace | noticeInfoIcon | $semantic.accentOnPanel | $semantic.accentOnPanel |
+| marketplace | noticeRadius | $metrics.radius.md | $metrics.radius.md |
+| marketplace | noticeWarningBackground | $semantic.panel.accent | $semantic.panel.accent |
+| marketplace | noticeWarningForeground | $semantic.foreground | $semantic.foreground |
+| marketplace | noticeWarningIcon | $semantic.warning | $semantic.warning |
+| marketplace | previewBackground | $semantic.panel.accent | $semantic.panel.accent |
+| marketplace | previewRadius | $metrics.radius.md | $metrics.radius.md |
+| marketplace | sidebarBackground | $semantic.surface.panel | $semantic.surface.panel |
+| marketplace | sidebarBorder | $semantic.panel.border | $semantic.panel.border |
+| marketplace | stateBadgeBackground | $semantic.scrimStrong | $semantic.scrimStrong |
+| marketplace | stateBadgeRadius | $metrics.radius.pill | $metrics.radius.pill |
+| marketplace | stateFailed | $semantic.destructive | $semantic.destructive |
+| marketplace | stateInstalled | $semantic.constructive | $semantic.constructive |
+| marketplace | stateUpdate | $semantic.primary | $semantic.primary |
+| marketplace | warning | $semantic.warning | $semantic.warning |
+| extrasStore | background | $semantic.surface.app | $semantic.surface.app |
+| extrasStore | barBackground | $semantic.surface.panel | $semantic.surface.panel |
+| extrasStore | barBorder | $semantic.panel.border | $semantic.panel.border |
+| extrasStore | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| extrasStore | cardBackground | $semantic.panel.accent | $semantic.panel.accent |
+| extrasStore | cardBackgroundHover | $semantic.popoverHover | $semantic.popoverHover |
+| extrasStore | cardBorder | $semantic.panel.border | $semantic.panel.border |
+| extrasStore | cardBorderSelected | $semantic.primary | $semantic.primary |
+| extrasStore | cardRadius | $metrics.radius.md | $metrics.radius.md |
+| extrasStore | chipBackground | $semantic.panel.accent | $semantic.panel.accent |
+| extrasStore | chipRadius | $metrics.radius.md | $metrics.radius.md |
+| extrasStore | detailBackground | $semantic.surface.app | $semantic.surface.app |
+| extrasStore | foreground | $semantic.foreground | $semantic.foreground |
+| extrasStore | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| extrasStore | itemHover | $semantic.popoverHover | $semantic.popoverHover |
+| extrasStore | itemSelected | $semantic.panel.accent | $semantic.panel.accent |
+| extrasStore | pillBackground | $semantic.primary | $semantic.primary |
+| extrasStore | pillForeground | $semantic.primaryForeground | $semantic.primaryForeground |
+| extrasStore | pillRadius | $metrics.radius.pill | $metrics.radius.pill |
+| extrasStore | sidebarBackground | $semantic.surface.panel | $semantic.surface.panel |
+| extrasStore | sidebarBorder | $semantic.panel.border | $semantic.panel.border |
+| extrasStore | stateFailed | $semantic.destructive | $semantic.destructive |
+| extrasStore | stateInstalled | $semantic.constructive | $semantic.constructive |
+| extrasStore | stateUpdate | $semantic.primary | $semantic.primary |
+| extrasStore | tileBackground | $semantic.panel.secondary.background | $semantic.panel.secondary.background |
+| extrasStore | tileForeground | $semantic.foreground | $semantic.foreground |
+| extrasStore | tileForegroundOnAccent | $semantic.onMedia | $semantic.onMedia |
+| extrasStore | tileRadius | $metrics.radius.md | $metrics.radius.md |
+| extrasStore | warning | $semantic.warning | $semantic.warning |
 | maskPresetCard | background | $semantic.panel.accent | $semantic.panel.accent |
 | maskPresetCard | backgroundHover | $semantic.popoverHover | $semantic.popoverHover |
 | maskPresetCard | border | $semantic.primary | $semantic.primary |
@@ -2368,7 +2510,6 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | scenesTab | foreground | $semantic.foreground | $semantic.foreground |
 | scenesTab | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | scenesTab | warning | $semantic.warning | $semantic.warning |
-| sfxBrowser | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | sfxSoundRow | backgroundHover | $semantic.popoverHover | $semantic.popoverHover |
 | sfxSoundRow | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
 | sfxSoundRow | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
@@ -2403,23 +2544,6 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | stockAudioRow | radius | $metrics.radius.sm | $metrics.radius.sm |
 | stockAudioRow | trackBackground | $semantic.panel.muted | $semantic.panel.muted |
 | stockAudioRow | trackRadius | 1 | 1 |
-| stockBrowser | accent | $semantic.primary | $semantic.primary |
-| stockBrowser | accentForeground | $semantic.primaryForeground | $semantic.primaryForeground |
-| stockBrowser | badgeRadius | $metrics.radius.pill | $metrics.radius.pill |
-| stockBrowser | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
-| stockBrowser | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
-| stockBrowser | linkBackground | $semantic.panel.accent | $semantic.panel.accent |
-| stockBrowser | linkBackgroundHover | $semantic.popoverHover | $semantic.popoverHover |
-| stockBrowser | linkRadius | $metrics.radius.md | $metrics.radius.md |
-| stockBrowser | scrim | $semantic.scrim | $semantic.scrim |
-| stockBrowser | sheetRadius | $metrics.radius.lg | $metrics.radius.lg |
-| stockItemDetail | accent | $semantic.accentOnPanel | $semantic.accentOnPanel |
-| stockItemDetail | background | $semantic.surface.panel | $semantic.surface.panel |
-| stockItemDetail | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
-| stockItemDetail | foregroundHover | $semantic.panel.foreground | $semantic.panel.foreground |
-| stockItemDetail | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
-| stockItemDetail | previewBackground | $semantic.panel.accent | $semantic.panel.accent |
-| stockItemDetail | previewRadius | $metrics.radius.md | $metrics.radius.md |
 | stockThumb | background | $semantic.panel.accent | $semantic.panel.accent |
 | stockThumb | badgeBackground | $semantic.scrimStrong | $semantic.scrimStrong |
 | stockThumb | badgeRadius | $metrics.radius.xs | $metrics.radius.xs |
@@ -2559,6 +2683,14 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | androidBottomRail | background | $semantic.surface.panel | $semantic.surface.panel |
 | androidBottomRail | border | $semantic.panel.border | $semantic.panel.border |
 | androidBottomRail | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| androidToolPage | background | $semantic.surface.app | $semantic.surface.app |
+| androidToolPage | footerBackground | $semantic.surface.panel | $semantic.surface.panel |
+| androidToolPage | border | $semantic.panel.border | $semantic.panel.border |
+| androidToolPage | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| androidToolPage | foreground | $semantic.foreground | $semantic.foreground |
+| androidToolPage | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| androidToolPage | actionBackground | $semantic.panel.accent | $semantic.panel.accent |
+| androidToolPage | actionForeground | $semantic.panel.foreground | $semantic.panel.foreground |
 | androidBottomSheet | background | $semantic.surface.panel | $semantic.surface.panel |
 | androidBottomSheet | radius | $metrics.radius.md | $metrics.radius.md |
 | androidLayoutSheet | icon | $semantic.panel.foreground | $semantic.panel.foreground |
@@ -2731,6 +2863,14 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | androidHomeRecentCard | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | androidHomeRecentCard | missingDot | $semantic.mutedForeground | $semantic.mutedForeground |
 | androidHomeRecentCard | presentDot | $semantic.constructive | $semantic.constructive |
+| androidHomeTabBar | background | $semantic.surface.panel | $semantic.surface.panel |
+| androidHomeTabBar | border | $semantic.panel.border | $semantic.panel.border |
+| androidHomeTabBar | borderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| androidHomeTabBar | active | $semantic.primary | $semantic.primary |
+| androidHomeTabBar | inactive | $semantic.mutedForeground | $semantic.mutedForeground |
+| androidHomeMyVideos | badgeBackground | $semantic.surface.panel | $semantic.surface.panel |
+| androidHomeMyVideos | badgeForeground | $semantic.panel.foreground | $semantic.panel.foreground |
+| androidHomeMyVideos | badgeRadius | $metrics.radius.sm | $metrics.radius.sm |
 | androidHomeStartTile | background | $semantic.surface.panel | $semantic.surface.panel |
 | androidHomeStartTile | backgroundPressed | $semantic.panel.muted | $semantic.panel.muted |
 | androidHomeStartTile | primaryBackground | $semantic.primary | $semantic.primary |
@@ -2878,7 +3018,6 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | timeline.clipHeaderBandHeight | 20 | 20 |
 | timeline.clipTrimHandleWidth | 12 | 12 |
 | timeline.clipMinInteractiveWidth | 28 | 28 |
-| timeline.clipMinDurationSeconds | 0.1 | 0.1 |
 | android.iconButtonSize | 48 | 48 |
 | android.timelineToolbarHeight | 56 | 56 |
 | android.previewTransportHeight | 56 | 56 |
@@ -2893,7 +3032,7 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | android.liftStepAsideDistance | 56 | 56 |
 | android.railFabSize | 48 | 48 |
 | android.addRowHeight | 64 | 64 |
-| android.trackLabelsWidth | 88 | 88 |
+| android.trackLabelsWidth | 80 | 80 |
 | android.playheadCentreWidth | 2 | 2 |
 | android.clipTrimHandleWidth | 20 | 20 |
 | android.clipEdgeMargin | 22 | 22 |

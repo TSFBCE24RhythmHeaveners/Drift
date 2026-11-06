@@ -4,7 +4,6 @@
 #include "engine/decode/probe/StillImage.h"
 
 #include "engine/decode/readers/ClipReaderPool.h"
-#include "engine/compositor/effects/CompositorFrameHistory.h"
 #include "engine/render3d/DepthRelief.h"
 #include "engine/packages/effects/EffectCatalog.h"
 #include "engine/compositor/effects/EffectProcessor.h"
@@ -16,6 +15,7 @@
 #include "engine/encode/proxies/ReverseProxyCache.h"
 #include "engine/render2d/text/TextLayout.h"
 #include "engine/compositor/layers/TransformLayer.h"
+#include "engine/compositor/SourceFrameCrop.h"
 #include "core/text/animation/TextAnimationPreset.h"
 #include "engine/packages/transitions/TransitionCatalog.h"
 #include "engine/render3d/models/ModelAsset.h"
@@ -49,6 +49,7 @@
 #include <cmath>
 #include <QtMath>
 
+#include <type_traits>
 #include <unordered_map>
 
 namespace {
@@ -594,17 +595,6 @@ QList<ClipReaderPool::VideoRequest> collectVideoRequests(const drift::Project *p
     return requests;
 }
 
-const drift::Effect *findTimeEchoEffect(const QList<drift::Effect> &effects)
-{
-    for (const drift::Effect &effect : effects) {
-        if (!effect.enabled)
-            continue;
-        if (effect.catalogId == QStringLiteral("time_echo"))
-            return &effect;
-    }
-    return nullptr;
-}
-
 // Only worth touching the face track when something in the chain actually consumes it, so a clip
 // that has been detected but is running ordinary effects pays nothing.
 bool chainNeedsFace(const QList<drift::Effect> &effects)
@@ -729,8 +719,8 @@ void applyDepthOcclusion(const drift::Project &project, GpuScene &scene, GpuLaye
     layer.occludeCutout = params.value(QStringLiteral("cutoutEdges")).toBool();
 }
 
-// The clip's chain as it should render *this* frame: time_echo dropped (its trail is assembled
-// before the chain runs) and every keyframed parameter baked down to its value at clipTimeUs.
+// The clip's chain as it should render *this* frame: every keyframed parameter baked down to its
+// value at clipTimeUs.
 // Both the CPU and GPU paths go through here, so an animated parameter cannot come out different
 // between preview and export.
 QList<drift::Effect> resolvedClipEffects(const drift::Clip &clip, drift::TimeUs clipTimeUs)
@@ -740,8 +730,7 @@ QList<drift::Effect> resolvedClipEffects(const drift::Clip &clip, drift::TimeUs 
     for (const drift::Effect &effect : clip.effects) {
         if (!effect.enabled)
             continue;
-        if (effect.catalogId != QStringLiteral("time_echo"))
-            filtered.append(effect.resolvedAt(clipTimeUs));
+        filtered.append(effect.resolvedAt(clipTimeUs));
     }
     return filtered;
 }
@@ -775,8 +764,7 @@ QList<drift::Effect> laneAdjustmentEffects(const drift::Project &project, int tr
                 continue;
             if (!adjustment.linkedClipId.isEmpty() && adjustment.linkedClipId != hostClipId)
                 continue;
-            // time_echo stays in: buildGpuLayer lifts it out for the decode, which is the only
-            // place a trail can be built. Resolved here, against the adjustment's own start.
+            // Resolved here, against the adjustment's own start.
             for (const drift::Effect &effect : adjustment.effects) {
                 if (effect.enabled)
                     result.append(effect.resolvedAt(timelineUs - adjustment.timelineStart));
@@ -900,7 +888,7 @@ QImage decodeClipMediaFrame(const drift::Clip &clip, drift::TimeUs timelineUs, i
         return {};
 
     const QRectF crop = clip.sourceFrame;
-    const bool framed = crop != QRectF(0, 0, 1, 1);
+    const bool framed = crop != QRectF(0, 0, 1, 1) || clip.sourceFrameAngle != 0.0;
     const int boundW = framed ? qCeil(maxWidth / crop.width()) : maxWidth;
     const int boundH = framed ? qCeil(maxHeight / crop.height()) : maxHeight;
     QImage image;
@@ -911,13 +899,8 @@ QImage decodeClipMediaFrame(const drift::Clip &clip, drift::TimeUs timelineUs, i
         image = ClipReaderPool::instance().readVideoFrame(read.path, streamIdFor(clip.id), read.sourceUs,
                                                           boundW, boundH, clip.rotationCorrection);
     }
-    if (framed && !image.isNull()) {
-        const int left = qBound(0, qRound(crop.x() * image.width()), image.width() - 1);
-        const int top = qBound(0, qRound(crop.y() * image.height()), image.height() - 1);
-        image = image.copy(left, top,
-                           qBound(1, qRound(crop.width() * image.width()), image.width() - left),
-                           qBound(1, qRound(crop.height() * image.height()), image.height() - top));
-    }
+    if (framed)
+        image = drift::cropSourceFrame(image, crop, clip.sourceFrameAngle);
     return image;
 }
 
@@ -928,61 +911,16 @@ QImage decodeClipMediaFrame(const drift::Clip &clip, drift::TimeUs timelineUs, i
 // `laneEffects` is what the clip's lanes add (laneAdjustmentEffects), after its own chain.
 QImage imageForClip(const drift::Clip &clip, const QList<drift::Mask> &laneMasks,
                     drift::TimeUs timelineUs, int maxWidth, int maxHeight,
-                    int projectFps, int maxTimeEchoHistoryFrames,
-                    const QList<drift::Effect> &laneEffects = {})
+                    int projectFps, const QList<drift::Effect> &laneEffects = {})
 {
     if (clip.path.isEmpty())
         return {};
 
     const drift::TimeUs clipTimeUs = timelineUs - clip.timelineStart;
-    const drift::Effect *timeEcho = findTimeEchoEffect(clip.effects);
     QList<drift::Effect> otherEffects = resolvedClipEffects(clip, clipTimeUs);
-    for (const drift::Effect &effect : laneEffects) {
-        if (effect.catalogId != QStringLiteral("time_echo"))
-            otherEffects.append(effect);
-        else if (!timeEcho)
-            timeEcho = &effect;
-    }
+    otherEffects.append(laneEffects);
 
-    QImage image;
-    if (timeEcho) {
-        const EffectPresetEntry *def = effectDefForId(timeEcho->catalogId);
-        if (!def)
-            return {};
-
-        const QMap<QString, QVariant> params =
-            resolvedEffectParameters(timeEcho->resolvedAt(clipTimeUs), *def);
-        int frameCount = qBound(1, params.value(QStringLiteral("frames"), 4).toInt(), 10);
-        if (maxTimeEchoHistoryFrames >= 0)
-            frameCount = qMin(frameCount, maxTimeEchoHistoryFrames);
-        const double decay = qBound(0.0, params.value(QStringLiteral("decay"), 0.55).toDouble(), 1.0);
-        const auto blendMode =
-            CompositorFrameHistory::parseEchoBlendMode(params.value(QStringLiteral("blendMode")).toString());
-
-        const drift::TimeUs frameStepUs = drift::frameDurationUs(projectFps);
-        QList<QImage> samples;
-        samples.reserve(frameCount + 1);
-
-        const QImage current = decodeClipMediaFrame(clip, timelineUs, maxWidth, maxHeight);
-        if (current.isNull())
-            return {};
-        samples.append(current);
-
-        for (int i = 1; i <= frameCount; ++i) {
-            const drift::TimeUs pastClipUs = clipTimeUs - static_cast<drift::TimeUs>(i) * frameStepUs;
-            if (pastClipUs < 0)
-                break;
-            const drift::TimeUs pastTimelineUs = clip.timelineStart + pastClipUs;
-            const QImage past = decodeClipMediaFrame(clip, pastTimelineUs, maxWidth, maxHeight);
-            if (!past.isNull())
-                samples.append(past);
-        }
-
-        image = CompositorFrameHistory::applyTimeEcho(samples, decay, blendMode);
-    } else {
-        image = decodeClipMediaFrame(clip, timelineUs, maxWidth, maxHeight);
-    }
-
+    QImage image = decodeClipMediaFrame(clip, timelineUs, maxWidth, maxHeight);
     if (image.isNull())
         return image;
 
@@ -1051,7 +989,7 @@ QImage bottommostVisualFrame(const drift::Project &project, drift::TimeUs timeli
                 continue;
             // The fill blurs the clip as it looks, lane grade included.
             QImage frame = imageForClip(clip, plainMasks(drift::laneMasksAt(project, ti, timelineUs, clip.id)),
-                                        timelineUs, width, height, project.fps(), -1,
+                                        timelineUs, width, height, project.fps(),
                                         laneAdjustmentEffects(project, ti, timelineUs, clip.id));
             if (!frame.isNull())
                 return frame;
@@ -1062,66 +1000,16 @@ QImage bottommostVisualFrame(const drift::Project &project, drift::TimeUs timeli
 
 // ---------------------------------------------------------------------------
 // GPU scene building
-//
-// The pixels a clip contributes before the GPU takes over: decode, plus the
-// time_echo trail (which needs several decoded frames). Effects and the mask are
-// deliberately left to the GPU.
-QImage gpuSourceForClip(const drift::Clip &clip, drift::TimeUs timelineUs, int maxWidth, int maxHeight,
-                        int projectFps, int maxTimeEchoHistoryFrames, const drift::Effect *timeEcho)
-{
-    if (clip.path.isEmpty())
-        return {};
 
-    if (!timeEcho)
-        return decodeClipMediaFrame(clip, timelineUs, maxWidth, maxHeight);
-
-    const EffectPresetEntry *def = effectDefForId(timeEcho->catalogId);
-    if (!def)
-        return {};
-
-    const drift::TimeUs clipTimeUs = timelineUs - clip.timelineStart;
-    const QMap<QString, QVariant> params =
-        resolvedEffectParameters(timeEcho->resolvedAt(clipTimeUs), *def);
-    int frameCount = qBound(1, params.value(QStringLiteral("frames"), 4).toInt(), 10);
-    if (maxTimeEchoHistoryFrames >= 0)
-        frameCount = qMin(frameCount, maxTimeEchoHistoryFrames);
-    const double decay = qBound(0.0, params.value(QStringLiteral("decay"), 0.55).toDouble(), 1.0);
-    const auto blendMode =
-        CompositorFrameHistory::parseEchoBlendMode(params.value(QStringLiteral("blendMode")).toString());
-
-    const drift::TimeUs frameStepUs = drift::frameDurationUs(projectFps);
-    QList<QImage> samples;
-    samples.reserve(frameCount + 1);
-
-    const QImage current = decodeClipMediaFrame(clip, timelineUs, maxWidth, maxHeight);
-    if (current.isNull())
-        return {};
-    samples.append(current);
-
-    for (int i = 1; i <= frameCount; ++i) {
-        const drift::TimeUs pastClipUs = clipTimeUs - static_cast<drift::TimeUs>(i) * frameStepUs;
-        if (pastClipUs < 0)
-            break;
-        const QImage past =
-            decodeClipMediaFrame(clip, clip.timelineStart + pastClipUs, maxWidth, maxHeight);
-        if (!past.isNull())
-            samples.append(past);
-    }
-
-    return CompositorFrameHistory::applyTimeEcho(samples, decay, blendMode);
-}
-
-// Prefer the preview AVFrame path for plain video; fall back to RGBA QImage
-// when time_echo needs CPU blending or preview decode fails.
-// `timeEcho` is the clip's own time_echo or the one a lane adjustment gives it; null for none.
+// Prefer the preview AVFrame path for plain video; fall back to an RGBA QImage for stills and
+// when preview decode fails.
 void fillGpuLayerPixels(GpuLayer &layer, const drift::Clip &clip, drift::TimeUs timelineUs, int maxWidth,
-                        int maxHeight, int projectFps, int maxTimeEchoHistoryFrames,
-                        const drift::Effect *timeEcho)
+                        int maxHeight)
 {
     if (clip.path.isEmpty())
         return;
 
-    if (!timeEcho && clip.type == drift::ClipType::Video) {
+    if (clip.type == drift::ClipType::Video) {
         const drift::VideoRead read = drift::resolveVideoRead(clip, timelineUs, t_allowProxies);
         // Same enlarged bound as collectVideoRequests and decodeClipMediaFrame, so a framed clip
         // hits the frame warmVideoFrames decoded and keeps its resolution once cropped.
@@ -1132,12 +1020,12 @@ void fillGpuLayerPixels(GpuLayer &layer, const drift::Clip &clip, drift::TimeUs 
         if (video.isValid()) {
             layer.video = video;
             layer.videoCrop = clip.sourceFrame;
+            layer.videoCropAngle = clip.sourceFrameAngle;
             return;
         }
     }
 
-    layer.source = gpuSourceForClip(clip, timelineUs, maxWidth, maxHeight, projectFps,
-                                    maxTimeEchoHistoryFrames, timeEcho);
+    layer.source = decodeClipMediaFrame(clip, timelineUs, maxWidth, maxHeight);
 }
 
 // The word the playhead sits on, for styles whose accent rule follows the speech. -1 for every
@@ -1202,7 +1090,7 @@ MaskMediaFrame decodeMaskMedia(const QString &path, quint64 streamId, drift::Tim
 // because this is the only place that knows the frame time; the GPU fold consumes the pair.
 void fillGpuLayerMasks(GpuLayer &layer, const drift::Clip &host,
                        const QList<drift::LaneMask> &laneMasks, drift::TimeUs timelineUs,
-                       int canvasWidth, int canvasHeight)
+                       int canvasWidth, int canvasHeight, int fps)
 {
     if (laneMasks.isEmpty())
         return;
@@ -1212,6 +1100,7 @@ void fillGpuLayerMasks(GpuLayer &layer, const drift::Clip &host,
         layer.masks.append(laneMask.mask);
 
     layer.maskMedia.resize(layer.masks.size());
+    layer.maskPatch.resize(layer.masks.size());
     for (int i = 0; i < laneMasks.size(); ++i) {
         const drift::Mask &mask = laneMasks.at(i).mask;
         if (!mask.isMedia())
@@ -1225,6 +1114,14 @@ void fillGpuLayerMasks(GpuLayer &layer, const drift::Clip &host,
         // contributes nothing rather than covering nothing.
         layer.maskMedia[i] =
             decodeMaskMedia(mask.mediaPath, streamId, mediaUs, canvasWidth, canvasHeight);
+
+        // A brush fix of this frame. It is drawn over the decoded coverage by the GPU fold, so the
+        // matte video keeps decoding as usual.
+        if (!mask.mediaPatches.isEmpty()) {
+            const QString patch = mask.patchAt(mediaUs, drift::frameDurationUs(fps) / 2);
+            if (!patch.isEmpty())
+                layer.maskPatch[i] = decodedStillImage(patch, canvasWidth, canvasHeight);
+        }
 
         // The decontaminated foreground, when the cutout produced one. Bound only for a lone
         // media mask, which is what a segmentation makes: with a stack there is no single entry
@@ -1333,6 +1230,31 @@ private:
     QSize m_size;
 };
 
+#ifdef DRIFT_WITH_SKIA
+// A vector layer is rasterized at its layout size, but the GPU may draw it larger: block and clip
+// animation scale, a transform-layer parent, the scene camera or editor view, a 3D tilt. Redo the
+// raster at the size the quad lands on so it is not a magnified bitmap, never past the canvas's own
+// resolution and never smaller (shrinking is the mip chain's job). The scale is bucketed in quarter
+// octaves so an animated zoom reuses cached rasters instead of repainting at every frame's size.
+// Effects work in layer pixels, which would then mean something else, so those layers stay at 1.
+void rasterAtDrawnSize(GpuLayer &layer, const QSize &canvas)
+{
+    if (!layer.vector || layer.screenSpace || !layer.effects.isEmpty())
+        return;
+    const QSize base = layer.vector->size();
+    if (base.isEmpty())
+        return;
+    const QSizeF drawn = GpuCompositor::drawnSize(layer, canvas);
+    const double wanted = qMax(drawn.width() / base.width(), drawn.height() / base.height());
+    if (!(wanted > 1.0))
+        return;
+    double k = std::exp2(std::round(4.0 * std::log2(wanted)) / 4.0);
+    k = qMin(k, qMin(double(canvas.width()) / base.width(), double(canvas.height()) / base.height()));
+    if (k > 1.0)
+        layer.vector = drift::skia::scaledPainter(layer.vector, k);
+}
+#endif
+
 GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, int width, int height,
                        double renderScale, const FrameCompositor::RenderOptions &options,
                        bool nested = false);
@@ -1340,29 +1262,13 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
 GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
                        drift::TimeUs timelineUs, int projectWidth,
                        int projectHeight, double renderScale, int canvasWidth, int canvasHeight,
-                       int projectFps, int maxTimeEchoHistoryFrames,
-                       const QList<drift::Effect> &laneEffects = {},
+                       int projectFps, const QList<drift::Effect> &laneEffects = {},
                        const QList<drift::LaneMask> &laneMasks = {},
                        bool editingText = false)
 {
     GpuLayer layer;
 
     const drift::TimeUs clipTimeUs = timelineUs - clip.timelineStart;
-
-    // A time_echo is a trail of decoded frames, not a shader pass, so a lane's one is taken out of
-    // the chain and handed to the decode. The clip's own, if it has one, wins.
-    const drift::Effect *timeEcho = findTimeEchoEffect(clip.effects);
-    drift::Effect laneEcho;
-    QList<drift::Effect> laneChain;
-    laneChain.reserve(laneEffects.size());
-    for (const drift::Effect &effect : laneEffects) {
-        if (effect.catalogId != QStringLiteral("time_echo")) {
-            laneChain.append(effect);
-        } else if (!timeEcho) {
-            laneEcho = effect;
-            timeEcho = &laneEcho;
-        }
-    }
 
     double x = 0.0;
     double y = 0.0;
@@ -1472,11 +1378,7 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
         // The model sits in the world like any 3D layer, its bounding box fitted to the clip rect.
         request.rect = layoutRect;
         request.rotation = rotation;
-        request.pose.rotationX = transformValue(clip.rotationX, clipTimeUs, 0.0);
-        request.pose.rotationY = transformValue(clip.rotationY, clipTimeUs, 0.0);
-        request.pose.positionZ = transformValue(clip.positionZ, clipTimeUs, 0.0) * renderScale;
-        request.pose.perspective =
-            transformValue(clip.perspective, clipTimeUs, drift::kDefaultClipPerspective) * renderScale;
+        request.pose = drift::clipPoseAt(clip, clipTimeUs, renderScale, projectHeight);
         request.canvas = QSizeF(canvasWidth, canvasHeight);
         layer.model3d = drift::model3d::makeDrawRequest(request);
         layer.effects = resolvedClipEffects(clip, clipTimeUs);
@@ -1489,7 +1391,6 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
         if (const drift::Project *nested = nestedProject(project, clip)) {
             const NestedScope scope(clip);
             FrameCompositor::RenderOptions nestedOptions;
-            nestedOptions.maxTimeEchoHistoryFrames = maxTimeEchoHistoryFrames;
             auto scene = std::make_shared<GpuScene>(
                 buildGpuScene(*nested, clip.timelineToSourceUs(timelineUs), canvasWidth,
                               canvasHeight, renderScale, nestedOptions, true));
@@ -1501,8 +1402,7 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
         // Bounded by the canvas, not the layout rect — see decodeClipMediaFrame.
         const QSize bound =
             decodeBoundForClip(clip, projectWidth, projectHeight, renderScale, canvasWidth, canvasHeight);
-        fillGpuLayerPixels(layer, clip, timelineUs, bound.width(), bound.height(), projectFps,
-                           maxTimeEchoHistoryFrames, timeEcho);
+        fillGpuLayerPixels(layer, clip, timelineUs, bound.width(), bound.height());
         layer.effects = resolvedClipEffects(clip, clipTimeUs);
     }
 
@@ -1512,7 +1412,7 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
     if (!editingText)
         applyClipBodyAnimation(clip, timelineUs, w, h, &destRect, &opacity, &rotation);
 
-    fillGpuLayerMasks(layer, clip, laneMasks, timelineUs, canvasWidth, canvasHeight);
+    fillGpuLayerMasks(layer, clip, laneMasks, timelineUs, canvasWidth, canvasHeight, projectFps);
     layer.rect = destRect;
     layer.rotation = rotation;
     // Depth sorting needs a pose to sort by, and the dest-reading blend modes copy the canvas
@@ -1521,12 +1421,7 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
     layer.depthOcclude = clip.depthOcclude && clip.layer3d
                          && clip.blendMode == drift::BlendMode::Normal;
     if (clip.type != drift::ClipType::Model3d) {
-        layer.pose3d.rotationX = transformValue(clip.rotationX, clipTimeUs, 0.0);
-        layer.pose3d.rotationY = transformValue(clip.rotationY, clipTimeUs, 0.0);
-        layer.pose3d.positionZ = transformValue(clip.positionZ, clipTimeUs, 0.0) * renderScale;
-        layer.pose3d.perspective =
-            transformValue(clip.perspective, clipTimeUs, drift::kDefaultClipPerspective)
-            * renderScale;
+        layer.pose3d = drift::clipPoseAt(clip, clipTimeUs, renderScale, projectHeight);
     }
     layer.flipH = clip.flipH;
     layer.flipV = clip.flipV;
@@ -1535,7 +1430,7 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
     layer.frameRate = projectFps;
     // After the clip's own chain: a lane sits above the clip in the timeline, so it reads as the
     // later treatment. Derived face slots come after, so a lane's face effect binds too.
-    layer.effects.append(laneChain);
+    layer.effects.append(laneEffects);
     layer.faceSlots = faceSlotsForClip(clip, layer.effects, timelineUs);
     layer.depth = depthFrameForClip(clip, layer.effects, timelineUs);
     layer.valid = true;
@@ -1575,6 +1470,7 @@ void appendTextEditDecor(GpuScene &scene, const GpuItem &textItem, const drift::
     layer.effects.clear();
     layer.masks.clear();
     layer.maskMedia.clear();
+    layer.maskPatch.clear();
     layer.fgr = {};
     layer.faceSlots.clear();
     layer.depth.reset();
@@ -1593,6 +1489,89 @@ void appendTextEditDecor(GpuScene &scene, const GpuItem &textItem, const drift::
 #endif
 }
 
+// A composite's models leave its flat picture and join this scene right after it, placed through
+// the composite's pose. They are then seen by this scene's camera (or the 3D view) in depth and
+// occlude against the clips around them, instead of being baked flat into one card. Everything
+// else in the composite stays on that card.
+//
+// A model stays baked when something laid out on the composite's card would have to follow it:
+// masks on the composite, a tilted transform layer over either, a nested adjustment above it, or
+// a depth occluder indexed into the nested scene.
+void liftNestedModels(GpuScene &scene, int compositeIndex, const QSizeF &canvas)
+{
+    GpuItem &composite = scene.items[compositeIndex];
+    const GpuLayer &host = composite.layer;
+    if (!host.nested || !host.masks.isEmpty() || (host.hasParent && !host.parent.isAffine()))
+        return;
+
+    // Nested world (canvas px from the top-left) -> the composite's unit quad -> outer world. Depth
+    // scales with the card, so a shrunken composite keeps its models' proportions.
+    const double zScale = std::sqrt(std::abs(host.rect.width() * host.rect.height())
+                                    / (canvas.width() * canvas.height()));
+    QMatrix4x4 toQuad;
+    toQuad.scale(float(2.0 / canvas.width()), float(2.0 / canvas.height()), float(zScale));
+    toQuad.translate(float(-canvas.width() * 0.5), float(-canvas.height() * 0.5));
+    const QMatrix4x4 hostWorld =
+        drift::clipQuadToWorld(host.rect, host.rotation, host.flipH, host.flipV, host.pose3d, canvas) * toQuad;
+
+    const auto rekeyed = [](const auto &inputs, int base) {
+        std::remove_cvref_t<decltype(inputs)> out;
+        for (auto it = inputs.cbegin(); it != inputs.cend(); ++it) {
+            const qsizetype slash = it.key().indexOf(QLatin1Char('/'));
+            out.insert(QStringLiteral("%1/%2").arg(it.key().left(slash).toInt() + base).arg(it.key().mid(slash + 1)),
+                       it.value());
+        }
+        return out;
+    };
+
+    auto nested = std::make_shared<GpuScene>(*host.nested);
+    QList<GpuItem> lifted;
+    bool underAdjustment = false;
+    // Top-down, so an adjustment is seen before the layers it grades.
+    for (qsizetype i = nested->items.size() - 1; i >= 0; --i) {
+        const GpuItem &candidate = nested->items.at(i);
+        if (candidate.isAdjustment) {
+            underAdjustment = true;
+            continue;
+        }
+        const GpuLayer &source = candidate.layer;
+        if (candidate.isTransition || underAdjustment || !source.model3d || source.occluderItem >= 0
+            || (source.hasParent && !source.parent.isAffine())) {
+            continue;
+        }
+        GpuItem item = nested->items.takeAt(i);
+        for (GpuItem &remaining : nested->items) {
+            if (remaining.layer.occluderItem > i)
+                --remaining.layer.occluderItem;
+        }
+        GpuLayer &layer = item.layer;
+        const QMatrix4x4 nestedParent =
+            layer.hasParent ? drift::worldParentFromAffine(layer.parent, canvas) : QMatrix4x4();
+        layer.liftWorld = hostWorld * nestedParent * layer.liftWorld;
+        layer.parent = host.parent;
+        layer.hasParent = host.hasParent;
+        layer.viewProj = host.viewProj;
+        layer.viewActive = host.viewActive;
+        layer.layoutCanvas = host.layoutCanvas;
+        layer.opacity *= host.opacity;
+        if (item.blend == drift::BlendMode::Normal)
+            item.blend = composite.blend;
+        layer.depthOcclude = layer.depthOcclude && item.blend == drift::BlendMode::Normal;
+        // The composite's own chain grades its models too, after theirs, the way a lane's does.
+        const int base = int(layer.effects.size());
+        layer.effects.append(host.effects);
+        layer.trackInputs.insert(rekeyed(host.trackInputs, base));
+        layer.audioInputs.insert(rekeyed(host.audioInputs, base));
+        if (!layer.globalAudio)
+            layer.globalAudio = host.globalAudio;
+        lifted.prepend(std::move(item));
+    }
+    if (lifted.isEmpty())
+        return;
+    composite.layer.nested = std::move(nested);
+    scene.items.append(lifted);
+}
+
 // `nested` builds a composite's timeline: its layer sits on the parent's canvas, so the project
 // background belongs to the outermost scene alone.
 GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, int width, int height,
@@ -1600,6 +1579,7 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
 {
     GpuScene scene;
     scene.canvasSize = QSize(width, height);
+    scene.previewStream = options.stream;
     scene.cacheVideoSources = options.cacheVideoSources;
     scene.scopeReadbackWidth = options.scopeReadbackWidth;
 
@@ -1646,10 +1626,11 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
     // once per frame, then stamped onto each layer the way a transform parent is. With no camera
     // clip `cameraActive` stays false everywhere and every layer takes the per-clip path it always
     // has, which is what makes a project without a camera render identically.
-    drift::SceneCamera3d sceneCamera;
+    drift::SceneCamera3d sceneCamera = drift::defaultSceneCamera(QSizeF(width, height));
     bool sceneCameraActive = false;
     if (const drift::Clip *cameraClip = drift::cameraClipAt(project.tracks(), timelineUs)) {
-        sceneCamera = drift::sceneCameraFromClip(*cameraClip, timelineUs, renderScale);
+        sceneCamera = drift::sceneCameraFromClip(*cameraClip, timelineUs, renderScale,
+                                                 QSizeF(projectWidth, projectHeight));
         sceneCameraActive = true;
     }
     QMatrix4x4 sceneView = drift::cameraViewProjection(sceneCamera, QSizeF(width, height));
@@ -1663,15 +1644,15 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
         const QSizeF projectCanvas(projectWidth, projectHeight);
         const QSize target = options.editor.target.isEmpty() ? QSize(width, height) : options.editor.target;
         const drift::EditorFrame frame = drift::editorFrame(projectCanvas, QSizeF(target));
-        drift::SceneCamera3d projectCamera;
+        drift::SceneCamera3d projectCamera = drift::defaultSceneCamera(projectCanvas);
         if (const drift::Clip *cameraClip = drift::cameraClipAt(project.tracks(), timelineUs))
-            projectCamera = drift::sceneCameraFromClip(*cameraClip, timelineUs, 1.0);
+            projectCamera = drift::sceneCameraFromClip(*cameraClip, timelineUs, 1.0, projectCanvas);
         QMatrix4x4 toTarget;
         toTarget.scale(float(target.width() / frame.size.width()), float(target.height() / frame.size.height()),
                        1.f);
         QMatrix4x4 fromRender;
         fromRender.scale(1.f / float(renderScale));
-        sceneView = toTarget * drift::editorViewProjection(options.editor.view, frame.size, projectCamera)
+        sceneView = toTarget * drift::editorViewProjection(options.editor.view, frame, projectCanvas, projectCamera)
                     * fromRender;
         scene.canvasSize = target;
         sceneViewActive = true;
@@ -1680,6 +1661,8 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
     }
     drift::EditorOverlayInput guides;
     guides.canvas = QSizeF(width, height);
+    guides.showGrid = options.editor.showGrid;
+    guides.gridSize = options.editor.gridSize;
     guides.cameraActive = sceneCameraActive;
     guides.camera = sceneCamera;
     if (editorView && !options.editor.selectedClipId.isEmpty()) {
@@ -1706,14 +1689,16 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
                 guides.selectedModelMax = model.asset->aabbMax;
                 guides.selectedModel = parent * drift::modelClipWorld(model.rect, model.rotation, model.pose3d,
                                                                       model.asset->aabbMin,
-                                                                      model.asset->aabbMax, canvas);
+                                                                      model.asset->aabbMax, canvas,
+                                                                      model.params.scale, model.params.scaleZ);
             } else if (model.splat) {
                 guides.hasSelectedModel = true;
                 guides.selectedModelMin = model.splat->fitMin;
                 guides.selectedModelMax = model.splat->fitMax;
                 guides.selectedModel = parent * drift::modelClipWorld(model.rect, model.rotation, model.pose3d,
                                                                       model.splat->fitMin,
-                                                                      model.splat->fitMax, canvas);
+                                                                      model.splat->fitMax, canvas,
+                                                                      model.params.scale, model.params.scaleZ);
             }
             return;
         }
@@ -1770,7 +1755,7 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
             // Back to the plane through the model's centre.
             guide.hasDrop = true;
             guide.drop = parent.map(frame.toWorld(QVector3D(float(light.x), float(light.y), 0.f)));
-            guide.dropNormal = parent.mapVector(QVector3D(0.f, 0.f, 1.f)).normalized();
+            guide.dropNormal = parent.mapVector(QVector3D(0.f, 0.f, -1.f)).normalized();
             lights.append(guide);
         }
         drift::addLightGuides(reliefGuides, lights, editorEye, clip.id == options.editor.selectedClipId);
@@ -1790,7 +1775,7 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
             const TrackInputScope scope;
             const drift::Clip &source = *read.input.clip;
             GpuLayer input = buildGpuLayer(project, source, timelineUs, projectWidth, projectHeight, renderScale,
-                                           width, height, fps, options.maxTimeEchoHistoryFrames,
+                                           width, height, fps,
                                            laneAdjustmentEffects(project, read.input.trackIndex, timelineUs, source.id),
                                            drift::laneMasksAt(project, read.input.trackIndex, timelineUs, source.id));
             if (!input.valid)
@@ -1859,11 +1844,11 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
                 GpuItem item;
                 item.isTransition = true;
                 item.from = buildGpuLayer(project, *fromClip, timelineUs, projectWidth, projectHeight, renderScale,
-                                          width, height, fps, options.maxTimeEchoHistoryFrames,
+                                          width, height, fps,
                                           laneAdjustmentEffects(project, ti, timelineUs, fromClip->id),
                                           drift::laneMasksAt(project, ti, timelineUs, fromClip->id));
                 item.to = buildGpuLayer(project, *toClip, timelineUs, projectWidth, projectHeight, renderScale,
-                                        width, height, fps, options.maxTimeEchoHistoryFrames,
+                                        width, height, fps,
                                         laneAdjustmentEffects(project, ti, timelineUs, toClip->id),
                                         drift::laneMasksAt(project, ti, timelineUs, toClip->id));
                 applyParent(item.from, ti);
@@ -1923,7 +1908,7 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
                                                      ? clip.mask.resolvedAt(maskTimeUs)
                                                      : clip.mask;
                     fillGpuLayerMasks(item.layer, clip, {drift::LaneMask{resolved, clip.id, clip.timelineStart, clip.srcIn}},
-                                      timelineUs, width, height);
+                                      timelineUs, width, height, fps);
                 }
                 item.layer.rect = QRectF(0, 0, width, height);
                 item.layer.opacity = opacityForClip(clip, timelineUs);
@@ -1939,13 +1924,16 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
             GpuItem item;
             item.blend = clip.blendMode;
             item.layer = buildGpuLayer(project, clip, timelineUs, projectWidth, projectHeight, renderScale, width,
-                                       height, fps, options.maxTimeEchoHistoryFrames,
+                                       height, fps,
                                        laneAdjustmentEffects(project, ti, timelineUs, clip.id),
                                        drift::laneMasksAt(project, ti, timelineUs, clip.id), editingText);
             if (!item.layer.valid)
                 continue;
             applyParent(item.layer, ti);
             applyCamera(item.layer);
+#ifdef DRIFT_WITH_SKIA
+            rasterAtDrawnSize(item.layer, QSize(width, height));
+#endif
             attachTrackInputs(item.layer);
             attachAudioInputs(item.layer);
             noteSelection(clip, item.layer);
@@ -1957,6 +1945,7 @@ GpuScene buildGpuScene(const drift::Project &project, drift::TimeUs timelineUs, 
                 item.layer.maskViewTint = options.maskViewTint;
             }
             scene.items.append(item);
+            liftNestedModels(scene, int(scene.items.size()) - 1, QSizeF(width, height));
             if (editingText)
                 appendTextEditDecor(scene, item, clip, options.textEdit, timelineUs, projectWidth, projectHeight,
                                     renderScale);
@@ -2027,7 +2016,7 @@ bool FrameCompositor::prepare(drift::TimeUs timelineUs, const RenderOptions &opt
 
     const int projectWidth = m_project->width();
     const int projectHeight = m_project->height();
-    const double renderScale = qBound(kMinPreviewScale, options.previewScale, 1.0);
+    const double renderScale = qBound(kMinPreviewScale, options.previewScale, qMax(1.0, options.maxScale));
     const int width = qMax(1, static_cast<int>(std::lround(projectWidth * renderScale)));
     const int height = qMax(1, static_cast<int>(std::lround(projectHeight * renderScale)));
     if (width <= 0 || height <= 0)

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "playback/AudioOutputChannel.h"
 #include "playback/preview/CompositorService.h"
 #include "playback/PlaybackClock.h"
 #include "playback/stats/PlaybackStats.h"
@@ -20,6 +19,8 @@
 #include <atomic>
 
 // Audio-master playback: mixes timeline audio and composites preview frames off the GUI thread.
+class AudioOutputChannel;
+
 class PlaybackEngine : public QObject
 {
     Q_OBJECT
@@ -78,6 +79,17 @@ public:
     void setLoopWorkArea(bool enabled) { m_loopWorkArea = enabled; }
     bool loopWorkArea() const { return m_loopWorkArea; }
 
+    // Loops playback inside [startUs, endUs) and beats the work-area loop while set.
+    void setPreviewRange(drift::TimeUs startUs, drift::TimeUs endUs)
+    {
+        m_previewRangeStartUs = startUs;
+        m_previewRangeEndUs = endUs;
+    }
+    void clearPreviewRange() { m_previewRangeStartUs = m_previewRangeEndUs = 0; }
+    bool hasPreviewRange() const { return m_previewRangeEndUs > m_previewRangeStartUs; }
+    drift::TimeUs previewRangeStartUs() const { return m_previewRangeStartUs; }
+    drift::TimeUs previewRangeEndUs() const { return m_previewRangeEndUs; }
+
     void setVoiceoverRecording(bool rec) { m_voiceoverRecording = rec; }
     bool isVoiceoverRecording() const { return m_voiceoverRecording; }
 
@@ -87,6 +99,8 @@ public:
     // graph (see GpuFrameTexture). Null whenever the texture path above is usable.
     QImage previewImage() const;
     bool hasFrame() const;
+    // The frame last published for a stream. previewTextureId/Size/Image above are the Camera's.
+    GpuFrameTexture previewFrame(PreviewStream stream) const;
     bool gpuCompositorReady() const { return m_gpuStatusId == QStringLiteral("ready"); }
     // "unknown" until the first probe runs, so the UI can hold off rather than
     // flash a failure during startup.
@@ -130,7 +144,13 @@ public:
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void refreshFrame();
-    Q_INVOKABLE void setPreviewRenderSize(int width, int height);
+    // `stream` is a PreviewStream. The two-argument form sizes the Camera stream.
+    Q_INVOKABLE void setPreviewRenderSize(int width, int height) { setPreviewRenderSize(0, width, height); }
+    Q_INVOKABLE void setPreviewRenderSize(int stream, int width, int height);
+    // The Camera stream is always on. The Editor stream only renders while a 3D viewport shows
+    // it, so it costs nothing otherwise.
+    Q_INVOKABLE void setStreamEnabled(int stream, bool enabled);
+    bool streamEnabled(PreviewStream stream) const { return m_streams[int(stream)].enabled; }
     // Restart the composite tick from the current project fps and rate. Playback
     // samples `m_project` live, but the QTimer interval is snapped at play().
     void syncDisplayCadence();
@@ -152,13 +172,17 @@ public:
     void setTextEditDecor(const FrameCompositor::RenderOptions::TextEditDecor &decor, bool refresh = true);
     // The preview's mask view of one clip; an Off mode clears it.
     void setMaskView(const FrameCompositor::RenderOptions::MaskView &view);
-    // The preview's 3D mode and its free viewpoint; inactive renders the camera's picture.
-    void setEditorView(const FrameCompositor::RenderOptions::EditorView &view);
+    // The free viewpoint a stream renders from; inactive renders the camera's picture.
+    void setStreamEditorView(PreviewStream stream, const FrameCompositor::RenderOptions::EditorView &view);
     // The panel's size in device px, as the preview last reported it.
-    QSize previewRenderSize() const { return QSize(m_previewRenderWidth, m_previewRenderHeight); }
+    QSize previewRenderSize(PreviewStream stream = PreviewStream::Camera) const
+    {
+        const Stream &s = m_streams[int(stream)];
+        return QSize(s.renderWidth, s.renderHeight);
+    }
 
     // Empty id follows the system default. Applied to the sink immediately.
-    void setAudioDeviceId(const QByteArray &id) { m_audio.setDeviceId(id); }
+    void setAudioDeviceId(const QByteArray &id);
 
     QPair<float, float> trackAudioLevels(int trackIndex) const;
     QPair<float, float> masterAudioLevels() const;
@@ -183,7 +207,10 @@ signals:
     void gpuCompositorUnavailable(const QString &statusId, const QString &detail);
 
     void gpuCompositorStatusChanged();
+    // The Camera stream's frame changed.
     void currentFrameChanged();
+    // Any stream's frame changed; `stream` is a PreviewStream.
+    void streamFrameChanged(int stream);
     void scopeFrame(const QImage &image);
     void playingChanged();
     void previewQualityChanged();
@@ -217,7 +244,9 @@ private:
     void requestFrameForPresentation();
     // Interval between refreshes, or 0 when the refresh rate is unknown.
     qint64 refreshIntervalNs() const;
-    void onFrameReady(const GpuFrameTexture &frame);
+    void onFrameReady(int stream, const GpuFrameTexture &frame);
+    // Asks for `timeUs` on every enabled stream.
+    void requestStreams(drift::TimeUs timeUs);
     void checkEndOfTimeline(drift::TimeUs timeUs);
     void checkHardwareFallback();
     void checkZeroCopyFallback();
@@ -225,14 +254,14 @@ private:
     bool isAutoQuality() const { return m_previewQuality == QStringLiteral("auto"); }
     bool shouldLoopWorkArea(drift::TimeUs *loopInOut, drift::TimeUs *loopOutOut) const;
     drift::TimeUs frameStepUs() const;
-    FrameCompositor::RenderOptions playbackRenderOptions() const;
+    FrameCompositor::RenderOptions playbackRenderOptions(PreviewStream stream = PreviewStream::Camera) const;
 
     drift::Project *m_project = nullptr;
     PlaybackClock m_clock;
     CompositorService m_compositor;
     PlaybackStats m_stats;
     AudioMixer m_mixer;
-    AudioOutputChannel m_audio;
+    std::unique_ptr<AudioOutputChannel> m_audio;
     QTimer m_compositeTimer;
     QTimer m_editRefreshTimer;
     QTimer m_scrubSettleTimer;
@@ -243,7 +272,15 @@ private:
     bool m_gpuUnavailableNotified = false;
     QString m_gpuStatusId = QStringLiteral("unknown");
     QString m_gpuStatusDetail;
-    GpuFrameTexture m_currentFrame;
+    struct Stream
+    {
+        bool enabled = false;
+        GpuFrameTexture frame;
+        FrameCompositor::RenderOptions::EditorView editorView;
+        int renderWidth = 0;
+        int renderHeight = 0;
+    };
+    Stream m_streams[kPreviewStreamCount];
     mutable QMutex m_frameMutex;
     int m_scopeConsumers = 0;
     QElapsedTimer m_scopeTimer;
@@ -270,10 +307,7 @@ private:
     drift::ClipAudioRetimer m_rateRetimer;
     std::atomic<quint64> m_audioStreamGeneration{1};
     FrameCompositor::RenderOptions::TextEditDecor m_textEditDecor;
-    FrameCompositor::RenderOptions::EditorView m_editorView;
     FrameCompositor::RenderOptions::MaskView m_maskView;
-    int m_previewRenderWidth = 0;
-    int m_previewRenderHeight = 0;
     // Display cadence. The refresh rate comes from the window's screen and is 0 until one
     // exists; m_lastDisplayTickNs is what tells the watchdog timer whether the display is
     // still producing frames, and m_lastRequestedFrameUs quantises requests onto the
@@ -291,6 +325,8 @@ private:
     // samples in — not necessarily the project's rate, since the device has the final say.
     int m_sampleRate = 48000;
     bool m_loopWorkArea = false;
+    drift::TimeUs m_previewRangeStartUs = 0;
+    drift::TimeUs m_previewRangeEndUs = 0;
     bool m_voiceoverRecording = false;
     // processedUSecs() is cumulative from QAudioSink::start(), not from the last clock reset.
     // This is where the current stream's first sample sits in the sink's output, captured on the

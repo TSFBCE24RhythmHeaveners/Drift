@@ -12,6 +12,40 @@ target_link_libraries(tst_core PRIVATE Qt6::Test driftcore)
 target_compile_definitions(tst_core PRIVATE DRIFT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_test(NAME Core COMMAND tst_core)
 
+qt_add_executable(tst_keyframeview
+    tst_keyframeview.cpp
+    ../src/app/editor/sessions/KeyframeCurves.cpp
+    ../src/app/editor/sessions/KeyframeRows.cpp
+    ../src/app/editor/sessions/KeyframeSelection.cpp
+    ../src/app/editor/sessions/KeyframeTimeView.cpp)
+target_include_directories(tst_keyframeview PRIVATE ../src)
+target_link_libraries(tst_keyframeview PRIVATE Qt6::Test Qt6::Core driftcore)
+add_test(NAME KeyframeView COMMAND tst_keyframeview)
+
+qt_add_executable(tst_polylinedraft
+    tst_polylinedraft.cpp
+    ../src/app/editor/sessions/PolylineDraft.cpp)
+target_include_directories(tst_polylinedraft PRIVATE ../src)
+target_link_libraries(tst_polylinedraft PRIVATE Qt6::Test Qt6::Core)
+add_test(NAME PolylineDraft COMMAND tst_polylinedraft)
+
+qt_add_executable(tst_trackeroverlay tst_trackeroverlay.cpp)
+target_include_directories(tst_trackeroverlay PRIVATE ../src)
+target_link_libraries(tst_trackeroverlay PRIVATE Qt6::Test Qt6::Core Qt6::Gui)
+add_test(NAME TrackerOverlay COMMAND tst_trackeroverlay)
+
+qt_add_executable(tst_curveedit
+    tst_curveedit.cpp
+    ../src/ui/color/CurveEdit.cpp)
+target_include_directories(tst_curveedit PRIVATE ../src)
+target_link_libraries(tst_curveedit PRIVATE Qt6::Test Qt6::Core driftengine)
+add_test(NAME CurveEdit COMMAND tst_curveedit)
+
+qt_add_executable(tst_colorwheel tst_colorwheel.cpp)
+target_include_directories(tst_colorwheel PRIVATE ../src)
+target_link_libraries(tst_colorwheel PRIVATE Qt6::Test Qt6::Core Qt6::Gui)
+add_test(NAME ColorWheel COMMAND tst_colorwheel)
+
 qt_add_executable(tst_pdfsource tst_pdfsource.cpp)
 target_include_directories(tst_pdfsource PRIVATE ../src)
 target_link_libraries(tst_pdfsource PRIVATE Qt6::Test driftcore)
@@ -19,81 +53,19 @@ add_test(NAME PdfSource COMMAND tst_pdfsource)
 
 qt_add_executable(tst_editorstate
     tst_editorstate.cpp
-    ../src/ui/imageproviders/segment/SegmentImageStore.cpp
-    ../src/playback/preview/ClipPreviewImageStore.cpp
-    ../src/ui/imageproviders/multicam/MulticamImageStore.cpp
-    # The provider, not just the store: the id QML addresses a tile by is parsed here, and a
-    # store test cannot see that half. Costs a Qt6::Quick link, but needs no QML engine —
-    # requestImage is called directly.
-    ../src/ui/imageproviders/multicam/MulticamImageProvider.cpp
-    ../src/app/editor/AppController.cpp
-    ../src/app/mcp/McpController.cpp
-    ../src/app/editor/PreferencesController.cpp
-    ../src/app/editor/ProjectFileController.cpp
-    ../src/app/bin/AssetPreviewController.cpp
-    ../src/app/editor/sessions/SpeedCurveController.cpp
-    ../src/app/editor/sessions/CurveEditorController.cpp
-    ../src/app/editor/sessions/KeyframeController.cpp
-    ../src/app/editor/sessions/MaskingController.cpp
-    ../src/app/editor/sessions/SubtitleController.cpp
-    ../src/app/editor/sessions/SubtitleCueModel.cpp
-    ../src/app/editor/sessions/SubtitleCueFilterModel.cpp
-    ../src/app/jobs/vision/SegmentationController.cpp
-    ../src/app/jobs/vision/SceneDetectController.cpp
-    ../src/app/jobs/vision/DepthController.cpp
-    ../src/app/jobs/audio/DenoiseController.cpp
-    ../src/app/color/ColorController.cpp
-    ../src/app/color/ScopesController.cpp
-    ../src/app/color/LookThumbnailService.cpp
-    ../src/ui/imageproviders/color/ColorImageProvider.cpp
-    ../src/app/jobs/vision/RestoreController.cpp
-    ../src/app/jobs/vision/FaceTrackingController.cpp
-    ../src/app/jobs/vision/StabilizeController.cpp
-    ../src/app/jobs/vision/TrackingController.cpp
-    ../src/app/bin/MediaBinController.cpp
-    ../src/app/bin/SourceLabController.cpp
-    ../src/app/jobs/audio/TtsController.cpp
-    ../src/app/jobs/audio/VoiceLibrary.cpp
-    ../src/ui/preview/PreviewController.cpp
+    # Compiled here rather than in driftapp: they read the DRIFT_VERSION/endpoint defines, which
+    # the app sets to release values and this test pins to its own, or they carry QML_ELEMENT.
     ../src/app/online/addons/AddonManager.cpp
-    ../src/app/jobs/JobRegistry.cpp
-    ../src/app/online/CloudProviders.cpp
-    ../src/app/bin/AssetLibrary.cpp
-    ../src/app/bin/BinFolderListModel.cpp
-    ../src/app/editor/TimelineClipsModel.cpp
-    ../src/ui/timeline/TimelineLayout.cpp
-    ../src/ui/timeline/TimelineTrackItem.cpp
-    ../src/ui/timeline/TimelineViewState.cpp
-    ../src/ui/timeline/ClipThumbnailStore.cpp
-    ../src/playback/PlaybackEngine.cpp
-    ../src/playback/PlaybackClock.cpp
-    ../src/playback/AudioOutputChannel.cpp
-    ../src/playback/preview/CompositorService.cpp
-    ../src/playback/stats/PerfLog.cpp
-    ../src/playback/stats/PlaybackStats.cpp
-    ../src/playback/stats/PlaybackDiagnostics.cpp
-    ../src/playback/preview/ClipPreviewPlayer.cpp
-    ../src/app/mcp/protocol/McpSession.cpp
-    ../src/app/platform/RunningInstances.cpp
-    ../src/app/mcp/tools/McpCatalog.cpp
     ../src/app/mcp/protocol/McpProtocol.cpp
-    ../src/app/mcp/transport/McpHttp.cpp
-    ../src/app/mcp/tools/McpDispatcher.cpp
-    ../src/app/mcp/tools/McpDispatcherExtended.cpp
     ../src/ui/theme/ThemeManager.cpp
-    ../src/app/mcp/tools/McpEffectAuthoring.cpp
-    ../src/app/mcp/protocol/McpValidate.cpp
-    ../src/app/mcp/tools/McpMarket.cpp
-    ../src/app/online/market/MarketClient.cpp
-    ../src/app/online/assets/DriftAssetStore.cpp
+    ../src/app/online/marketplace/MarketSourceBrowser.cpp
+    ../src/app/online/marketplace/MarketTransport.cpp
     ../src/app/online/market/MarketIdentity.cpp
-    ../src/app/mcp/transport/McpServer.cpp
-    ../src/app/mcp/transport/McpStdio.cpp
-    ../src/app/mcp/transport/McpBridge.cpp
-    ../src/app/mcp/transport/McpStdioServer.cpp
 )
 target_include_directories(tst_editorstate PRIVATE ../src)
-target_link_libraries(tst_editorstate PRIVATE Qt6::Test Qt6::Gui Qt6::Quick Qt6::Multimedia Qt6::Concurrent Qt6::Network driftcore driftengine)
+# driftapp holds the multicam provider too, not just the store: the id QML addresses a tile by is
+# parsed there. Costs a Qt6::Quick link, but needs no QML engine — requestImage is called directly.
+target_link_libraries(tst_editorstate PRIVATE Qt6::Test Qt6::Gui Qt6::Quick Qt6::Multimedia Qt6::Concurrent Qt6::Network driftapp driftcore driftengine)
 target_compile_definitions(tst_editorstate PRIVATE
     DRIFT_TEST_DENOISE_MODEL_DIR="${CMAKE_SOURCE_DIR}/models/deepfilternet3"
     DRIFT_VERSION="${PROJECT_VERSION}")
@@ -145,6 +117,14 @@ target_compile_definitions(tst_addonpackage PRIVATE
     DRIFT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_test(NAME AddonPackage COMMAND tst_addonpackage)
 
+qt_add_executable(tst_addoncatalog
+    tst_addoncatalog.cpp
+    ../src/app/online/addons/AddonCatalog.cpp
+)
+target_include_directories(tst_addoncatalog PRIVATE ../src)
+target_link_libraries(tst_addoncatalog PRIVATE Qt6::Test Qt6::Core)
+add_test(NAME AddonCatalog COMMAND tst_addoncatalog)
+
 qt_add_executable(tst_marketidentity
     tst_marketidentity.cpp
     ../src/app/online/market/MarketIdentity.cpp
@@ -157,6 +137,41 @@ target_compile_definitions(tst_marketidentity PRIVATE
     DRIFT_MARKET_CLIENT_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     DRIFT_VERSION="0")
 add_test(NAME MarketIdentity COMMAND tst_marketidentity)
+
+qt_add_executable(tst_marketplace
+    tst_marketplace.cpp
+    ../src/app/online/market/MarketIdentity.cpp
+    ../src/app/online/marketplace/MarketTransport.cpp
+    ../src/app/online/marketplace/MarketplaceManifest.cpp
+    ../src/app/online/marketplace/MarketSourceBrowser.cpp
+    ../src/app/online/marketplace/MarketInstall.cpp
+    ../src/app/online/marketplace/StockInstaller.cpp
+    ../src/app/online/marketplace/CommunityInstaller.cpp
+    ../src/app/online/marketplace/MarketInstallRouter.cpp
+    ../src/app/online/assets/DriftAssetStore.cpp
+    ../src/app/online/assets/SfxLibrary.cpp
+    ../src/app/online/downloads/DownloadCenter.cpp
+)
+target_include_directories(tst_marketplace PRIVATE ../src)
+target_link_libraries(tst_marketplace PRIVATE Qt6::Test Qt6::Core Qt6::Network Qt6::Qml)
+target_compile_definitions(tst_marketplace PRIVATE
+    DRIFT_MARKET_API_URL=""
+    DRIFT_MARKET_CLIENT_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    DRIFT_VERSION="0")
+qt_add_resources(tst_marketplace "marketplace_default"
+    PREFIX "/"
+    BASE ../resources
+    FILES ../resources/marketplace/default-manifest.json
+)
+add_test(NAME Marketplace COMMAND tst_marketplace)
+
+qt_add_executable(tst_downloads
+    tst_downloads.cpp
+    ../src/app/online/downloads/DownloadCenter.cpp
+)
+target_include_directories(tst_downloads PRIVATE ../src)
+target_link_libraries(tst_downloads PRIVATE Qt6::Test Qt6::Core)
+add_test(NAME Downloads COMMAND tst_downloads)
 
 qt_add_executable(tst_projectbundle tst_projectbundle.cpp)
 target_include_directories(tst_projectbundle PRIVATE ../src)
@@ -224,13 +239,36 @@ qt_add_executable(tst_mcp
     ../src/playback/preview/ClipPreviewImageStore.cpp
     ../src/ui/imageproviders/multicam/MulticamImageStore.cpp
     ../src/app/editor/AppController.cpp
+    ../src/app/editor/appcontroller/AppControllerClipModel.cpp
+    ../src/app/editor/appcontroller/AppControllerInternal.cpp
+    ../src/app/editor/appcontroller/AppControllerTimeline.cpp
+    ../src/app/editor/appcontroller/AppControllerSubtitleMulticam.cpp
+    ../src/app/editor/appcontroller/AppControllerAdjustments.cpp
+    ../src/app/editor/appcontroller/AppControllerClipProps.cpp
+    ../src/app/editor/appcontroller/AppControllerComposite.cpp
+    ../src/app/editor/appcontroller/AppControllerVector.cpp
+    ../src/app/editor/appcontroller/AppControllerKeyframes.cpp
+    ../src/app/editor/appcontroller/AppControllerEffects.cpp
+    ../src/app/editor/appcontroller/AppControllerTracks.cpp
+    ../src/app/editor/appcontroller/AppControllerProject.cpp
+    ../src/app/editor/appcontroller/AppControllerTextLayers.cpp
     ../src/app/mcp/McpController.cpp
+    ../src/app/mcp/AgentImageLog.cpp
     ../src/app/editor/PreferencesController.cpp
+    ../src/app/GraphicsApiChoice.cpp
     ../src/app/editor/ProjectFileController.cpp
     ../src/app/bin/AssetPreviewController.cpp
     ../src/app/editor/sessions/SpeedCurveController.cpp
     ../src/app/editor/sessions/CurveEditorController.cpp
     ../src/app/editor/sessions/KeyframeController.cpp
+    ../src/app/editor/sessions/KeyframeCurves.cpp
+    ../src/app/editor/sessions/KeyframeCurvesModel.cpp
+    ../src/app/editor/sessions/KeyframeRows.cpp
+    ../src/app/editor/sessions/KeyframeRowsModel.cpp
+    ../src/app/editor/sessions/KeyframeSelection.cpp
+    ../src/app/editor/sessions/KeyframeTimeView.cpp
+    ../src/app/editor/sessions/MaskEditSession.cpp
+    ../src/app/editor/sessions/MaskStackModel.cpp
     ../src/app/editor/sessions/MaskingController.cpp
     ../src/app/editor/sessions/SubtitleController.cpp
     ../src/app/editor/sessions/SubtitleCueModel.cpp
@@ -239,6 +277,7 @@ qt_add_executable(tst_mcp
     ../src/app/jobs/vision/SceneDetectController.cpp
     ../src/app/jobs/vision/DepthController.cpp
     ../src/app/jobs/audio/DenoiseController.cpp
+    ../src/app/jobs/audio/AudioAlignController.cpp
     ../src/app/color/ColorController.cpp
     ../src/app/color/ScopesController.cpp
     ../src/app/color/LookThumbnailService.cpp
@@ -247,11 +286,14 @@ qt_add_executable(tst_mcp
     ../src/app/jobs/vision/FaceTrackingController.cpp
     ../src/app/jobs/vision/StabilizeController.cpp
     ../src/app/jobs/vision/TrackingController.cpp
+    ../src/app/jobs/vision/TrackerListModel.cpp
     ../src/app/bin/MediaBinController.cpp
     ../src/app/bin/SourceLabController.cpp
     ../src/app/jobs/audio/TtsController.cpp
     ../src/app/jobs/audio/VoiceLibrary.cpp
+    ../src/ui/preview/Outliner3dModel.cpp
     ../src/ui/preview/PreviewController.cpp
+    ../src/app/online/addons/AddonCatalog.cpp
     ../src/app/online/addons/AddonManager.cpp
     ../src/app/jobs/JobRegistry.cpp
     ../src/app/online/CloudProviders.cpp
@@ -273,7 +315,15 @@ qt_add_executable(tst_mcp
     ../src/app/mcp/tools/McpEffectAuthoring.cpp
     ../src/app/mcp/protocol/McpValidate.cpp
     ../src/app/mcp/tools/McpMarket.cpp
-    ../src/app/online/market/MarketClient.cpp
+    ../src/app/online/marketplace/MarketInstall.cpp
+    ../src/app/online/marketplace/StockInstaller.cpp
+    ../src/app/online/marketplace/MarketSourceBrowser.cpp
+    ../src/app/online/marketplace/MarketplaceManifest.cpp
+    ../src/app/online/marketplace/CommunityInstaller.cpp
+    ../src/app/online/marketplace/MarketInstallRouter.cpp
+    ../src/app/online/assets/SfxLibrary.cpp
+    ../src/app/online/downloads/DownloadCenter.cpp
+    ../src/app/online/marketplace/MarketTransport.cpp
     ../src/app/online/assets/DriftAssetStore.cpp
     ../src/app/online/market/MarketIdentity.cpp
     ../src/app/mcp/transport/McpServer.cpp
@@ -376,10 +426,22 @@ qt_add_resources(tst_workspacestore "workspace_presets"
         ../resources/workspaces/color.json
         ../resources/workspaces/keyframes.json
         ../resources/workspaces/masking-tracking.json
+        ../resources/workspaces/3d.json
 )
 add_test(NAME WorkspaceStore COMMAND tst_workspacestore)
+
+qt_add_executable(tst_searchindex tst_searchindex.cpp ../src/app/editor/SearchIndex.cpp)
+target_include_directories(tst_searchindex PRIVATE ../src)
+target_link_libraries(tst_searchindex PRIVATE Qt6::Test Qt6::Core)
+target_compile_definitions(tst_searchindex PRIVATE DRIFT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME SearchIndex COMMAND tst_searchindex)
 
 qt_add_executable(tst_tracking tst_tracking.cpp ../src/engine/tracking/MotionTracking.cpp)
 target_include_directories(tst_tracking PRIVATE ../src)
 target_link_libraries(tst_tracking PRIVATE Qt6::Test Qt6::Core Qt6::Gui)
 add_test(NAME Tracking COMMAND tst_tracking)
+
+qt_add_executable(tst_transform3d tst_transform3d.cpp)
+target_include_directories(tst_transform3d PRIVATE ../src)
+target_link_libraries(tst_transform3d PRIVATE Qt6::Test Qt6::Gui driftengine driftcore)
+add_test(NAME Transform3d COMMAND tst_transform3d)

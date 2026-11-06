@@ -179,7 +179,7 @@ GpuScene sceneWith(std::shared_ptr<const skia::VectorPainter> painter)
     return scene;
 }
 
-// Straight glReadPixels: GlRuntime::readTarget goes through QOpenGLFramebufferObject::toImage,
+// Straight glReadPixels (unpremultiplied afterwards when the target holds premultiplied pixels): GlRuntime::readTarget goes through QOpenGLFramebufferObject::toImage,
 // which assumes premultiplied pixels and would silently "fix" the alpha under test.
 QImage readStraight(QOpenGLExtraFunctions *gl, const gl::GlTarget &target)
 {
@@ -188,6 +188,10 @@ QImage readStraight(QOpenGLExtraFunctions *gl, const gl::GlTarget &target)
     gl->glFinish();
     gl->glReadPixels(0, 0, target.width, target.height, GL_RGBA, GL_UNSIGNED_BYTE, out.bits());
     target.fbo->release();
+    if (target.premultiplied) {
+        QImage premul(out.bits(), out.width(), out.height(), QImage::Format_RGBA8888_Premultiplied);
+        return premul.convertToFormat(QImage::Format_RGBA8888);
+    }
     return out;
 }
 
@@ -365,7 +369,7 @@ void SkiaTest::splatClipDrawsAtCentre()
     QImage out;
     gl::runtime().exec([&] {
         gl::GlRuntime &rt = gl::runtime();
-        const QMatrix4x4 view = cameraViewProjection(SceneCamera3d(), QSizeF(64, 64));
+        const QMatrix4x4 view = cameraViewProjection(defaultSceneCamera(QSizeF(64, 64)), QSizeF(64, 64));
         gl::GlTarget target = gl::drawSplatClip(rt, rt.functions(), request, QSize(64, 64), view);
         QVERIFY(target.isValid());
         out = readStraight(rt.functions(), target);

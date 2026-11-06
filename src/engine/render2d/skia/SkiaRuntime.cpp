@@ -1,5 +1,7 @@
 #include "engine/render2d/skia/SkiaRuntime.h"
 
+#include <QHash>
+#include <QtMath>
 #include <QOpenGLContext>
 #include <QtGui/qopenglcontext_platform.h>
 #include <QOpenGLExtraFunctions>
@@ -27,18 +29,6 @@
 namespace drift::skia {
 
 namespace {
-
-// Skia hands us premultiplied pixels; layer targets carry straight alpha because
-// kLayerFragShader premultiplies when it draws them onto the canvas.
-constexpr const char *kUnpremultiplyFragShader = R"(#version 330 core
-in vec2 v_texCoord;
-out vec4 fragColor;
-uniform sampler2D u_currentTexture;
-void main() {
-    vec4 c = texture(u_currentTexture, v_texCoord);
-    fragColor = vec4(c.a > 0.0 ? c.rgb / c.a : vec3(0.0), c.a);
-}
-)";
 
 // Qt's GLES2 headers stop short of these ES 3.0 constants; the functions exist on every
 // context Drift creates.
@@ -220,8 +210,10 @@ gl::GlTarget SkiaRuntime::paintToTarget(gl::GlRuntime &rt, QOpenGLExtraFunctions
         if (gl::GlTarget *cached = d->cache.find(key)) {
             ++d->stats.cacheHits;
             gl::GlTarget copy = rt.acquireTarget(cached->width, cached->height);
-            if (copy.isValid() && gl::blitTextureToTarget(rt, gl, cached->texture(), copy))
+            if (copy.isValid() && gl::blitTextureToTarget(rt, gl, cached->texture(), copy)) {
+                copy.premultiplied = true;
                 return copy;
+            }
             rt.releaseTarget(std::move(copy));
             return {};
         }
@@ -257,31 +249,12 @@ gl::GlTarget SkiaRuntime::paintToTarget(gl::GlRuntime &rt, QOpenGLExtraFunctions
     if (!haveTexture)
         return {};
 
-    QOpenGLShaderProgram *program = rt.builtinProgram(QStringLiteral("skia_unpremultiply"),
-                                                      gl::kQuadVertexShader,
-                                                      kUnpremultiplyFragShader);
-    if (!program)
-        return {};
-
     gl::GlTarget target = rt.acquireTarget(size.width(), size.height());
-    if (!target.isValid())
+    if (!target.isValid() || !gl::blitTextureToTarget(rt, gl, info.fID, target)) {
+        rt.releaseTarget(std::move(target));
         return {};
-
-    target.fbo->bind();
-    gl->glViewport(0, 0, target.width, target.height);
-    gl->glDisable(GL_BLEND);
-    gl->glClearColor(0.f, 0.f, 0.f, 0.f);
-    gl->glClear(GL_COLOR_BUFFER_BIT);
-    program->bind();
-    program->setUniformValue("u_currentTexture", 0);
-    gl->glActiveTexture(GL_TEXTURE0);
-    gl->glBindTexture(GL_TEXTURE_2D, info.fID);
-    gl->glBindVertexArray(rt.vao);
-    gl->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    gl->glBindVertexArray(0);
-    gl->glBindTexture(GL_TEXTURE_2D, 0);
-    program->release();
-    target.fbo->release();
+    }
+    target.premultiplied = true;
 
     if (key == 0)
         return target;
@@ -289,6 +262,7 @@ gl::GlTarget SkiaRuntime::paintToTarget(gl::GlRuntime &rt, QOpenGLExtraFunctions
     // The cache keeps this target; the caller gets a copy it is free to mutate and release.
     gl::GlTarget copy = rt.acquireTarget(target.width, target.height);
     const bool copied = copy.isValid() && gl::blitTextureToTarget(rt, gl, target.texture(), copy);
+    copy.premultiplied = true;
     d->cache.insert(rt, key, std::move(target));
     if (!copied) {
         rt.releaseTarget(std::move(copy));
@@ -340,6 +314,51 @@ QImage SkiaRuntime::rasterize(const VectorPainter &painter)
 SkiaRuntime::Stats SkiaRuntime::stats() const
 {
     return d->stats;
+}
+
+namespace {
+
+class ScaledPainter final : public VectorPainter
+{
+public:
+    ScaledPainter(std::shared_ptr<const VectorPainter> inner, double scale)
+        : m_inner(std::move(inner))
+    {
+        const QSize base = m_inner->size();
+        m_size = QSize(qMax(1, qCeil(base.width() * scale)), qMax(1, qCeil(base.height() * scale)));
+        m_sx = float(m_size.width()) / float(qMax(1, base.width()));
+        m_sy = float(m_size.height()) / float(qMax(1, base.height()));
+    }
+
+    QSize size() const override { return m_size; }
+
+    quint64 cacheKey() const override
+    {
+        const quint64 key = m_inner->cacheKey();
+        return key == 0 ? 0 : (qHashMulti(key, m_size.width(), m_size.height()) | 1);
+    }
+
+    void paint(SkCanvas &canvas) const override
+    {
+        canvas.scale(m_sx, m_sy);
+        m_inner->paint(canvas);
+    }
+
+private:
+    std::shared_ptr<const VectorPainter> m_inner;
+    QSize m_size;
+    float m_sx = 1.f;
+    float m_sy = 1.f;
+};
+
+} // namespace
+
+std::shared_ptr<const VectorPainter> scaledPainter(std::shared_ptr<const VectorPainter> inner,
+                                                   double scale)
+{
+    if (!inner || scale <= 1.0)
+        return inner;
+    return std::make_shared<ScaledPainter>(std::move(inner), scale);
 }
 
 } // namespace drift::skia

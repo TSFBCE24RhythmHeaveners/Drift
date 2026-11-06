@@ -66,6 +66,8 @@ struct GpuLayer
     PreviewVideoFrame video;
     // The clip's source frame: the normalized part of `video` the layer shows.
     QRectF videoCrop{0, 0, 1, 1};
+    // Straighten applied before videoCrop is cut (Clip::sourceFrameAngle), degrees clockwise.
+    double videoCropAngle = 0.0;
     // Skia-drawn content (text, shapes, Lottie). Declared whether or not Skia is compiled in so
     // the struct has one layout; without DRIFT_WITH_SKIA nothing ever sets it. When Skia cannot
     // draw it, `source` is the fallback if the builder filled one.
@@ -79,6 +81,8 @@ struct GpuLayer
     // Index-parallel with `masks`: this frame's decoded coverage map for each Media entry, null
     // for parametric ones. Decoded by FrameCompositor, which is the only place that knows the time.
     QList<MaskMediaFrame> maskMedia;
+    // Parallel to maskMedia: a brush fix for this frame (gray = coverage, alpha = painted), else null.
+    QList<QImage> maskPatch;
     // The decontaminated foreground, when a lone media mask carries one. Single rather than
     // index-parallel: it replaces the layer's colour outright, which only makes sense when one
     // media mask owns the coverage — see soleMediaIndex.
@@ -109,6 +113,10 @@ struct GpuLayer
     // The canvas the layer's rect is laid out on, when the frame being rendered is not it (the 3D
     // view renders the panel's frame around the project's): world space is centred on this one.
     QSizeF layoutCanvas;
+    // A model lifted out of a composite clip: its world placement inside the nested timeline,
+    // carried into the outer world through the composite's pose. Applied after `parent`; the
+    // identity for every layer that was not lifted.
+    QMatrix4x4 liftWorld;
     // Drawn already in place (a model clip renders itself through the viewpoint into a
     // canvas-sized target): the layer covers the canvas and is not placed a second time.
     bool screenSpace = false;
@@ -173,6 +181,8 @@ struct GpuItem
 struct GpuScene
 {
     QSize canvasSize;
+    // Which preview stream's presentation ring a texture render draws into.
+    int previewStream = 0;
     QColor backgroundColor = Qt::black;
     bool backgroundBlur = false;
     double blurStrengthPx = 20.0;
@@ -197,9 +207,9 @@ struct GpuFrameTexture
 {
     unsigned int textureId = 0;
     QSize size;
-    // Readback fallback, only ever filled on Android and only when the driver
-    // refused to put the compositor's context in the scene graph's share group,
-    // which makes textureId unusable there. Premultiplied ARGB32, ready to upload.
+    // Readback fallback, filled only when the compositor's context is not in the scene
+    // graph's share group: Qt Quick runs on a non-OpenGL API, or an Android driver refused
+    // sharing. textureId is unusable there. Premultiplied ARGB32, ready to upload.
     QImage image;
     // Small upright copy of the canvas for the scopes, only when GpuScene asked for one.
     QImage scopeImage;
@@ -230,7 +240,13 @@ bool finishExportNv12(int slot, uint8_t *y, int yStride, uint8_t *uv, int uvStri
 // is an AV_PIX_FMT_CUDA/NV12 frame from the encoder's frames context.
 bool finishExportNv12ToCuda(int slot, AVFrame *dst);
 
+// Where the layer's quad lands on the canvas, in canvas pixels, as the draw will place it.
+QSizeF drawnSize(const GpuLayer &layer, const QSize &canvas);
+
 bool isAvailable();
+
+// Largest canvas edge the GL driver accepts; 0 when OpenGL is unavailable.
+int maxCanvasDimension();
 
 // Why the compositor is unusable, for the preview's error state and the debug
 // report. A snapshot: unlike isAvailable() it never forces a bring-up attempt,

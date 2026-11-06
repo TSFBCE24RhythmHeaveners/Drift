@@ -143,6 +143,8 @@ private slots:
     void legacyShapeStyleLoadsWithDefaults();
     void sourceLabAnnotationsRoundTrip();
     void maskingTrackingFieldsRoundTrip();
+    void maskFramePatchesRoundTripAndLookUpByMediaTime();
+    void projectWithoutMaskPatchesLoadsEmpty();
     void assetWithoutSourceLabKeysLoadsEmpty();
     void sourceLabRebaseMath();
     void shapeCatalogPathsFitBounds();
@@ -194,6 +196,8 @@ private slots:
     void transitionEasingRemapsProgress();
     void bezierCurveShapesProgress();
     void bezierShapeRoundTrips();
+    void clipAnimationBezierHandlesRoundTrip();
+    void textEaseParsesCubicBezier();
     void physicalOverlapTransitionWindow();
     void adjacentTransitionWindowClampsToClipExtents();
     void clampClipStartNoOverlapPushesPastBlockers();
@@ -1964,6 +1968,7 @@ void CoreTest::shapeStyleSerialization()
     stroke.dash = drift::StrokeDash::DashDot;
     stroke.dashOffset = 1.5;
     stroke.strokeAlign = drift::StrokeAlign::Center;
+    stroke.join = drift::StrokeJoin::Bevel;
     stroke.trimEnd = 0.6;
     stroke.sketchLength = 8.0;
     stroke.sketchDeviation = 2.0;
@@ -2009,6 +2014,7 @@ void CoreTest::shapeStyleSerialization()
     QCOMPARE(style.layers[1].dash, drift::StrokeDash::DashDot);
     QCOMPARE(style.layers[1].dashOffset, 1.5);
     QCOMPARE(style.layers[1].strokeAlign, drift::StrokeAlign::Center);
+    QCOMPARE(style.layers[1].join, drift::StrokeJoin::Bevel);
     QCOMPARE(style.layers[1].trimEnd, 0.6);
     QCOMPARE(style.layers[1].sketchLength, 8.0);
     QCOMPARE(style.layers[1].sketchDeviation, 2.0);
@@ -2050,7 +2056,7 @@ void CoreTest::sourceLabAnnotationsRoundTrip()
 
     const QJsonObject json = project.toJson();
     QCOMPARE(json.value(QStringLiteral("version")).toInt(), drift::Project::kCurrentVersion);
-    QCOMPARE(drift::Project::kCurrentVersion, 18);
+    QCOMPARE(drift::Project::kCurrentVersion, 22);
 
     QString error;
     const drift::Project loaded = drift::Project::fromJson(json, &error);
@@ -2071,6 +2077,75 @@ void CoreTest::sourceLabAnnotationsRoundTrip()
     QCOMPARE(back->markers[0].timeUs, drift::secondsToUs(2));
     QCOMPARE(back->markers[0].name, QStringLiteral("Cue"));
     QCOMPARE(back->markers[0].note, QStringLiteral("note"));
+}
+
+void CoreTest::maskFramePatchesRoundTripAndLookUpByMediaTime()
+{
+    drift::Project project;
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    drift::Clip clip;
+    clip.id = QStringLiteral("clip-cutout");
+    clip.type = drift::ClipType::Adjustment;
+    clip.adjustmentKind = drift::AdjustmentKind::Mask;
+    clip.timelineDuration = drift::secondsToUs(4.0);
+    clip.mask = drift::fullFrameMediaMask(QStringLiteral("/tmp/cutout.mkv"));
+    clip.mask.mediaPatches.insert(drift::secondsToUs(1), QStringLiteral("/tmp/fix-a.png"));
+    clip.mask.mediaPatches.insert(drift::secondsToUs(2), QStringLiteral("/tmp/fix-b.png"));
+    project.tracks()[0].clips.append(clip);
+
+    const QJsonObject json = project.toJson();
+    QCOMPARE(json.value(QStringLiteral("version")).toInt(), 22);
+    const QJsonArray patches = json.value(QStringLiteral("tracks")).toArray().at(0).toObject()
+                                   .value(QStringLiteral("clips")).toArray().at(0).toObject()
+                                   .value(QStringLiteral("mask")).toObject().value(QStringLiteral("patches")).toArray();
+    QCOMPARE(patches.size(), 2);
+
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(json, &error);
+    QVERIFY(error.isEmpty());
+    const drift::Mask &mask = loaded.tracks().at(0).clips.at(0).mask;
+    QCOMPARE(mask.mediaPatches.size(), 2);
+    QCOMPARE(mask.mediaPatches.value(drift::secondsToUs(1)), QStringLiteral("/tmp/fix-a.png"));
+    QCOMPARE(mask.mediaPatches.value(drift::secondsToUs(2)), QStringLiteral("/tmp/fix-b.png"));
+    QCOMPARE(mask.mediaPath, QStringLiteral("/tmp/cutout.mkv"));
+
+    const drift::TimeUs frame = drift::frameDurationUs(30);
+    const drift::TimeUs t = drift::secondsToUs(1);
+    QCOMPARE(mask.patchAt(t, frame / 2), QStringLiteral("/tmp/fix-a.png"));
+    QCOMPARE(mask.patchAt(t + frame / 2 - 1, frame / 2), QStringLiteral("/tmp/fix-a.png"));
+    QCOMPARE(mask.patchAt(t - frame / 2, frame / 2), QStringLiteral("/tmp/fix-a.png"));
+    QVERIFY(mask.patchAt(t + frame, frame / 2).isEmpty());
+    QVERIFY(mask.patchAt(t - frame, frame / 2).isEmpty());
+    QCOMPARE(mask.patchAt(drift::secondsToUs(2) + 1, frame / 2), QStringLiteral("/tmp/fix-b.png"));
+    QCOMPARE(mask.patchKeyAt(drift::secondsToUs(3), frame / 2), drift::TimeUs(-1));
+    QVERIFY(drift::Mask{}.patchAt(0, frame).isEmpty());
+}
+
+void CoreTest::projectWithoutMaskPatchesLoadsEmpty()
+{
+    drift::Project project;
+    project.tracks().clear();
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    drift::Clip clip;
+    clip.id = QStringLiteral("clip-plain");
+    clip.type = drift::ClipType::Adjustment;
+    clip.adjustmentKind = drift::AdjustmentKind::Mask;
+    clip.mask = drift::fullFrameMediaMask(QStringLiteral("/tmp/cutout.mkv"));
+    project.tracks()[0].clips.append(clip);
+
+    QJsonObject json = project.toJson();
+    const QJsonObject maskJson = json.value(QStringLiteral("tracks")).toArray().at(0).toObject()
+                                     .value(QStringLiteral("clips")).toArray().at(0).toObject()
+                                     .value(QStringLiteral("mask")).toObject();
+    QVERIFY(!maskJson.contains(QStringLiteral("patches")));
+
+    json[QStringLiteral("version")] = 18;
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(json, &error);
+    QVERIFY(error.isEmpty());
+    QVERIFY(loaded.tracks().at(0).clips.at(0).mask.mediaPatches.isEmpty());
+    QVERIFY(loaded.tracks().at(0).clips.at(0).mask.isMedia());
 }
 
 void CoreTest::maskingTrackingFieldsRoundTrip()
@@ -2641,8 +2716,8 @@ void CoreTest::model3dSourceSerialization()
 void CoreTest::model3dScalarClampsAndResolves()
 {
     drift::Model3dSource m;
-    // Ambient, then eight numbers for each of the four lights.
-    QCOMPARE(drift::model3dKeyframeProperties().size(), 1 + 4 * 8);
+    // Ambient and the two model scales, then eight numbers for each of the four lights.
+    QCOMPARE(drift::model3dKeyframeProperties().size(), 3 + 4 * 8);
     for (const QString &key : drift::model3dKeyframeProperties()) {
         double v = -1.0;
         QVERIFY2(drift::model3dScalar(m, key, &v), qPrintable(key));
@@ -2753,10 +2828,11 @@ void CoreTest::model3dPoseMigratesToTransform()
     QCOMPARE(c.transformH.evaluateAt(0), 270.0);
     QCOMPARE(c.transformX.evaluateAt(0) + 270.0, 760.0);
     QCOMPARE(c.transformY.evaluateAt(0) + 135.0, 640.0);
-    // glTF's up is the canvas's down: X and Z flip, Y keeps its keys.
-    QCOMPARE(c.rotationX.evaluateAt(0), -10.0);
+    // glTF's up is the canvas's down: X and Z flipped at format 13, and the format 22 world (z away
+    // from the viewer) flips X and Y again — so, from glTF, X keeps its sign and Y and Z turn.
+    QCOMPARE(c.rotationX.evaluateAt(0), 10.0);
     QCOMPARE(c.rotation.evaluateAt(0), -5.0);
-    QCOMPARE(c.rotationY.evaluateAt(drift::secondsToUs(1.0)), 45.0);
+    QCOMPARE(c.rotationY.evaluateAt(drift::secondsToUs(1.0)), -45.0);
     QCOMPARE(c.rotationY.keyframes().size(), 2);
     // The old lens put the eye height / (2 * depth) from the model.
     QCOMPARE(c.perspective.evaluateAt(0), 1080.0 / 0.5);
@@ -4288,6 +4364,32 @@ void CoreTest::bezierCurveShapesProgress()
     QCOMPARE(drift::shapedProgress(0.5, drift::FadeCurve::Linear, eased), 0.5);
 }
 
+void CoreTest::clipAnimationBezierHandlesRoundTrip()
+{
+    drift::ClipAnimation anim;
+    anim.kind = drift::ClipAnimKind::SlideUp;
+    anim.curve = drift::FadeCurve::Bezier;
+    anim.shape.setHandles(QPointF(0.17, 0.67), QPointF(0.83, 0.2));
+
+    const drift::ClipAnimation out = drift::clipAnimationFromJson(drift::clipAnimationToJson(anim));
+    QCOMPARE(out.curve, drift::FadeCurve::Bezier);
+    QVERIFY(out.shape.hasHandles());
+    QCOMPARE(out.shape.handle1(), QPointF(0.17, 0.67));
+    QCOMPARE(out.shape.handle2(), QPointF(0.83, 0.2));
+}
+
+void CoreTest::textEaseParsesCubicBezier()
+{
+    using namespace drift;
+    const TextEaseSpec e = textEaseSpecFromJson(QJsonValue(QStringLiteral("cubic-bezier(0.1, -0.4, 0.6, 1.2)")));
+    QCOMPARE(e.kind, TextEaseKind::Bezier);
+    QCOMPARE(e.c1, QPointF(0.1, -0.4));
+    QCOMPARE(e.c2, QPointF(0.6, 1.2));
+    QCOMPARE(textEaseSpecFromJson(QJsonValue(QStringLiteral("back"))).kind, TextEaseKind::Back);
+    QCOMPARE(textEaseSpecFromJson(QJsonValue(QStringLiteral("cubic-bezier(2,0,1,1)"))).kind,
+             TextEaseKind::EaseOut);
+}
+
 void CoreTest::bezierShapeRoundTrips()
 {
     drift::Project project = projectWithTransition(QStringLiteral("crossfade"));
@@ -5353,7 +5455,7 @@ void CoreTest::applyMulticamSwitchRejectsEdges()
              drift::MulticamSwitchResult::OutOfRange);
 
     // Closer to the start than a clip is allowed to be.
-    QCOMPARE(drift::applyMulticamSwitch(cuts, start, end, 1, drift::kMinClipDurationUs / 2, 0),
+    QCOMPARE(drift::applyMulticamSwitch(cuts, start, end, 1, drift::minClipDurationUs(0) / 2, 0),
              drift::MulticamSwitchResult::TooCloseToEdge);
     QVERIFY(cuts.isEmpty());
 
@@ -5379,7 +5481,7 @@ void CoreTest::sliceClipToTimelineRangeKeepsSourceInSync()
     drift::Clip miss;
     QVERIFY(!drift::sliceClipToTimelineRange(src, drift::secondsToUs(11.0), drift::secondsToUs(12.0),
                                              miss));
-    QVERIFY(!drift::sliceClipToTimelineRange(src, 0, drift::kMinClipDurationUs / 2, miss));
+    QVERIFY(!drift::sliceClipToTimelineRange(src, 0, drift::minClipDurationUs(0) / 2, miss));
 }
 
 // The user library shares TextStyle's project-file codec, so the risk is not the fields but the
@@ -6749,8 +6851,13 @@ void CoreTest::splitClipClearsInnerFades()
 
     // Too close to an edge for an interactive split, fine for the cut engine's floor.
     drift::Clip h2 = clip;
-    QVERIFY(!drift::splitClipAtOffset(h2, tail, drift::secondsToUs(0.05)));
-    QVERIFY(drift::splitClipAtOffsetMin(h2, tail, drift::secondsToUs(0.05), drift::secondsToUs(0.01)));
+    QVERIFY(!drift::splitClipAtOffset(h2, tail, drift::secondsToUs(0.005), 100));
+    QVERIFY(drift::splitClipAtOffsetMin(h2, tail, drift::secondsToUs(0.005), drift::secondsToUs(0.001)));
+
+    drift::Clip h3 = clip;
+    QVERIFY(drift::splitClipAtOffset(h3, tail, drift::secondsToUs(0.01), 100));
+    drift::Clip h4 = clip;
+    QVERIFY(drift::splitClipAtOffset(h4, tail, h4.timelineDuration - drift::minClipDurationUs(100), 100));
 }
 
 void CoreTest::splitThenMergeRestoresFades()

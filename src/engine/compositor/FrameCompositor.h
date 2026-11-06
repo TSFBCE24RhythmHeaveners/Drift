@@ -12,7 +12,7 @@
 #include <QString>
 
 // Preview canvas as a fraction of project resolution. Below this, text and effect
-// radii collapse to subpixels. The compositor never upscales past 1.0.
+// radii collapse to subpixels. The compositor only goes past 1.0 when export raises RenderOptions::maxScale.
 inline constexpr double kMinPreviewScale = 0.02;
 inline constexpr int kMinPreviewScalePercent = 2;
 
@@ -23,7 +23,8 @@ public:
     struct RenderOptions
     {
         double previewScale = 1.0;
-        int maxTimeEchoHistoryFrames = -1;
+        // Ceiling for previewScale. Only export raises it, to render above project size.
+        double maxScale = 1.0;
         // How far ahead of this frame the decoders keep buffering, in source
         // time. Only realtime playback sets it; a paused preview would just be
         // decoding frames an edit is about to invalidate.
@@ -57,11 +58,16 @@ public:
             QString selectedClipId;
             // The view is being dragged: the preview drops its supersampling to keep up.
             bool navigating = false;
+            // The floor grid: drawn or not, and its spacing in project px (0 picks one from the canvas).
+            bool showGrid = true;
+            double gridSize = 0.0;
             // The size of the frame to render, in px: the panel's aspect rather than the
             // project's, supersampled while still. Empty renders the project's frame.
             QSize target;
         };
         EditorView editor;
+        // PreviewStream the frame is for; only picks the presentation ring it is drawn into.
+        int stream = 0;
 
         // The text clip being edited in place on the preview. It stays visible, at rest (no
         // in/out/loop animation), with a caret, a selection and a preedit underline drawn over

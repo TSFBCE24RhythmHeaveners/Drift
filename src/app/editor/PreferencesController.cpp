@@ -1,4 +1,6 @@
 #include "app/editor/PreferencesController.h"
+#include "app/GraphicsApiChoice.h"
+#include "core/base/CacheRoot.h"
 #include "engine/encode/proxies/ProxyNaming.h"
 #include "engine/EngineTuning.h"
 
@@ -55,6 +57,9 @@ int normalizedFrameCacheMiB(int mib)
 }
 // QT_SCALE_FACTOR came from ui/scale rather than the user's environment.
 bool g_uiScaleFromSettings = false;
+// The OS display scale ui/scale is measured against. 1.0 leaves ui/scale relative to the OS
+// scale; Windows passes its own, which makes ui/scale the absolute size.
+double g_osDisplayScale = 1.0;
 
 QString storedUiLanguage()
 {
@@ -112,6 +117,8 @@ bool isMachineOrSecretSetting(const QString &key)
         QStringLiteral("variant"), QStringLiteral("outputDeviceId"), QStringLiteral("decodeMode"),
         QStringLiteral("hardwareDecode"), QStringLiteral("vaapiZeroCopy"), QStringLiteral("d3d11ZeroCopy"),
         QStringLiteral("mediaCodecZeroCopy"), QStringLiteral("preferredGpu"),
+        QStringLiteral("graphicsApi"), QStringLiteral("graphicsApiPending"),
+        QStringLiteral("graphicsApiRevertedFrom"),
         QStringLiteral("speedFactor"), QStringLiteral("speedCalibrated"),
         QStringLiteral("proxyPassword"),
     };
@@ -154,8 +161,8 @@ double appliedUiScaleFromEnvironment()
     bool ok = false;
     const double env = qEnvironmentVariable("QT_SCALE_FACTOR").toDouble(&ok);
     if (ok && env > 0.0)
-        return env;
-    return 1.0;
+        return env * g_osDisplayScale;
+    return g_osDisplayScale;
 }
 
 QLocale uiLocaleFromStored()
@@ -241,8 +248,10 @@ PreferencesController::PreferencesController(QObject *parent)
     m_audioMixerWidth = settings.value(QStringLiteral("ui/audioMixerWidth"), 0.0).toDouble();
     if (m_audioMixerWidth > 0)
         m_audioMixerWidth = qBound(160.0, m_audioMixerWidth, 2000.0);
-    m_trackLabelsWidth = qBound(110.0,
-        settings.value(QStringLiteral("ui/trackLabelsWidth"), 130.0).toDouble(), 320.0);
+    m_trackLabelsWidth = qBound(64.0,
+        settings.value(QStringLiteral("ui/trackLabelsWidth"), 130.0).toDouble(), 360.0);
+    m_androidTrackLabelsWidth = qBound(56.0,
+        settings.value(QStringLiteral("ui/androidTrackLabelsWidth"), 80.0).toDouble(), 200.0);
     m_timelineToolbarItems = settings.value(QStringLiteral("ui/timelineToolbarItems")).toStringList();
     m_timelineMenuItems = settings.value(QStringLiteral("ui/timelineMenuItems")).toStringList();
     m_proxyNamePatterns = settings.contains(QStringLiteral("proxy/namePatterns"))
@@ -259,6 +268,7 @@ PreferencesController::PreferencesController(QObject *parent)
     m_vaapiZeroCopy = drift::vaapiZeroCopyMode() != drift::VaapiZeroCopyMode::Off;
 #endif
     m_preferredGpu = drift::gpu::preferenceId(drift::gpu::storedPreference());
+    m_uiGraphicsApi = drift::graphics::storedApi();
     m_mediaCodecZeroCopy =
         settings.value(QStringLiteral("preview/mediaCodecZeroCopy"), false).toBool();
     m_invertTimelineScroll = settings.value(QStringLiteral("timeline/invertScroll"), false).toBool();
@@ -375,13 +385,24 @@ void PreferencesController::setAudioMixerWidth(qreal width)
 
 void PreferencesController::setTrackLabelsWidth(qreal width)
 {
-    width = qBound(110.0, qreal(qRound(width)), 320.0);
+    width = qBound(64.0, qreal(qRound(width)), 360.0);
     if (qFuzzyCompare(m_trackLabelsWidth, width))
         return;
     m_trackLabelsWidth = width;
     QSettings settings;
     settings.setValue(QStringLiteral("ui/trackLabelsWidth"), m_trackLabelsWidth);
     emit trackLabelsWidthChanged();
+}
+
+void PreferencesController::setAndroidTrackLabelsWidth(qreal width)
+{
+    width = qBound(56.0, qreal(qRound(width)), 200.0);
+    if (qFuzzyCompare(m_androidTrackLabelsWidth, width))
+        return;
+    m_androidTrackLabelsWidth = width;
+    QSettings settings;
+    settings.setValue(QStringLiteral("ui/androidTrackLabelsWidth"), m_androidTrackLabelsWidth);
+    emit androidTrackLabelsWidthChanged();
 }
 
 void PreferencesController::setProxyNamePatterns(const QStringList &patterns)
@@ -502,6 +523,26 @@ void PreferencesController::setPreferredGpu(const QString &id)
     emit preferredGpuChanged();
     // Not conservative advice: the driver chose this process's GPU when it loaded.
     emit restartNoticeRequested(tr("The graphics card choice takes effect after you restart Drift."));
+}
+
+void PreferencesController::setUiGraphicsApi(const QString &id)
+{
+    if (m_uiGraphicsApi == id || !drift::graphics::availableApis().contains(id))
+        return;
+    m_uiGraphicsApi = id;
+    drift::graphics::storeApi(id);
+    emit uiGraphicsApiChanged();
+    emit restartNoticeRequested(tr("The interface graphics API takes effect after you restart Drift."));
+}
+
+QStringList PreferencesController::uiGraphicsApis() const
+{
+    return drift::graphics::availableApis();
+}
+
+QString PreferencesController::uiGraphicsApiRevertedFrom() const
+{
+    return drift::graphics::revertedFrom();
 }
 
 bool PreferencesController::gpuPreferenceSupported() const
@@ -780,7 +821,34 @@ void PreferencesController::resetPerformanceDefaults()
 
 QString PreferencesController::cacheLocation() const
 {
-    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    const QString custom = QSettings().value(QStringLiteral("storage/cacheDir")).toString().trimmed();
+    return custom.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+                            : drift::customCacheRoot(custom);
+}
+
+bool PreferencesController::cacheLocationCustom() const
+{
+    return !QSettings().value(QStringLiteral("storage/cacheDir")).toString().trimmed().isEmpty();
+}
+
+bool PreferencesController::cacheLocationPendingRestart() const
+{
+    return QDir::cleanPath(cacheLocation()) != QDir::cleanPath(drift::cacheRoot());
+}
+
+void PreferencesController::setCacheLocation(const QUrl &folder)
+{
+    const QString path = folder.toLocalFile();
+    if (path.isEmpty())
+        return;
+    QSettings().setValue(QStringLiteral("storage/cacheDir"), QDir::cleanPath(path));
+    emit cacheLocationChanged();
+}
+
+void PreferencesController::resetCacheLocation()
+{
+    QSettings().remove(QStringLiteral("storage/cacheDir"));
+    emit cacheLocationChanged();
 }
 
 void PreferencesController::refreshCacheSize()
@@ -799,7 +867,8 @@ void PreferencesController::runCacheJob(bool clear)
         return;
     m_cacheBusy = true;
     emit cacheSizeChanged();
-    const QString root = cacheLocation();
+    // The active root, not the pending setting: this is what the session is actually writing to.
+    const QString root = drift::cacheRoot();
     auto *watcher = new QFutureWatcher<qint64>(this);
     connect(watcher, &QFutureWatcher<qint64>::finished, this, [this, watcher] {
         m_cacheSizeBytes = watcher->result();
@@ -909,15 +978,35 @@ double PreferencesController::storedUiScale()
     return normalizeUiScale(value);
 }
 
-void PreferencesController::applyStoredUiScale()
+void PreferencesController::autoUiScaleOnce(int shortSide, double osDisplayScale)
 {
+    QSettings settings;
+    if (settings.value(QStringLiteral("ui/autoScaleDone")).toBool())
+        return;
+    settings.setValue(QStringLiteral("ui/autoScaleDone"), true);
+    if (shortSide <= 0 || osDisplayScale <= 0.0)
+        return;
+    // The layout is designed at 1080 rows; keep that much of the UI on screen at any resolution.
+    const double scale = normalizeUiScale(shortSide / 1080.0);
+    qInfo("PreferencesController: auto interface size %.0f%% for %d rows at %.0f%% display scale",
+          scale * 100.0, shortSide, osDisplayScale * 100.0);
+    if (qFuzzyCompare(scale, 1.0))
+        settings.remove(QStringLiteral("ui/scale"));
+    else
+        settings.setValue(QStringLiteral("ui/scale"), scale);
+}
+
+void PreferencesController::applyStoredUiScale(double osDisplayScale)
+{
+    if (osDisplayScale > 0.0)
+        g_osDisplayScale = osDisplayScale;
     // A shell or .desktop Exec=QT_SCALE_FACTOR=… stays the escape hatch.
     if (qEnvironmentVariableIsSet("QT_SCALE_FACTOR"))
         return;
-    const double scale = storedUiScale();
-    if (qFuzzyCompare(scale, 1.0))
+    const double factor = storedUiScale() / g_osDisplayScale;
+    if (qFuzzyCompare(factor, 1.0))
         return;
-    qputenv("QT_SCALE_FACTOR", QByteArray::number(scale, 'g', 4));
+    qputenv("QT_SCALE_FACTOR", QByteArray::number(factor, 'g', 4));
     g_uiScaleFromSettings = true;
 }
 
@@ -1021,6 +1110,36 @@ bool PreferencesController::canRestart() const
 #endif
 }
 
+bool PreferencesController::quickSetupNeeded()
+{
+#ifdef Q_OS_WASM
+    return false;
+#else
+    return !QSettings().value(QStringLiteral("setup/quickSetupDone"), false).toBool();
+#endif
+}
+
+void PreferencesController::completeQuickSetup()
+{
+    QSettings settings;
+    settings.setValue(QStringLiteral("setup/quickSetupDone"), true);
+    settings.sync();
+    if (m_needsUiLanguagePrompt) {
+        markUiLanguageChosen();
+        m_needsUiLanguagePrompt = false;
+        emit uiLanguageChanged();
+    }
+    emit quickSetupCompleted();
+}
+
+void PreferencesController::rerunQuickSetup()
+{
+    QSettings settings;
+    settings.setValue(QStringLiteral("setup/quickSetupDone"), false);
+    settings.sync();
+    restartApp();
+}
+
 QString PreferencesController::exportSettings(const QUrl &url)
 {
     QSettings settings;
@@ -1106,3 +1225,5 @@ void PreferencesController::restartApp()
     });
 #endif
 }
+
+#include "moc_PreferencesController.cpp"

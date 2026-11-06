@@ -38,6 +38,8 @@ Column {
     readonly property var strokeAlignLabels: [qsTr("Centre"), qsTr("Outside"), qsTr("Inside")]
     readonly property var dashes: ["solid", "dash", "dot", "dashdot"]
     readonly property var dashLabels: [qsTr("Solid"), qsTr("Dashed"), qsTr("Dotted"), qsTr("Dash-dot")]
+    readonly property var joins: ["miter", "round", "bevel"]
+    readonly property var joinLabels: [qsTr("Miter"), qsTr("Round"), qsTr("Bevel")]
     readonly property bool sketchy: Number(row.layerData.sketchLength) > 0 || Number(row.layerData.sketchDeviation) > 0
     property bool sketchExpanded: false
 
@@ -172,6 +174,50 @@ Column {
                 useSlider: true
                 sliderFrom: -20
                 sliderTo: 20
+            }
+        }
+
+        Column {
+            width: (parent.width - parent.leftPadding - parent.rightPadding - 8) / 2
+            spacing: 4
+            visible: row.kind === "stroke"
+            Text {
+                text: qsTr("Join")
+                color: Theme.c.shadingLayerRow.foregroundMuted
+                font.pixelSize: Theme.fontSizeXs
+                font.family: Theme.fontFamily
+            }
+            ThemedComboBox {
+                width: parent.width
+                model: row.joinLabels
+                tooltip: qsTr("How the stroke turns a corner: sharp, rounded or cut off")
+                currentIndex: Math.max(0, row.joins.indexOf(row.layerData.join || "round"))
+                onActivated: row.setLayer({ "join": row.joins[currentIndex] })
+            }
+        }
+
+        Column {
+            width: (parent.width - parent.leftPadding - parent.rightPadding - 8) / 2
+            spacing: 4
+            visible: row.kind === "stroke" && (row.layerData.join || "round") === "miter"
+            Text {
+                text: qsTr("Miter limit")
+                color: Theme.c.shadingLayerRow.foregroundMuted
+                font.pixelSize: Theme.fontSizeXs
+                font.family: Theme.fontFamily
+            }
+            ThemedNumberField {
+                id: miterLimitField
+                width: parent.width
+                decimals: 1
+                step: 0.5
+                from: 1
+                to: 100
+                Binding on value {
+                    when: !miterLimitField.activeFocus
+                    value: row.layerData.miterLimit === undefined ? 4 : Number(row.layerData.miterLimit)
+                }
+                onEdited: v => row.setLayer({ "miterLimit": Math.max(1, Math.min(100, v)) })
             }
         }
 

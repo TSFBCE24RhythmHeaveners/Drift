@@ -24,6 +24,8 @@
 #include <QOpenGLShaderProgram>
 #include <QScopeGuard>
 #include <QVector2D>
+#include <QVector4D>
+#include <QtMath>
 
 #include <algorithm>
 #include <cmath>
@@ -59,7 +61,7 @@ out vec2 v_texCoord;
 void main() {
     v_texCoord = a_texCoord;
     float d = textureLod(u_relief, a_texCoord, 0.0).r;
-    gl_Position = u_model * vec4(a_position, -(1.0 - d) * u_reliefDepth, 1.0);
+    gl_Position = u_model * vec4(a_position, (1.0 - d) * u_reliefDepth, 1.0);
 }
 )";
 
@@ -500,6 +502,56 @@ GlTarget cropTarget(GlRuntime &rt, GlTarget source, const QRectF &crop)
     return out;
 }
 
+// A straightened source frame: each output pixel is a point of the crop window in the turned
+// picture, turned back into the source. Same mapping as drift::cropSourceFrame on the CPU; outside
+// the source it is transparent. Targets are straight alpha with v = 0 the top row, like an image.
+constexpr const char *kStraightenCropFragShader = R"(#version 330 core
+in vec2 v_texCoord;
+out vec4 fragColor;
+uniform sampler2D u_layer;
+uniform vec4 u_frame; // normalised x, y, w, h of the window in the turned picture
+uniform vec2 u_size;  // source size in pixels
+uniform vec2 u_turn;  // cos, sin of the clockwise straighten angle
+void main() {
+    vec2 centre = 0.5 * u_size;
+    vec2 p = (u_frame.xy + v_texCoord * u_frame.zw) * u_size - centre;
+    vec2 uv = (vec2(u_turn.x * p.x + u_turn.y * p.y, -u_turn.y * p.x + u_turn.x * p.y) + centre) / u_size;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+        fragColor = vec4(0.0);
+    else
+        fragColor = texture(u_layer, uv);
+}
+)";
+
+GlTarget straightenCropTarget(GlRuntime &rt, QOpenGLExtraFunctions *gl, GlTarget source,
+                              const QRectF &crop, double angle)
+{
+    QOpenGLShaderProgram *program = rt.builtinProgram(
+        QStringLiteral("__straighten_crop__"), kQuadVertexShader, kStraightenCropFragShader);
+    if (!program)
+        return cropTarget(rt, std::move(source), crop);
+    GlTarget out = rt.acquireTarget(qMax(1, qRound(crop.width() * source.width)),
+                                    qMax(1, qRound(crop.height() * source.height)));
+    if (!out.isValid())
+        return source;
+    const double radians = qDegreesToRadians(angle);
+    out.fbo->bind();
+    gl->glViewport(0, 0, out.width, out.height);
+    gl->glDisable(GL_BLEND);
+    program->bind();
+    program->setUniformValue("u_layer", 0);
+    program->setUniformValue("u_frame", QVector4D(crop.x(), crop.y(), crop.width(), crop.height()));
+    program->setUniformValue("u_size", QVector2D(source.width, source.height));
+    program->setUniformValue("u_turn", QVector2D(std::cos(radians), std::sin(radians)));
+    gl->glActiveTexture(GL_TEXTURE0);
+    gl->glBindTexture(GL_TEXTURE_2D, source.texture());
+    bindQuad(rt, gl);
+    program->release();
+    out.fbo->release();
+    rt.releaseTarget(std::move(source));
+    return out;
+}
+
 GlTarget composeMaskTarget(GlRuntime &rt, QOpenGLExtraFunctions *gl, const GpuLayer &layer,
                            const QSize &size);
 GlTarget promoteMaskMedia(GlRuntime &rt, QOpenGLExtraFunctions *gl, const MaskMediaFrame &media);
@@ -564,14 +616,13 @@ QMatrix4x4 layerViewProjection(const GpuLayer &layer, const QSize &canvas)
     const QSizeF canvasF(canvas);
     QMatrix4x4 view = layer.viewProj;
     if (!layer.viewActive) {
-        drift::SceneCamera3d eye;
-        eye.perspective = layer.model3d ? layer.model3d->pose3d.perspective : layer.pose3d.perspective;
-        view = drift::cameraViewProjection(eye, canvasF);
+        view = drift::clipEyeView(layer.model3d ? layer.model3d->pose3d.perspective : layer.pose3d.perspective,
+                                  canvasF);
     }
     if (layer.hasParent && layer.parent.isAffine())
         view = view * drift::worldParentFromAffine(layer.parent,
                                                    layer.layoutCanvas.isEmpty() ? canvasF : layer.layoutCanvas);
-    return view;
+    return view * layer.liftWorld;
 }
 
 void bindTrackInputs(GlRuntime &rt, QOpenGLExtraFunctions *gl, const GpuLayer &layer, int effectIndex,
@@ -599,7 +650,9 @@ GlTarget buildLayerTarget(GlRuntime &rt, QOpenGLExtraFunctions *gl, const GpuLay
         target = nestedLayerTarget(rt, gl, *layer.nested);
     } else if (layer.video.isValid()) {
         target = promoteVideoFrameToTargetCached(rt, gl, layer.video);
-        if (target.isValid() && layer.videoCrop != QRectF(0, 0, 1, 1))
+        if (target.isValid() && layer.videoCropAngle != 0.0)
+            target = straightenCropTarget(rt, gl, std::move(target), layer.videoCrop, layer.videoCropAngle);
+        else if (target.isValid() && layer.videoCrop != QRectF(0, 0, 1, 1))
             target = cropTarget(rt, std::move(target), layer.videoCrop);
     } else {
 #ifdef DRIFT_WITH_SKIA
@@ -620,6 +673,16 @@ GlTarget buildLayerTarget(GlRuntime &rt, QOpenGLExtraFunctions *gl, const GpuLay
     if (!target.isValid())
         return {};
 
+    // Effects and the cutout swap work on straight alpha; a layer with neither keeps Skia's
+    // premultiplied pixels all the way to the draw.
+    if (target.premultiplied && (!layer.effects.isEmpty() || !layer.fgr.isNull())) {
+        GlTarget straight = unpremultipliedCopy(rt, gl, target);
+        rt.releaseTarget(std::move(target));
+        if (!straight.isValid())
+            return {};
+        target = std::move(straight);
+    }
+
     // A lone cutout's foreground only means anything while the cutout still cuts the layer.
     if (!layer.fgr.isNull() && !chainConsumesMasks(layer) && soleMediaIndex(layer) >= 0)
         target = swapInForeground(rt, gl, std::move(target), layer.fgr);
@@ -634,8 +697,6 @@ GlTarget buildLayerTarget(GlRuntime &rt, QOpenGLExtraFunctions *gl, const GpuLay
             effect.catalogId.isEmpty() ? nullptr : effectDefForId(effect.catalogId);
         if (!def)
             continue;
-        if (def->meta.id == QStringLiteral("time_echo"))
-            continue; // history is assembled before the scene is built
 
         if (def->isModel3d) {
             QMap<QString, QVariant> params = resolvedEffectParameters(effect, *def);
@@ -775,31 +836,40 @@ void main() {
 // sample it trilinearly.
 GlTarget mipmappedLayerCopy(GlRuntime &rt, QOpenGLExtraFunctions *gl, const GlTarget &src)
 {
-    QOpenGLShaderProgram *program =
-        rt.builtinProgram(QStringLiteral("__premul__"), kQuadVertexShader, kPremultiplyFragShader);
-    if (!program)
-        return {};
-
     GlTarget copy = rt.acquireTarget(src.width, src.height);
     if (!copy.isValid())
         return {};
 
-    copy.fbo->bind();
-    gl->glViewport(0, 0, copy.width, copy.height);
-    gl->glDisable(GL_BLEND);
-    gl->glClearColor(0.f, 0.f, 0.f, 0.f);
-    gl->glClear(GL_COLOR_BUFFER_BIT);
-    program->bind();
-    program->setUniformValue("u_currentTexture", 0);
-    gl->glActiveTexture(GL_TEXTURE0);
-    gl->glBindTexture(GL_TEXTURE_2D, src.texture());
-    bindQuad(rt, gl);
-    program->release();
-    copy.fbo->release();
+    if (src.premultiplied) {
+        if (!blitTextureToTarget(rt, gl, src.texture(), copy)) {
+            rt.releaseTarget(std::move(copy));
+            return {};
+        }
+    } else {
+        QOpenGLShaderProgram *program = rt.builtinProgram(QStringLiteral("__premul__"),
+                                                          kQuadVertexShader, kPremultiplyFragShader);
+        if (!program) {
+            rt.releaseTarget(std::move(copy));
+            return {};
+        }
+        copy.fbo->bind();
+        gl->glViewport(0, 0, copy.width, copy.height);
+        gl->glDisable(GL_BLEND);
+        gl->glClearColor(0.f, 0.f, 0.f, 0.f);
+        gl->glClear(GL_COLOR_BUFFER_BIT);
+        program->bind();
+        program->setUniformValue("u_currentTexture", 0);
+        gl->glActiveTexture(GL_TEXTURE0);
+        gl->glBindTexture(GL_TEXTURE_2D, src.texture());
+        bindQuad(rt, gl);
+        program->release();
+        copy.fbo->release();
+    }
 
     gl->glBindTexture(GL_TEXTURE_2D, copy.texture());
     gl->glGenerateMipmap(GL_TEXTURE_2D);
     gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     return copy;
 }
 
@@ -834,7 +904,8 @@ int soleMediaIndex(const GpuLayer &layer)
         const bool plainMedia = mask.shape == drift::MaskShape::Media && mask.feather <= 0.0
                                 && fullFrame && mask.mediaFit == drift::MaskMediaFit::Stretch
                                 && mask.mediaChannel == drift::MaskMediaChannel::Luma
-                                && i < layer.maskMedia.size() && !layer.maskMedia.at(i).isNull();
+                                && i < layer.maskMedia.size() && !layer.maskMedia.at(i).isNull()
+                                && (i >= layer.maskPatch.size() || layer.maskPatch.at(i).isNull());
         if (!plainMedia || found >= 0)
             return -1;
         found = i;
@@ -1000,6 +1071,17 @@ GlTarget composeMaskTarget(GlRuntime &rt, QOpenGLExtraFunctions *gl, const GpuLa
             placed.rect = maskMediaRect(mask, media.size(), size);
             drawLayerOnCanvas(rt, gl, coverage, src, placed, drift::BlendMode::Normal, size);
             release(src);
+
+            // A brush fix of this frame goes over the placed coverage: gray where it was painted,
+            // weighted by its alpha, which is mix(coverage, gray, alpha) under a normal blend.
+            if (i < layer.maskPatch.size() && !layer.maskPatch.at(i).isNull()) {
+                const QImage &patch = layer.maskPatch.at(i);
+                GlTarget patchSrc = promoteImageToTargetCached(rt, gl, patch, patch.size());
+                if (patchSrc.isValid()) {
+                    drawLayerOnCanvas(rt, gl, coverage, patchSrc, placed, drift::BlendMode::Normal, size);
+                    release(patchSrc);
+                }
+            }
         } else {
             // Feather and invert are applied below, so they are deliberately excluded from the
             // rasterized (and therefore cached) shape.
@@ -1132,6 +1214,48 @@ GlTarget depthCanvasTarget(GlRuntime &rt, QOpenGLExtraFunctions *gl, const GpuLa
     return out;
 }
 
+// The size, in canvas pixels, the layer's quad lands on: its rect through whatever parent, view
+// or tilt moves it. Edge lengths rather than a bounding box, which a rotation inflates. A tilt
+// alone is judged by its bounding box and never reads larger than the rect unless `exact`: the mip
+// check only wants to know if the quad shrinks, a raster scale also needs to know if it grows.
+QSizeF drawnLayerSize(const GpuLayer &layer, const QSize &canvasSize, bool exact = false)
+{
+    QSizeF drawnSize = layer.screenSpace && !layer.layoutCanvas.isEmpty() ? QSizeF(canvasSize)
+                                                                           : layer.rect.size();
+    if (layer.viewActive && !layer.screenSpace) {
+        const QPolygonF projected = drift::projectedQuad(drift::viewQuadToCanvas(
+            layer.viewProj, layer.rect, layer.rotation, false, false, layer.pose3d, layer.parent,
+            layer.hasParent,
+            layer.layoutCanvas.isEmpty() ? QSizeF(canvasSize) : layer.layoutCanvas));
+        if (!projected.isEmpty()) {
+            drawnSize = QSizeF(QLineF(projected.at(0), projected.at(1)).length(),
+                               QLineF(projected.at(1), projected.at(2)).length());
+        }
+    } else if (layer.hasParent && !layer.screenSpace) {
+        const QMatrix4x4 quad =
+            layer.pose3d.isActive()
+                ? drift::clipQuadToCanvas(layer.rect, layer.rotation, false, false, layer.pose3d,
+                                          QSizeF(canvasSize))
+                : drift::flatQuadToCanvas(layer.rect, layer.rotation, false, false);
+        const QPolygonF projected =
+            drift::projectedQuad(drift::parentedQuadToCanvas(layer.parent, quad));
+        if (!projected.isEmpty()) {
+            // The quad's own edge lengths, not its bounding box, which a rotation inflates.
+            drawnSize = QSizeF(QLineF(projected.at(0), projected.at(1)).length(),
+                               QLineF(projected.at(1), projected.at(2)).length());
+        }
+    } else if (layer.pose3d.isActive()) {
+        const QPolygonF quad =
+            drift::projectedClipQuad(layer.rect, layer.rotation, layer.pose3d, QSizeF(canvasSize));
+        if (!quad.isEmpty()) {
+            drawnSize = exact ? QSizeF(QLineF(quad.at(0), quad.at(1)).length(),
+                                       QLineF(quad.at(1), quad.at(2)).length())
+                              : drawnSize.boundedTo(quad.boundingRect().size());
+        }
+    }
+    return drawnSize;
+}
+
 // Draw a prepared layer target onto the canvas with transform, opacity, mask and
 // blend mode. For non-fixed-function modes the canvas is ping-ponged.
 void drawLayerOnCanvas(GlRuntime &rt, QOpenGLExtraFunctions *gl, GlTarget &canvas,
@@ -1187,32 +1311,19 @@ void drawLayerOnCanvas(GlRuntime &rt, QOpenGLExtraFunctions *gl, GlTarget &canva
 
     // Only worth it when the quad is actually smaller than the texture; at ~1:1 the
     // single bilinear tap is already exact and the copy would be pure cost.
-    QSizeF drawnSize = layer.screenSpace && !layer.layoutCanvas.isEmpty() ? QSizeF(canvasSize)
-                                                                           : layer.rect.size();
-    if (layer.hasParent && !layer.screenSpace) {
-        const QMatrix4x4 quad =
-            layer.pose3d.isActive()
-                ? drift::clipQuadToCanvas(layer.rect, layer.rotation, false, false, layer.pose3d,
-                                          QSizeF(canvasSize))
-                : drift::flatQuadToCanvas(layer.rect, layer.rotation, false, false);
-        const QPolygonF projected =
-            drift::projectedQuad(drift::parentedQuadToCanvas(layer.parent, quad));
-        if (!projected.isEmpty()) {
-            // The quad's own edge lengths, not its bounding box, which a rotation inflates.
-            drawnSize = QSizeF(QLineF(projected.at(0), projected.at(1)).length(),
-                               QLineF(projected.at(1), projected.at(2)).length());
-        }
-    } else if (layer.pose3d.isActive()) {
-        const QPolygonF quad =
-            drift::projectedClipQuad(layer.rect, layer.rotation, layer.pose3d, QSizeF(canvasSize));
-        if (!quad.isEmpty())
-            drawnSize = drawnSize.boundedTo(quad.boundingRect().size());
-    }
+    const QSizeF drawnSize = drawnLayerSize(layer, canvasSize);
     const bool minifies = layerTarget.width > drawnSize.width() * 1.05
                           || layerTarget.height > drawnSize.height() * 1.05;
     GlTarget mipTarget = minifies ? mipmappedLayerCopy(rt, gl, layerTarget) : GlTarget{};
     const GLuint layerTex = mipTarget.isValid() ? mipTarget.texture() : layerTarget.texture();
-    const float layerPremul = mipTarget.isValid() ? 1.f : 0.f;
+    const float layerPremul = mipTarget.isValid() || layerTarget.premultiplied ? 1.f : 0.f;
+
+    // Targets are pooled and the filter lives on the texture, so another pass's NEAREST or a
+    // previous mip chain would otherwise decide how this layer is resampled.
+    gl->glBindTexture(GL_TEXTURE_2D, layerTex);
+    gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                        mipTarget.isValid() ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     // Targets are pooled by size: hand this one back with the default filter or the next
     // user would sample the mip levels this frame left behind.
@@ -1227,6 +1338,7 @@ void drawLayerOnCanvas(GlRuntime &rt, QOpenGLExtraFunctions *gl, GlTarget &canva
                 return;
             gl->glBindTexture(GL_TEXTURE_2D, target.texture());
             gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             rt.releaseTarget(std::move(target));
         }
     } mipGuard{rt, gl, mipTarget};
@@ -1434,7 +1546,14 @@ GlTarget renderIsolatedLayer(GlRuntime &rt, QOpenGLExtraFunctions *gl, const Gpu
         drawLayerOnCanvas(rt, gl, isolated, source, layer, drift::BlendMode::Normal, canvasSize);
     }
     rt.releaseTarget(std::move(source));
-    return isolated;
+
+    // Drawing source-over leaves the canvas premultiplied; transition and effect shaders, and
+    // the draw that composites a transition's result, take straight alpha like any layer target.
+    GlTarget straight = unpremultipliedCopy(rt, gl, isolated);
+    if (!straight.isValid())
+        return isolated;
+    rt.releaseTarget(std::move(isolated));
+    return straight;
 }
 
 // Renders the track inputs one effect reads: a track's picture, or its folded masks laid out on the
@@ -1855,13 +1974,32 @@ void composeOnGlThread(GlRuntime &rt, const GpuScene &scene, GlTarget &outCanvas
 
 namespace GpuCompositor {
 
-static_assert(GlRuntime::kPresentRingSize >= kMaxPreviewComposites + 1,
+static_assert(GlRuntime::kPresentRingSize >= kMaxPreviewComposites + 1 && GlRuntime::kPresentStreams == 2,
               "the presentation ring must hold every in-flight composite plus the one the "
               "scene graph is still sampling");
 
 bool isAvailable()
 {
     return runtime().available();
+}
+
+int maxCanvasDimension()
+{
+    static int cached = -1;
+    if (cached < 0) {
+        GLint v = 0;
+        GlRuntime &rt = runtime();
+        if (rt.exec([&] { rt.functions()->glGetIntegerv(GL_MAX_TEXTURE_SIZE, &v); }))
+            cached = int(v);
+        else
+            return 0;
+    }
+    return cached;
+}
+
+QSizeF drawnSize(const GpuLayer &layer, const QSize &canvas)
+{
+    return drawnLayerSize(layer, canvas, true);
 }
 
 drift::gl::GlStatusInfo status()
@@ -1965,10 +2103,9 @@ GpuFrameTexture renderToTexture(const GpuScene &scene)
 
     GlRuntime &rt = runtime();
 
-#ifdef Q_OS_ANDROID
     // Handing over a texture *name* only works while both contexts are in one share
-    // group; a driver that refuses sharing would leave the preview black rather than
-    // merely slow, so fall back to a readback in that case.
+    // group. Without one — Qt Quick on another graphics API, or an Android driver that
+    // refused sharing — the preview would be black rather than merely slow, so read back.
     if (!rt.sharesWithGuiContext()) {
         rt.exec([&] {
             GlTarget canvas = rt.acquireTarget(scene.canvasSize.width(), scene.canvasSize.height());
@@ -1988,10 +2125,9 @@ GpuFrameTexture renderToTexture(const GpuScene &scene)
         });
         return out;
     }
-#endif
 
     rt.exec([&] {
-        GlTarget &canvas = rt.acquirePresentTarget(scene.canvasSize.width(), scene.canvasSize.height());
+        GlTarget &canvas = rt.acquirePresentTarget(scene.previewStream, scene.canvasSize.width(), scene.canvasSize.height());
         if (!canvas.isValid())
             return;
 

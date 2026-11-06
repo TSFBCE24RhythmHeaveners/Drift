@@ -16,8 +16,10 @@ void setImageClipDurationUs(TimeUs duration);
 
 constexpr TimeUs kTextClipDurationUs = 5 * kUsPerSecond;
 constexpr TimeUs kSubtitleClipDurationUs = 30 * kUsPerSecond;
-constexpr TimeUs kMinClipDurationUs = kUsPerSecond / 10;
 constexpr TimeUs kSnapThresholdUs = 150'000;
+
+// One project frame: the shortest clip, split half or trim a user can make. fps <= 0 falls back to 120.
+TimeUs minClipDurationUs(double fps);
 
 // Every time an edge can snap to, sorted and deduplicated. Built once and reused: snapTime()
 // below collects the same set from scratch on every call, which is two entries per clip in the
@@ -92,8 +94,10 @@ int adjustmentLaneParentIndex(const Project &project, int laneIndex);
 //
 // A lane holds one kind: a row mixing video and audio adjustments would have no unambiguous
 // colour or inspector. An empty lane takes anything. INSERTS TRACKS.
+//
+// `visibleOnly` skips hidden lanes, so the returned one is never a lane the user has hidden.
 int ensureAdjustmentLane(Project &project, int parentIndex, AdjustmentKind kind, TimeUs startUs,
-                         TimeUs durationUs);
+                         TimeUs durationUs, bool visibleOnly = false);
 
 // A mask paired with the id of the adjustment clip carrying it. The compositor needs the id: the
 // reader pool keys its cursor by stream id, so a mask's media must not decode under the host
@@ -130,6 +134,27 @@ void setLinkedMask(Project &project, int trackIndex, int clipIndex, const Mask &
 // means. Returns the new adjustment's position, or a null ClipRef when the mask would not
 // contribute. INSERTS TRACKS.
 ClipRef addLinkedMask(Project &project, int trackIndex, int clipIndex, const Mask &mask);
+
+// The Shape picker's choices, "original" first. Ids are what Mask::cropShape stores.
+QStringList clipShapeIds();
+
+// The mask for picker shape `id` on a host whose frame is hostW x hostH px: circle, square and
+// the regular polygons are centred and sized from the shorter side, ellipse fills the frame.
+// Intersect, so it cuts whatever the other masks left. Shape None for "original" or an unknown id.
+Mask clipShapeMask(const QString &id, double hostW, double hostH);
+
+// The picker shape pinned to clips[clipIndex] ("original" when none). Reads Mask::cropShape.
+QString linkedClipShape(const Project &project, int trackIndex, int clipIndex);
+
+// Replaces the clip's picker mask with shape `id` (one per clip), sized from its frame at the
+// clip's start; "original" removes only that mask. The new mask spans the whole clip on a visible
+// mask lane. INSERTS TRACKS.
+void setLinkedClipShape(Project &project, int trackIndex, int clipIndex, const QString &id);
+
+// Re-home every lane adjustment (mask or effect) pinned to `hostClipId` onto the lanes of the track
+// the host clip now sits on, dropping lanes it empties. A host moved to another track leaves its
+// pinned adjustments scoped to the old one, where they no longer apply to it. INSERTS TRACKS.
+void moveLinkedAdjustmentsToHostTrack(Project &project, const QString &hostClipId);
 
 // An unlinked Mask adjustment on one of `trackIndex`'s lanes, spanning [startUs, +durationUs).
 // Pinned to nothing, so its edges stay draggable and it masks whatever the track shows over that
@@ -248,9 +273,9 @@ TimeUs sourceDurationForClip(const Project &project, const Clip &clip);
 // Split `head` at `offset` from its timeline start into head + tail (same reverse/speed).
 // Caller assigns `tail.id`. Returns false if the offset is too close to either end. The cut
 // edges get no fade or animation; the outer ones are kept, clamped to each half.
-bool splitClipAtOffset(Clip &head, Clip &tail, TimeUs offset);
+bool splitClipAtOffset(Clip &head, Clip &tail, TimeUs offset, double fps = 0);
 // Same, with the minimum half length the caller chooses (splitClipAtOffset uses
-// kMinClipDurationUs). Word-level cutting needs pieces shorter than an interactive split allows.
+// one frame). Word-level cutting needs pieces shorter than an interactive split allows.
 bool splitClipAtOffsetMin(Clip &head, Clip &tail, TimeUs offset, TimeUs minEdgeUs);
 
 // Repoint `dst` at the media `src` carries while keeping dst's timeline placement. The source
@@ -288,6 +313,9 @@ QString subtitleSourceKey(const Clip &clip);
 // clip that was swapped out to the id of the clip that took its place.
 void retimeLinkedSubtitles(const Project &before, Project &project,
                            const QHash<QString, QString> &replaced = {});
+
+// Silences every clip in `snap` except `clipId`, so mixing it yields only that clip's sound.
+void muteAllButClip(Project &snap, const QString &clipId);
 
 // All clips sharing `clip.linkId` (excluding `clip` itself).
 QList<ClipRef> linkedPartners(const Project &project, const Clip &clip);
@@ -338,7 +366,7 @@ enum class MulticamSwitchResult { Applied, NoOp, OutOfRange, TooCloseToEdge };
 // Punch `angle` at `atUs` inside `[rangeStart, rangeEnd)`. Empty `cuts` is the unedited
 // stack; `initialAngle` is the topmost camera, which is program until the first punch.
 MulticamSwitchResult applyMulticamSwitch(QList<MulticamCut> &cuts, TimeUs rangeStart, TimeUs rangeEnd,
-                                         int angle, TimeUs atUs, int initialAngle);
+                                         int angle, TimeUs atUs, int initialAngle, double fps = 0);
 
 int multicamAngleAt(const QList<MulticamCut> &cuts, TimeUs rangeStart, TimeUs rangeEnd, TimeUs timeUs,
                     int uneditedAngle);
@@ -347,7 +375,7 @@ QList<MulticamInterval> multicamIntervals(const QList<MulticamCut> &cuts, TimeUs
                                           TimeUs rangeEnd, int uneditedAngle);
 
 // Intersection of `src` with `[start, end)`. False when that span is empty or shorter than
-// kMinClipDurationUs. `out` keeps `src`'s id; the caller mints a new one if it needs one.
+// one frame. `out` keeps `src`'s id; the caller mints a new one if it needs one.
 // Move every clip-relative keyframe on a clip by `delta`. Key times are relative to the clip's
 // own start, so a clip that keeps its material but starts somewhere else has to carry its curves
 // with it. Keys pushed before the start are dropped.
@@ -357,6 +385,6 @@ void shiftClipKeyframes(Clip &clip, TimeUs delta);
 // the animation continues rather than restarting.
 void rebaseKeyframesForSplitTail(Clip &tail, TimeUs offset);
 
-bool sliceClipToTimelineRange(const Clip &src, TimeUs start, TimeUs end, Clip &out);
+bool sliceClipToTimelineRange(const Clip &src, TimeUs start, TimeUs end, Clip &out, double fps = 0);
 
 } // namespace drift

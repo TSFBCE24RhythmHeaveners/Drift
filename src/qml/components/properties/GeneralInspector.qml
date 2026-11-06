@@ -38,6 +38,7 @@ Item {
         return Math.abs(frame.x) > 0.0005 || Math.abs(frame.y) > 0.0005
                 || Math.abs(frame.width - 1) > 0.0005
                 || Math.abs(frame.height - 1) > 0.0005
+                || root.currentSourceAngle() !== 0
     }
     readonly property bool canCrop: root.clipKind === "video" || root.clipKind === "image"
     readonly property bool showSourceBox: root.canCrop && root.sourceDisplayW > 0
@@ -80,6 +81,17 @@ Item {
             "width": Number(frame.width || 1),
             "height": Number(frame.height || 1)
         }
+    }
+
+    function currentSourceAngle() {
+        return root.hasSelection ? Number(root.clipData.sourceFrameAngle || 0) : 0
+    }
+
+    function applySourceAngle(angle) {
+        if (!root.hasSelection || !root.canCrop || isNaN(angle))
+            return
+        const frame = root.currentSourceFrame()
+        EditorState.setClipSourceFrame(root.clipData.id, frame.x, frame.y, frame.width, frame.height, angle)
     }
 
     function framePixels() {
@@ -174,6 +186,8 @@ Item {
             sourceBoxWField.value = box.width
         if (sourceBoxHField && !sourceBoxHField.activeFocus)
             sourceBoxHField.value = box.height
+        if (sourceBoxAngleField && !sourceBoxAngleField.activeFocus)
+            sourceBoxAngleField.value = root.currentSourceAngle()
     }
 
     function refreshFields() {
@@ -211,6 +225,11 @@ Item {
             spacing: 4
             Text {
                 text: qsTr("Clip name")
+                SearchAnchor {
+                    searchId: "general-clip-name"
+                    title: qsTr("Clip name")
+                    keywords: "rename"
+                }
                 color: Theme.c.generalInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
@@ -279,6 +298,11 @@ Item {
 
                     Text {
                         text: qsTr("Crop")
+                        SearchAnchor {
+                            searchId: "general-crop"
+                            title: qsTr("Crop")
+                            keywords: "cut frame"
+                        }
                         color: Theme.c.generalInspector.foregroundMuted
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSizeXs
@@ -407,6 +431,28 @@ Item {
                         }
                     }
                 }
+
+                // Turns the picture under the crop box to level a tilted shot.
+                Column {
+                    width: (parent.width - 8) / 2
+                    spacing: 4
+                    Text {
+                        text: qsTr("Straighten")
+                        color: Theme.c.generalInspector.foregroundMuted
+                        font.pixelSize: Theme.fontSizeXs
+                        font.family: Theme.fontFamily
+                    }
+                    ThemedNumberField {
+                        id: sourceBoxAngleField
+                        width: parent.width
+                        unit: "°"
+                        from: -180
+                        to: 180
+                        step: 0.1
+                        decimals: 1
+                        onEdited: v => root.applySourceAngle(v)
+                    }
+                }
             }
             ThemedButton {
                 text: qsTr("Crop…")
@@ -446,6 +492,11 @@ Item {
                 spacing: 4
                 Text {
                     text: qsTr("Duration")
+                    SearchAnchor {
+                        searchId: "general-duration"
+                        title: qsTr("Duration")
+                        keywords: "length"
+                    }
                     color: Theme.c.generalInspector.foregroundMuted
                     font.pixelSize: Theme.fontSizeXs
                     font.family: Theme.fontFamily
@@ -457,7 +508,7 @@ Item {
                     width: parent.width
                     decimals: 2
                     step: 0.1
-                    from: 0.1
+                    from: 1.0 / Math.max(1, EditorState.projectFile.projectFps())
                     onEdited: v => EditorState.setClipDuration(
                                         EditorState.selectedTrack, EditorState.selectedClip, v)
                 }
@@ -472,6 +523,11 @@ Item {
 
             Text {
                 text: qsTr("Trim")
+                SearchAnchor {
+                    searchId: "general-trim"
+                    title: qsTr("Trim")
+                    keywords: "in out start end"
+                }
                 HoverHandler { id: tipHover1217 }
                 TapHandler {
                     id: tipTap1217

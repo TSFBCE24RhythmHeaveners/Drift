@@ -87,6 +87,11 @@ Item {
         "keyframes": keyframesC,
         "masking": maskingC,
         "tracking": trackingC,
+        "viewport3d": viewport3dC,
+        "outliner3d": outliner3dC,
+        "transform3d": transform3dC,
+        "camera3d": camera3dC,
+        "view3d": view3dC,
         "undoHistory": historyC,
         "sourceViewer": sourceViewerC,
         "sourceLab.bin": sourceLabBinC,
@@ -95,7 +100,9 @@ Item {
         "sourceLab.ranges": sourceLabRangesC,
         "sourceLab.process": sourceLabProcessC,
         "sourceLab.output": sourceLabOutputC,
-        "agentLog": agentLogC
+        "agentLog": agentLogC,
+        "agentViews": agentViewsC,
+        "audioSheet": audioSheetC
     })
 
     Component { id: assetsC; LazyPanel { panel: AssetsPanel {} } }
@@ -115,6 +122,11 @@ Item {
     Component { id: keyframesC; LazyPanel { panel: KeyframesPanel {} } }
     Component { id: maskingC; LazyPanel { panel: MaskingPanel {} } }
     Component { id: trackingC; LazyPanel { panel: TrackingPanel {} } }
+    Component { id: viewport3dC; LazyPanel { panel: Viewport3dPanel {} } }
+    Component { id: outliner3dC; LazyPanel { panel: Outliner3dPanel {} } }
+    Component { id: transform3dC; LazyPanel { panel: Transform3dPanel {} } }
+    Component { id: camera3dC; LazyPanel { panel: Camera3dPanel {} } }
+    Component { id: view3dC; LazyPanel { panel: View3dPanel {} } }
     Component { id: historyC; LazyPanel { panel: HistoryPanel {} } }
     Component { id: sourceViewerC; LazyPanel { panel: SourceViewerPanel {} } }
     Component { id: sourceLabBinC; LazyPanel { panel: SourceLabBinPanel {} } }
@@ -124,6 +136,8 @@ Item {
     Component { id: sourceLabProcessC; LazyPanel { panel: SourceLabProcessPanel {} } }
     Component { id: sourceLabOutputC; LazyPanel { panel: SourceLabOutputPanel {} } }
     Component { id: agentLogC; LazyPanel { panel: AgentLogPanel {} } }
+    Component { id: agentViewsC; LazyPanel { panel: AgentViewsPanel {} } }
+    Component { id: audioSheetC; LazyPanel { panel: AudioSheetPanel {} } }
     Component { id: placeholderC; WorkspacePlaceholderPanel {} }
 
     // Stays in the pool like any panel, but the panel inside only exists while shown (plus a
@@ -187,6 +201,18 @@ Item {
             interval: 5000
             onTriggered: lazy.refresh()
         }
+    }
+
+    function inLayout(type) {
+        return !!root._created[type] && root._created[type].parent !== root
+    }
+
+    // Brings a panel's tab to the front when it sits behind another one.
+    function reveal(type) {
+        if (!root.inLayout(type))
+            return false
+        root._created[type].parent?.parent?.activate?.(type)
+        return true
     }
 
     function label(type) {

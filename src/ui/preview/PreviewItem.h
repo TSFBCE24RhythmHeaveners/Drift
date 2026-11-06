@@ -10,8 +10,9 @@ class PlaybackEngine;
 
 // Displays the compositor's output. The frame is normally already a GL texture in
 // the shared context, so it is wrapped with fromNative — no copy, no upload. Only
-// when the driver refused to share contexts (Android only; see GpuFrameTexture)
-// does the compositor publish a QImage instead, which is uploaded here per frame.
+// when there is no shared context (Qt Quick on a non-OpenGL API, or an Android driver
+// that refused sharing; see GpuFrameTexture) does the compositor publish a QImage
+// instead, which is uploaded here per frame.
 //
 // Frames are pulled from PlaybackEngine in C++ — QML cannot reliably assign QImage
 // between properties, which left the Android preview permanently blank.
@@ -20,6 +21,9 @@ class PreviewItem : public QQuickItem
     Q_OBJECT
 
     Q_PROPERTY(PlaybackEngine *playback READ playback WRITE setPlayback NOTIFY playbackChanged)
+    // PreviewStream: 0 is the scene camera's picture, 1 the editor's free viewpoint. Only a
+    // Camera item paces the engine to the display.
+    Q_PROPERTY(int stream READ stream WRITE setStream NOTIFY streamChanged)
     Q_PROPERTY(int textureId READ textureId WRITE setTextureId NOTIFY frameChanged)
     Q_PROPERTY(QSize textureSize READ textureSize WRITE setTextureSize NOTIFY frameChanged)
     Q_PROPERTY(QImage image READ image WRITE setImage NOTIFY frameChanged)
@@ -30,6 +34,9 @@ public:
 
     PlaybackEngine *playback() const { return m_playback; }
     void setPlayback(PlaybackEngine *engine);
+
+    int stream() const { return m_stream; }
+    void setStream(int stream);
 
     int textureId() const { return m_textureId; }
     void setTextureId(int id);
@@ -43,12 +50,14 @@ public:
 signals:
     void frameChanged();
     void playbackChanged();
+    void streamChanged();
 
 protected:
     QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *data) override;
 
 private:
     void pullFrame();
+    void onStreamFrameChanged(int stream);
     // (Re)binds the display-cadence signals of whatever window this item is in to the engine,
     // and reports that screen's refresh rate. Both halves have to be re-done on every window
     // and screen change, which is why they live together here.
@@ -64,6 +73,7 @@ private:
     QMetaObject::Connection m_screenChangedConn;
     QMetaObject::Connection m_refreshRateConn;
     QPointer<QQuickWindow> m_cadenceWindow;
+    int m_stream = 0;
     int m_textureId = 0;
     QSize m_textureSize;
     QImage m_image;

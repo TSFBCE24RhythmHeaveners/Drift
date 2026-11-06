@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import Drift
-import "../keyframes/ScaleMath.js" as ScaleMath
 Item {
     id: root
 
@@ -16,10 +15,6 @@ Item {
     readonly property bool isModel3d: clipKind === "model3d"
     readonly property bool isTransformLayer: clipKind === "adjustment"
                                              && clipData.adjustmentKind === "transform"
-    // The dest-reading blend modes copy the canvas aside before they draw, so a depth test cannot
-    // sort them; depth occlusion is only offered on a Normal blend.
-    readonly property bool blendIsNormal: !hasSelection
-                                          || (clipData.blendMode || "normal") === "normal"
     // The transform clips over this one, innermost first; the nearest names its frame.
     readonly property var transformParents: hasSelection ? (clipData.transformParents || []) : []
     readonly property string parentName: transformParents.length > 0
@@ -38,11 +33,9 @@ Item {
     readonly property var propY: { "key": "y", "label": "Y", "def": 0.0, "decimals": 0 }
     readonly property var propWidth: { "key": "width", "label": qsTr("Width"), "def": root.canvasW, "decimals": 0 }
     readonly property var propHeight: { "key": "height", "label": qsTr("Height"), "def": root.canvasH, "decimals": 0 }
-    readonly property var propRotation: { "key": "rotation", "label": qsTr("Angle"), "def": 0.0, "decimals": 1 }
-    readonly property var propRotationX: { "key": "rotationX", "label": qsTr("Tilt X"), "def": 0.0, "decimals": 1 }
-    readonly property var propRotationY: { "key": "rotationY", "label": qsTr("Tilt Y"), "def": 0.0, "decimals": 1 }
-    readonly property var propZ: { "key": "z", "label": qsTr("Depth"), "def": 0.0, "decimals": 0 }
-    readonly property var propPerspective: { "key": "perspective", "label": qsTr("Perspective"), "def": 2000.0, "decimals": 0 }
+    readonly property var propRotation: ({ "key": "rotation",
+                                           "label": (clipData && clipData.layer3d) ? qsTr("Rotation Z") : qsTr("Rotation"),
+                                           "def": 0.0, "decimals": 1 })
 
     // Link X and Y keyframes and motion curves together for synchronized 2D paths
     property bool positionLinked: EditorState.positionLinked
@@ -66,7 +59,7 @@ Item {
             return 1
         const w = transformAt("width", canvasW)
         const h = transformAt("height", canvasH)
-        return ScaleMath.scaleOf(w, h, canvasW, canvasH)
+        return EditorState.keyframes.scaleOf(w, h, canvasW, canvasH)
     }
 
     // Scale is presented as a single control, but the project stores its animation as two
@@ -132,7 +125,7 @@ Item {
         const s = scaleDragStart
         if (!s || s.scale <= 0)
             return
-        const r = ScaleMath.scaledRect(s, scale, scaleAnchor)
+        const r = EditorState.keyframes.scaledRect(s, scale, scaleAnchor)
         const k = r.k
         const x = r.x
         const y = r.y
@@ -217,6 +210,11 @@ Item {
             Item {
                 width: parent.width
                 height: posLinkButton.height
+                SearchAnchor {
+                    searchId: "transform-position"
+                    title: qsTr("Position")
+                    keywords: "move x y"
+                }
 
                 Text {
                     anchors.left: parent.left
@@ -276,6 +274,11 @@ Item {
             Item {
                 width: parent.width
                 height: sizeLinkButton.height
+                SearchAnchor {
+                    searchId: "transform-scale"
+                    title: qsTr("Scale")
+                    keywords: "size zoom resize"
+                }
 
                 Text {
                     anchors.left: parent.left
@@ -456,7 +459,14 @@ Item {
                 font.weight: Font.Medium
             }
 
+            SearchAnchor {
+                searchId: "transform-opacity"
+                title: qsTr("Opacity")
+                keywords: "transparency alpha fade"
+                target: transformOpacityRow
+            }
             PropertyKeyframeRow {
+                id: transformOpacityRow
                 width: parent.width
                 propDef: root.propOpacity
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.opacity && root.clipData.keyframes.opacity.points) || []
@@ -466,7 +476,14 @@ Item {
                 percent: true
             }
 
+            SearchAnchor {
+                searchId: "transform-rotation"
+                title: qsTr("Rotation")
+                keywords: "angle rotate 90 rotation z"
+                target: transformRotationRow
+            }
             PropertyKeyframeRow {
+                id: transformRotationRow
                 width: parent.width
                 propDef: root.propRotation
                 keyframeList: (root.clipData.keyframes && root.clipData.keyframes.rotation && root.clipData.keyframes.rotation.points) || []
@@ -508,8 +525,8 @@ Item {
                 visible: !root.isModel3d
                 text: qsTr("3D layer")
                 tooltip: root.isTransformLayer
-                         ? qsTr("Tilt the whole group as one flat card")
-                         : qsTr("Tilt the clip and push it in depth, with 3D grips on the preview. Turning it off flattens the clip again.")
+                         ? qsTr("Rotate the whole group as one flat card")
+                         : qsTr("Rotate the clip in 3D and move it in depth, with 3D grips on the preview. Turning it off flattens the clip again.")
                 // A Binding rather than a plain one: the click itself assigns `checked`, which
                 // would otherwise sever it and leave the switch stale on the next clip.
                 Binding on checked {
@@ -522,120 +539,21 @@ Item {
                                                       EditorState.selectedClip, checked)
             }
 
-            // Depth occlusion. Off by default everywhere, because track order deciding what covers
-            // what is the rule the rest of the timeline relies on; this opts one clip out of it.
-            ThemedSwitch {
-                visible: !!root.clipData.layer3d
-                enabled: root.blendIsNormal
-                text: qsTr("Occlude by depth")
-                tooltip: root.blendIsNormal
-                         ? qsTr("Let depth decide what covers this clip, instead of its track position. Only clips with this on sort against each other; everything else still draws in track order.")
-                         : qsTr("Needs the Normal blend mode — the others read the canvas behind the clip, which depth cannot sort.")
-                Binding on checked {
-                    value: {
-                        void root.clipDataRevision
-                        return !!root.clipData.depthOcclude
-                    }
-                }
-                onToggled: EditorState.setClipDepthOcclude(EditorState.selectedTrack,
-                                                           EditorState.selectedClip, checked)
-            }
-
-            // The preview gizmo's tool and the axes its handles follow. Editor preferences shared by
-            // every clip, not stored on this one.
-            Row {
-                visible: !!root.clipData.layer3d
-                spacing: 6
-
-                Repeater {
-                    model: [
-                        { value: "move", glyph: Theme.icons.move3d, label: qsTr("Move"), action: "gizmoMove",
-                          tip: qsTr("Arrows on the preview move the clip along each axis") },
-                        { value: "rotate", glyph: Theme.icons.rotate3d, label: qsTr("Rotate"), action: "gizmoRotate",
-                          tip: qsTr("Rings on the preview turn the clip about each axis") },
-                        { value: "scale", glyph: Theme.icons.scale3d, label: qsTr("Scale"), action: "gizmoScale",
-                          tip: qsTr("Handles on the preview stretch the clip along its own edges") }
-                    ]
-                    delegate: IconButton {
-                        required property var modelData
-                        readonly property string key: EditorState.shortcutFor(modelData.action)
-                        glyph: modelData.glyph
-                        variant: "text"
-                        tooltip: (key.length > 0 ? qsTr("%1 (%2)").arg(modelData.label).arg(key)
-                                                 : modelData.label) + "\n" + modelData.tip
-                        Accessible.name: modelData.label
-                        active: EditorState.preview.gizmoTool === modelData.value
-                        onClicked: EditorState.preview.gizmoTool = modelData.value
-                    }
-                }
-            }
-
-            Flow {
-                visible: !!root.clipData.layer3d
-                width: parent.width
-                spacing: 6
-
-                Repeater {
-                    model: [
-                        { value: "global", label: qsTr("Global"),
-                          tip: qsTr("Gizmo follows the camera: X across, Y down, Z toward you") },
-                        { value: "local", label: qsTr("Local"),
-                          tip: qsTr("Gizmo follows the clip's own edges and face, however it is turned") }
-                    ]
-                    delegate: ThemedChip {
-                        required property var modelData
-                        text: modelData.label
-                        tooltip: modelData.tip
-                        selected: EditorState.preview.gizmoOrientation === modelData.value
-                        onClicked: EditorState.preview.gizmoOrientation = modelData.value
-                    }
-                }
-            }
-
-            PropertyKeyframeRow {
-                visible: !!root.clipData.layer3d
-                width: parent.width
-                propDef: root.propRotationX
-                keyframeList: (root.clipData.keyframes && root.clipData.keyframes.rotationX && root.clipData.keyframes.rotationX.points) || []
-                useSlider: true
-                sliderFrom: -180
-                sliderTo: 180
-                unit: "°"
-            }
-            PropertyKeyframeRow {
-                visible: !!root.clipData.layer3d
-                width: parent.width
-                propDef: root.propRotationY
-                keyframeList: (root.clipData.keyframes && root.clipData.keyframes.rotationY && root.clipData.keyframes.rotationY.points) || []
-                useSlider: true
-                sliderFrom: -180
-                sliderTo: 180
-                unit: "°"
-            }
-            PropertyKeyframeRow {
-                visible: !!root.clipData.layer3d
-                width: parent.width
-                propDef: root.propZ
-                keyframeList: (root.clipData.keyframes && root.clipData.keyframes.z && root.clipData.keyframes.z.points) || []
-                useSlider: true
-                sliderFrom: -4000
-                sliderTo: 1500
-                unit: "px"
-            }
-            PropertyKeyframeRow {
-                visible: !!root.clipData.layer3d
-                width: parent.width
-                propDef: root.propPerspective
-                keyframeList: (root.clipData.keyframes && root.clipData.keyframes.perspective && root.clipData.keyframes.perspective.points) || []
-                useSlider: true
-                sliderFrom: 200
-                sliderTo: 8000
-                unit: "px"
+            ThemedButton {
+                visible: !ShellBridge.phoneShell && (!!root.clipData.layer3d || root.isModel3d)
+                text: qsTr("Open 3D workspace")
+                tooltip: qsTr("Position, rotation, anchor point and depth occlusion are in the 3D workspace's 3D Transform panel")
+                onClicked: EditorState.preview.requestViewport3d()
             }
 
             Text {
                 visible: root.clipKind === "video"
                 text: qsTr("Fix orientation")
+                SearchAnchor {
+                    searchId: "transform-fix-orientation"
+                    title: qsTr("Fix orientation")
+                    keywords: "rotate sideways"
+                }
                 color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
@@ -646,7 +564,7 @@ Item {
                 visible: root.clipKind === "video"
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: qsTr("Corrects the source's own rotation losslessly — unlike Angle above, this changes decoding, not just the on-screen box.")
+                text: qsTr("Corrects the source's own rotation losslessly — unlike Rotation above, this changes decoding, not just the on-screen box.")
                 color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
@@ -674,6 +592,11 @@ Item {
 
             Text {
                 text: qsTr("Flip")
+                SearchAnchor {
+                    searchId: "transform-flip"
+                    title: qsTr("Flip")
+                    keywords: "mirror horizontal vertical"
+                }
                 color: Theme.c.transformInspector.foregroundMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeXs
@@ -705,7 +628,19 @@ Item {
                 }
             }
 
+            ShapeCropSection {
+                visible: root.clipKind === "video" || root.clipKind === "image"
+                width: parent.width
+            }
+
+            SearchAnchor {
+                searchId: "transform-reset-size"
+                title: qsTr("Reset position & size")
+                keywords: "fit"
+                target: transformResetButton
+            }
             ThemedButton {
+                id: transformResetButton
                 text: qsTr("Reset position & size")
                 onClicked: EditorState.resetClipTransform(
                                EditorState.selectedTrack, EditorState.selectedClip)

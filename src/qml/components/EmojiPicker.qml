@@ -7,7 +7,7 @@ import Drift
 Popup {
     id: root
 
-    signal addonManagerRequested()
+    signal extrasRequested()
     // A clip landed on the timeline. The phone shell closes the sheet this picker
     // hangs off on this.
     signal added()
@@ -92,7 +92,7 @@ Popup {
             actionVariant: "primary"
             onActionTriggered: {
                 root.close()
-                root.addonManagerRequested()
+                root.extrasRequested()
             }
         }
 
@@ -113,16 +113,14 @@ Popup {
 
         // The group row scrolls sideways rather than wrapping: nine categories would otherwise eat
         // a third of the popup before a single emoji is visible.
-        Flickable {
+        ScrollStrip {
             id: groupBar
             anchors.top: search.bottom
             anchors.topMargin: Theme.spacingMd
             anchors.left: parent.left
             anchors.right: parent.right
             height: Theme.controlHeightSm
-            contentWidth: groupRow.width
-            flickableDirection: Flickable.HorizontalFlick
-            clip: true
+            fadeColor: Theme.c.emojiPickerSurface.background
             visible: root.available && root.query.length === 0
 
             Row {

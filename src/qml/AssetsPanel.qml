@@ -42,7 +42,22 @@ PanelFrame {
         }
     }
 
-    Component.onCompleted: AssetLibrary.ensureAllMedia()
+    function applyPanelRequest() {
+        const request = ShellBridge.panelRequest
+        if (!request || request.panel !== "assets" || root.locked)
+            return
+        ShellBridge.panelRequest = null
+        root.showTab(request.tab)
+    }
+    Connections {
+        target: ShellBridge
+        function onPanelRequestChanged() { root.applyPanelRequest() }
+    }
+
+    Component.onCompleted: {
+        AssetLibrary.ensureAllMedia()
+        root.applyPanelRequest()
+    }
 
     // Imports and reports the outcome. `importUrls` skips anything it cannot
     // probe, so a bad file used to just never appear with no explanation at all.
@@ -498,6 +513,25 @@ PanelFrame {
     property int pendingProxyMatches: 0
 
     ThemedDialog {
+        id: siblingRelinkDialog
+        property int count: 0
+        property string folder: ""
+        title: qsTr("Relink other missing files?")
+        acceptText: qsTr("Relink")
+        preferredWidth: Theme.dialogWidthSm
+
+        contentItem: ThemedLabel {
+            width: parent ? parent.width : Theme.dialogWidthSm
+            wrapMode: Text.WordWrap
+            size: "sm"
+            text: qsTr("%n other missing files from the same folder were found in “%1” with the same name and size. Relink them too?", "", siblingRelinkDialog.count)
+                .arg(siblingRelinkDialog.folder)
+        }
+
+        onAccepted: EditorState.bin.relinkSiblings()
+    }
+
+    ThemedDialog {
         id: linkProxyPatternDialog
         title: qsTr("Link proxies by pattern?")
         acceptText: qsTr("Link")
@@ -647,6 +681,12 @@ PanelFrame {
             }
         }
 
+        function onSiblingRelinkAvailable(count, folder) {
+            siblingRelinkDialog.count = count
+            siblingRelinkDialog.folder = folder
+            siblingRelinkDialog.open()
+        }
+
         function onEditFinished(ok, message) {
             if (!ok) {
                 if (message && message.length > 0)
@@ -726,7 +766,7 @@ PanelFrame {
         if (tabId === "text" || tabId === "subtitles" || tabId === "speech" || tabId === "stickers" || tabId === "shapes"
                 || tabId === "effects" || tabId === "templates" || tabId === "adjustment"
                 || tabId === "sounds" || tabId === "transitions" || tabId === "masks"
-                || tabId === "scenes" || tabId === "market")
+                || tabId === "scenes")
             return false
         const kinds = kindsForTab(tabId)
         return kinds.length === 0 || kinds.indexOf(kind) >= 0
@@ -736,7 +776,6 @@ PanelFrame {
     // evaluated. Labels are translated via tabLabels below.
     property var tabLabels: ({
         "media": qsTr("Media"),
-        "market": qsTr("Market"),
         "text": qsTr("Text"),
         "subtitles": qsTr("Subtitles"),
         "speech": qsTr("Speech"),
@@ -755,8 +794,7 @@ PanelFrame {
     // tabId "sounds" is kept for favorites persistence (settings key).
     ListModel {
         id: tabsModel
-        ListElement { tabId: "media"; icon: 0; separatorAfter: false }
-        ListElement { tabId: "market"; icon: 12; separatorAfter: true }
+        ListElement { tabId: "media"; icon: 0; separatorAfter: true }
         ListElement { tabId: "text"; icon: 1; separatorAfter: false }
         ListElement { tabId: "subtitles"; icon: 2; separatorAfter: false }
         ListElement { tabId: "speech"; icon: 13; separatorAfter: false }
@@ -785,7 +823,7 @@ PanelFrame {
         Theme.icons.store,
         Theme.icons.micVocal
     ]
-    property int activeTab: locked ? tabIndexOf(lockedTab) : 0
+    property int activeTab: locked ? tabIndexOf(lockedTab) : tabIndexOf(LayoutMemory.layoutString("assets/tab", "media"))
     readonly property string currentTabId: tabsModel.get(activeTab).tabId
 
     // Per-tab view state that outlives the tab being unloaded, keyed by tabId. Plain
@@ -818,7 +856,18 @@ PanelFrame {
     // double-count height and jump the layout mid-transition.
     property real tabOpacity: 1.0
 
+    // Rail width is saved in tab-cell units so it follows UI scale. The window can
+    // only clamp what is shown; the saved value is rewritten by a drag alone.
+    property real railUnits: Math.max(1, LayoutMemory.layoutNumber("assets/railUnits", 1))
+    property real railDragWidth: -1
+    readonly property real maxRailWidth: Math.max(Theme.tabRailWidth,
+        root.width - Theme.assetCardWidth * 2 - Theme.pagePadding * 2)
+    readonly property real railWidth: Math.max(Theme.tabRailWidth,
+        Math.min(maxRailWidth, railDragWidth >= 0 ? railDragWidth : railUnits * Theme.tabRailWidth))
+
     onActiveTabChanged: {
+        if (!root.locked)
+            LayoutMemory.setLayoutString("assets/tab", root.currentTabId)
         root.tabOpacity = 0
         tabFadeIn.restart()
     }
@@ -860,6 +909,7 @@ PanelFrame {
         AssetsPanelTabRail {
             id: tabRail
             sheetMode: root.railHidden
+            railWidth: root.railWidth
             activeTab: root.activeTab
             tabCount: tabsModel.count
             tabLabels: root.tabLabels
@@ -873,11 +923,32 @@ PanelFrame {
             height: parent.height
             visible: !root.railHidden
             color: Theme.c.assetsPanel.railBorder
+
+            MouseArea {
+                anchors.fill: parent
+                anchors.leftMargin: -Theme.spacingXs
+                anchors.rightMargin: -Theme.spacingXs
+                cursorShape: Qt.SplitHCursor
+                preventStealing: true
+                onPositionChanged: (mouse) => {
+                    if (!pressed)
+                        return
+                    root.railDragWidth = Math.max(Theme.tabRailWidth,
+                        Math.min(root.maxRailWidth, mapToItem(tabRail, mouse.x, 0).x))
+                }
+                onReleased: {
+                    if (root.railDragWidth < 0)
+                        return
+                    root.railUnits = root.railDragWidth / Theme.tabRailWidth
+                    root.railDragWidth = -1
+                    LayoutMemory.setLayoutNumber("assets/railUnits", root.railUnits)
+                }
+            }
         }
 
         Column {
             id: assetsContent
-            width: parent.width - (root.railHidden ? 0 : (Theme.tabRailWidth + Theme.c.assetsPanel.borderWidth))
+            width: parent.width - (root.railHidden ? 0 : (tabRail.width + Theme.c.assetsPanel.borderWidth))
             height: parent.height
 
             AssetsPanelHeader {
@@ -903,9 +974,9 @@ PanelFrame {
                 id: emojiPicker
                 // Hangs off the stickers search bar's + at the panel's right edge, and slides back
                 // rather than running off-window when the panel is dragged narrow.
-                x: Math.max(root.railHidden ? 0 : -Theme.tabRailWidth, assetsContent.width - width - Theme.pagePadding)
+                x: Math.max(root.railHidden ? 0 : -tabRail.width, assetsContent.width - width - Theme.pagePadding)
                 y: assetsHeader.height + Theme.pagePadding + Theme.controlHeight + 4
-                onAddonManagerRequested: ShellBridge.main.openAddonManager("stickers")
+                onExtrasRequested: ShellBridge.main.openAddonManager("stickers")
                 onAdded: root.addCompleted()
             }
 
@@ -916,6 +987,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     TextAssetsTab {
@@ -935,6 +1007,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     SubtitlesTab {
@@ -948,6 +1021,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     SpeechTab { }
@@ -959,6 +1033,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     SoundsTab {
@@ -974,6 +1049,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     StickersTab {
@@ -992,6 +1068,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     ShapesTab {
@@ -1008,6 +1085,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     ScenesTab {
@@ -1029,6 +1107,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     MasksTab {
@@ -1042,6 +1121,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     EffectBrowser {
@@ -1057,6 +1137,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     EffectTemplateBrowser {
@@ -1072,6 +1153,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     TransitionsTab {
@@ -1089,6 +1171,7 @@ PanelFrame {
                 visible: active
                 width: parent.width
                 height: parent.height - assetsHeader.height
+                clip: true
                 opacity: root.tabOpacity
                 sourceComponent: Component {
                     MediaAssetsTab {
@@ -1131,32 +1214,6 @@ PanelFrame {
                         onExpandedFolderIdsChanged: root.rememberTab("media", "expandedFolderIds", expandedFolderIds)
                         onSelectedAssetIdsChanged: root.rememberTab("media", "selectedAssetIds", selectedAssetIds)
                         onSelectionAnchorIdChanged: root.rememberTab("media", "selectionAnchorId", selectionAnchorId)
-                    }
-                }
-            }
-
-            Loader {
-                active: root.currentTabId === "market"
-                visible: active
-                width: parent.width
-                height: parent.height - assetsHeader.height
-                opacity: root.tabOpacity
-                sourceComponent: Component {
-                    MarketTab {
-                        // Filter values are not restored: the filter fields and dropdowns
-                        // don't read them back, so restored filters would be invisible.
-                        Component.onCompleted: {
-                            const saved = root.tabState["market"] || {}
-                            if (saved.search)
-                                searchText = saved.search
-                            if (saved.submittedQuery)
-                                submittedQuery = saved.submittedQuery
-                            if (saved.section)
-                                section = saved.section
-                        }
-                        onSearchTextChanged: root.rememberTab("market", "search", searchText)
-                        onSubmittedQueryChanged: root.rememberTab("market", "submittedQuery", submittedQuery)
-                        onSectionChanged: root.rememberTab("market", "section", section)
                     }
                 }
             }

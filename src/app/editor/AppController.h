@@ -1,32 +1,22 @@
 #pragma once
 
-#include "core/effects/EffectStackStore.h"
-#include "core/project/Project.h"
-#include "core/text/animation/TextAnimationPreset.h"
 #include "core/edit/TimelineOps.h"
-#include "core/base/Time.h"
+#include "core/edit/commands/ProjectCommands.h"
 #include "engine/audio/analysis/AudioOnsets.h"
-#include "engine/ml/vision/detection/SceneDetect.h"
-#include "engine/compositor/layers/TransformLayer.h"
 #include "engine/media/thumbnails/FilmstripTileCache.h"
-#include "engine/media/waveforms/MediaWaveform.h"
 #include "engine/media/waveforms/WaveformBlockCache.h"
-#include "engine/project/ProjectBundle.h"
 #include "app/editor/TimelineClipsModel.h"
-#include "app/bin/AssetLibrary.h"
-#include "app/online/CloudProviders.h"
+#include "app/mcp/tools/McpMarket.h"
 #include "core/project/GuideSet.h"
-
 #include <QAtomicInt>
 #include <QColor>
 #include <QCursor>
-#include <QImage>
+#include <QElapsedTimer>
 #include <QFuture>
 #include <QHash>
+#include <QImage>
 #include <QJsonObject>
-#include <QMatrix4x4>
 #include <QMediaDevices>
-#include <QElapsedTimer>
 #include <QObject>
 #include <QPair>
 #include <QSet>
@@ -39,50 +29,51 @@
 
 #include <atomic>
 #include <functional>
-#include <QSharedPointer>
-#include <QMap>
-
 #include <memory>
-#include <optional>
 #include <optional>
 
 struct EffectTemplateEntry;
 struct MediaInfo;
 
+class AssetLibrary;
+class CloudProviders;
+class MediaBinController;
+class SourceLabController;
+class PreviewController;
+class AssetPreviewController;
+class CurveEditorController;
+class KeyframeController;
+class MaskingController;
+class SubtitleController;
+class ColorController;
+class DenoiseController;
+class AudioAlignController;
+class DepthController;
+class FaceTrackingController;
+class McpController;
+class RestoreController;
+class SceneDetectController;
+class SegmentationController;
+class StabilizeController;
+class TrackingController;
+class TtsController;
+class VoiceLibrary;
+class SpeedCurveController;
+class PreferencesController;
+class ProjectFileController;
 class QTimer;
 class AddonManager;
-class MarketClient;
 class JobRegistry;
 
 namespace drift {
 struct MediaEditSpec;
+struct EffectStackPreset;
+struct TextAnimationPreset;
+struct TransformParent;
 }
 
-#include "engine/audio/AudioRecorder.h"
 #include "playback/PlaybackEngine.h"
-#include "ui/preview/PreviewController.h"
-#include "app/bin/AssetPreviewController.h"
-#include "app/editor/sessions/CurveEditorController.h"
-#include "app/editor/sessions/KeyframeController.h"
-#include "app/editor/sessions/MaskingController.h"
-#include "app/editor/sessions/SubtitleController.h"
-#include "app/color/ColorController.h"
-#include "app/jobs/audio/DenoiseController.h"
-#include "app/jobs/vision/DepthController.h"
-#include "app/jobs/vision/FaceTrackingController.h"
-#include "app/mcp/McpController.h"
-#include "app/jobs/vision/RestoreController.h"
-#include "app/jobs/vision/SceneDetectController.h"
-#include "app/jobs/vision/SegmentationController.h"
-#include "app/bin/MediaBinController.h"
-#include "app/bin/SourceLabController.h"
-#include "app/jobs/vision/StabilizeController.h"
-#include "app/jobs/vision/TrackingController.h"
-#include "app/jobs/audio/TtsController.h"
-#include "app/jobs/audio/VoiceLibrary.h"
-#include "app/editor/sessions/SpeedCurveController.h"
-#include "app/editor/PreferencesController.h"
-#include "app/editor/ProjectFileController.h"
+#include "engine/audio/AudioRecorder.h"
 
 // QML-facing controller over the core project model and undo stack.
 class AppController : public QObject
@@ -102,9 +93,11 @@ class AppController : public QObject
     friend class SceneDetectController;
     friend class DepthController;
     friend class DenoiseController;
+    friend class AudioAlignController;
     friend class ColorController;
     friend class KeyframeController;
     friend class MaskingController;
+    friend class MaskEditSession;
     friend class SubtitleController;
     friend class RestoreController;
     friend class FaceTrackingController;
@@ -114,6 +107,33 @@ class AppController : public QObject
     friend class SourceLabController;
     friend class TtsController;
     friend class VoiceLibrary;
+
+    Q_MOC_INCLUDE("app/bin/AssetLibrary.h")
+    Q_MOC_INCLUDE("app/online/CloudProviders.h")
+    Q_MOC_INCLUDE("app/bin/MediaBinController.h")
+    Q_MOC_INCLUDE("app/bin/SourceLabController.h")
+    Q_MOC_INCLUDE("ui/preview/PreviewController.h")
+    Q_MOC_INCLUDE("app/bin/AssetPreviewController.h")
+    Q_MOC_INCLUDE("app/editor/sessions/CurveEditorController.h")
+    Q_MOC_INCLUDE("app/editor/sessions/KeyframeController.h")
+    Q_MOC_INCLUDE("app/editor/sessions/MaskingController.h")
+    Q_MOC_INCLUDE("app/editor/sessions/SubtitleController.h")
+    Q_MOC_INCLUDE("app/color/ColorController.h")
+    Q_MOC_INCLUDE("app/jobs/audio/DenoiseController.h")
+    Q_MOC_INCLUDE("app/jobs/audio/AudioAlignController.h")
+    Q_MOC_INCLUDE("app/jobs/vision/DepthController.h")
+    Q_MOC_INCLUDE("app/jobs/vision/FaceTrackingController.h")
+    Q_MOC_INCLUDE("app/mcp/McpController.h")
+    Q_MOC_INCLUDE("app/jobs/vision/RestoreController.h")
+    Q_MOC_INCLUDE("app/jobs/vision/SceneDetectController.h")
+    Q_MOC_INCLUDE("app/jobs/vision/SegmentationController.h")
+    Q_MOC_INCLUDE("app/jobs/vision/StabilizeController.h")
+    Q_MOC_INCLUDE("app/jobs/vision/TrackingController.h")
+    Q_MOC_INCLUDE("app/jobs/audio/TtsController.h")
+    Q_MOC_INCLUDE("app/jobs/audio/VoiceLibrary.h")
+    Q_MOC_INCLUDE("app/editor/sessions/SpeedCurveController.h")
+    Q_MOC_INCLUDE("app/editor/PreferencesController.h")
+    Q_MOC_INCLUDE("app/editor/ProjectFileController.h")
 
     Q_OBJECT
 
@@ -143,6 +163,8 @@ class AppController : public QObject
     Q_PROPERTY(DepthController *depth READ depth CONSTANT)
     // Noise removal for a clip's audio. QML: EditorState.denoise.
     Q_PROPERTY(DenoiseController *denoise READ denoise CONSTANT)
+    // Silence removal and audio sync. QML: EditorState.audioAlign.
+    Q_PROPERTY(AudioAlignController *audioAlign READ audioAlign CONSTANT)
     // Colour grade, finishing effects and looks. QML: EditorState.color.
     Q_PROPERTY(ColorController *color READ color CONSTANT)
     // Keyframe panel editing and clip property rows. QML: EditorState.keyframes.
@@ -253,6 +275,7 @@ class AppController : public QObject
     Q_PROPERTY(bool exportByAgent READ exportByAgent NOTIFY exportInProgressChanged)
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY exportProgressChanged)
     Q_PROPERTY(bool canShareExport READ canShareExport NOTIFY canShareExportChanged)
+    Q_PROPERTY(QVariantList exportHistory READ exportHistory NOTIFY exportHistoryChanged)
     Q_PROPERTY(bool subtitleGenerating READ subtitleGenerating NOTIFY subtitleGeneratingChanged)
     Q_PROPERTY(double subtitleGenProgress READ subtitleGenProgress NOTIFY subtitleGenProgressChanged)
     Q_PROPERTY(QString subtitleGenStatus READ subtitleGenStatus NOTIFY subtitleGenStatusChanged)
@@ -335,6 +358,7 @@ public:
     struct ParsedProject {
         drift::Project project;
         QJsonObject root;
+        std::optional<drift::StoredHistory> history;
     };
     static std::optional<ParsedProject> parseProjectJson(const QByteArray &data, QString *error);
     static std::optional<ParsedProject> parseProjectJson(const QJsonObject &root, QString *error);
@@ -354,6 +378,7 @@ public:
     SceneDetectController *scenes() const { return m_sceneDetect; }
     DepthController *depth() const { return m_depth; }
     DenoiseController *denoise() const { return m_denoise; }
+    AudioAlignController *audioAlign() const { return m_audioAlign; }
     ColorController *color() const { return m_color; }
     KeyframeController *keyframes() const { return m_keyframes; }
     MaskingController *masking() const { return m_masking; }
@@ -455,6 +480,7 @@ public:
     void setExportRequestedByAgent(bool byAgent) { m_exportRequestedByAgent = byAgent; }
     double exportProgress() const;
     bool canShareExport() const;
+    QVariantList exportHistory() const;
     bool subtitleGenerating() const { return m_subtitleGenerating; }
     double subtitleGenProgress() const { return m_subtitleGenProgress; }
     QString subtitleGenStatus() const { return m_subtitleGenStatus; }
@@ -571,8 +597,8 @@ public:
                                        const QString &undoText);
 
     void setAddonManager(AddonManager *manager);
-    void setMarketClient(MarketClient *client) { m_marketClient = client; }
-    MarketClient *marketClient() const { return m_marketClient; }
+    void setMarketplace(const McpMarketContext &context) { m_marketplace = context; }
+    const McpMarketContext &marketplace() const { return m_marketplace; }
     AddonManager *addonManager() const { return m_addonManager; }
     // Strip chip click — folds `prop`'s curve away, or brings it back. Purely a view filter: the
     // chip stays put either way, and the animation keeps playing while it is hidden.
@@ -614,7 +640,10 @@ public:
     // Bin-preview orientation for a video asset (absolute 0/90/180/270; -1 = the file's own tag),
     // as one undoable edit — AssetLibrary::setAssetRotation on its own leaves no undo entry.
     Q_INVOKABLE bool setAssetRotation(int assetIndex, int degrees);
-    Q_INVOKABLE bool setClipSourceFrame(const QString &clipId, double x, double y, double w, double h);
+    // Crop a video/image clip to a normalised source window, as one undoable edit. `angle` is the
+    // straighten (Clip::sourceFrameAngle); NaN, the default, keeps the clip's current one.
+    Q_INVOKABLE bool setClipSourceFrame(const QString &clipId, double x, double y, double w, double h,
+                                        double angle = qQNaN());
     Q_INVOKABLE bool trackAcceptsAsset(int trackIndex, int assetIndex) const;
     Q_INVOKABLE QString trackTypeForAsset(int assetIndex) const;
     // The same two questions asked of a bare media kind ("video", "audio", "image", ...) rather
@@ -675,7 +704,7 @@ public:
     Q_INVOKABLE void clearClipSpeedCurve(int trackIndex, int clipIndex);
 
     Q_INVOKABLE void setTransitionEasing(int trackIndex, const QString &transitionId,
-                                         const QString &curve);
+                                         const QString &curve, const QVariantList &handles = {});
 
 
     // Whether the optional object-labelling pass can run. False until the object-model
@@ -730,15 +759,18 @@ public:
     Q_INVOKABLE QVariantList builtinShapes() const;
     Q_INVOKABLE QVariantList builtinShapeCategories() const;
     // The scene camera as the preview's camera overlay needs it: {active, track, clip} plus the
-    // seven values, all at the playhead. Taken once when a drag starts, so the drag solves from a
+    // camera values (eye, rotation, point of interest, zoom), all at the playhead. Taken once when a drag starts, so the drag solves from a
     // fixed starting point instead of accumulating its own rounding.
     Q_INVOKABLE QVariantMap cameraStateAtPlayhead() const;
     // The same at any time. With trackIndex >= 0 it reads that camera clip even when it does not
     // cover `seconds` (its keys clamp to the clip's ends); otherwise the camera covering `seconds`.
     // Adds start/dur (the clip's span, seconds) and eye:[x,y,z], the viewpoint in world px.
     QVariantMap cameraStateAt(double seconds, int trackIndex = -1, int clipIndex = -1) const;
-    // Where a clip's centre sits in the camera's world (canvas px about the canvas centre, y down,
-    // +z toward the viewer) at `seconds`. Ignores any transform-layer parent.
+    Q_INVOKABLE double cameraZoomFromFocalLength(double millimetres) const;
+    Q_INVOKABLE double cameraZoomFromFov(double degrees) const;
+    Q_INVOKABLE void setCameraAimAtTarget(int trackIndex, int clipIndex, bool enabled);
+    // Where a clip's centre sits in the 3D world (canvas px from the top-left, y down, +z away from
+    // the viewer) at `seconds`. Ignores any transform-layer parent.
     QVariantList clipWorldCentreAt(int trackIndex, int clipIndex, double seconds) const;
 
     // Asset drag-and-drop. One resolver for every kind a browser can lift (AssetDrag.qml has
@@ -789,7 +821,7 @@ public:
     // Folds every committed edit between the two calls into one undo step, for controls that
     // write through plain setters (a scrubbed number field). Nothing is pushed if nothing changed.
     Q_INVOKABLE void beginEditGroup();
-    Q_INVOKABLE void endEditGroup(const QString &undoText);
+    Q_INVOKABLE bool endEditGroup(const QString &undoText);
     Q_INVOKABLE void applyCanvasCrop(double x, double y, double width, double height);
     Q_INVOKABLE bool timelineHasVisualClips() const;
     Q_INVOKABLE bool shouldConfigureProjectForAsset(int assetIndex) const;
@@ -797,7 +829,10 @@ public:
     bool projectLayoutChosen() const { return m_projectLayoutChosen; }
     Q_INVOKABLE void markProjectLayoutChosen();
     Q_INVOKABLE void selectClip(int trackIndex, int clipIndex);
-    void selectClipUnderPlayhead();
+    Q_INVOKABLE void selectClipUnderPlayhead();
+    // [track, clip] of the clip with this id, or [] when it is gone. Indices shift as clips are
+    // added and removed; ids do not.
+    Q_INVOKABLE QVariantList locateClip(const QString &clipId) const;
     Q_INVOKABLE void addToSelection(int trackIndex, int clipIndex);
     Q_INVOKABLE void setSelection(const QVariantList &pairs);
     Q_INVOKABLE void selectAllClips();
@@ -807,10 +842,19 @@ public:
     Q_INVOKABLE QVariantMap activeAudioClipAtPlayhead() const;
     Q_INVOKABLE double sourceTimeAtPlayhead() const;
     Q_INVOKABLE double sourceTimeForClip(const QVariantMap &clip) const;
+    // Source seconds under the playhead for a placed clip, held at the nearest edge frame when the
+    // playhead is outside it. Honours trim, speed, reverse and speed curves.
+    Q_INVOKABLE double sourceTimeAtPlayheadForClip(int trackIndex, int clipIndex) const;
     Q_INVOKABLE void deleteSelectedClip();
     Q_INVOKABLE void duplicateSelectedClip();
     Q_INVOKABLE void moveClip(int trackIndex, int clipIndex, double newStart);
     Q_INVOKABLE void moveClipToTrack(int trackIndex, int clipIndex, int newTrackIndex, double newStart);
+    // Other tracks that would take this clip, as {index, name}; name is the user's label or empty.
+    Q_INVOKABLE QVariantList compatibleTracksForClip(int trackIndex, int clipIndex) const;
+    // Library assets this clip's media can be swapped for, as {assetIndex, name, kind, duration,
+    // thumbnail}. Empty for anything that is not a plain video, image or audio clip.
+    Q_INVOKABLE QVariantList replaceCandidatesForClip(int trackIndex, int clipIndex) const;
+    Q_INVOKABLE bool replaceClipMedia(int trackIndex, int clipIndex, int assetIndex);
     // Shifts every clip on `trackIndex` starting at/after `gapStartSeconds` left by the
     // width of the gap immediately following that position, closing it. Linked partner
     // clips on other tracks (e.g. a companion audio clip) follow along to stay in sync.
@@ -1014,6 +1058,10 @@ public:
     // its linked partners) into a new sequence and leaves a composite clip in its place.
     Q_INVOKABLE bool canMakeCompositeFromSelection() const;
     Q_INVOKABLE void makeCompositeFromSelection();
+    // Turns a composite back into its own clips at their original times. The composite's effects,
+    // transform, fades and keyframes are discarded; ramped, reversed and non-1x composites refuse.
+    Q_INVOKABLE bool canDissolveComposite(int trackIndex, int clipIndex) const;
+    Q_INVOKABLE void dissolveComposite(int trackIndex, int clipIndex);
 
     // Transform layers: a Range adjustment track whose Transform clips move, scale, rotate, tilt
     // and fade every visual track from just below it down to its span end, as one.
@@ -1151,8 +1199,10 @@ public:
     Q_INVOKABLE QVariantMap inspectPdf(const QString &path) const;
     Q_INVOKABLE QVariantMap inspectPdfClip(int trackIndex, int clipIndex) const;
     Q_INVOKABLE void setClipFade(int trackIndex, int clipIndex, double fadeInSeconds, double fadeOutSeconds);
-    Q_INVOKABLE void setClipFadeCurve(int trackIndex, int clipIndex, const QString &curve);
-    // which: "animIn" | "animOut". Partial patch: kind / duration / curve (or legacy ease).
+    Q_INVOKABLE void setClipFadeCurve(int trackIndex, int clipIndex, const QString &curve,
+                                      const QVariantList &handles = {});
+    // which: "animIn" | "animOut". Partial patch: kind / duration / curve (or legacy ease) /
+    // handles ([x1, y1, x2, y2] for the bezier curve).
     Q_INVOKABLE void setClipAnimation(int trackIndex, int clipIndex, const QString &which,
                                       const QVariantMap &patch);
     // linkedAudio: also add the same transition between the two clips' linked audio, when they sit
@@ -1226,6 +1276,8 @@ public:
     // Curve-editor easing, addressed by key time. A spec is an EasingSpec::toJson() map. The
     // `preview` variant skips the undo entry; the QML wraps it in begin/commitPreviewDrag.
     Q_INVOKABLE QVariantList easingPresets() const;
+    // Named non-bezier curves for a place that picks one: "fade" or "text". {id, label, samples}.
+    Q_INVOKABLE QVariantList curveStyles(const QString &domain) const;
     Q_INVOKABLE QVariantList easingSamples(const QVariantMap &spec, int n) const;
     Q_INVOKABLE QVariantMap keyframeSegmentEasing(int trackIndex, int clipIndex, const QString &prop,
                                                   double atSeconds) const;
@@ -1392,6 +1444,8 @@ public:
     Q_INVOKABLE void moveTrack(int fromIndex, int toIndex);
     Q_INVOKABLE void addTrack(const QString &type);
     Q_INVOKABLE void removeTrack(int trackIndex);
+    Q_INVOKABLE int removeEmptyTracks();
+    Q_INVOKABLE bool hasEmptyTracks() const;
     Q_INVOKABLE void addBookmark(double seconds, const QString &label);
     Q_INVOKABLE void removeBookmark(int index);
     Q_INVOKABLE void updateBookmark(int index, double seconds, const QString &label);
@@ -1415,6 +1469,9 @@ public:
     Q_INVOKABLE void clearWorkArea();
     Q_INVOKABLE void toggleLoopWorkArea();
     Q_INVOKABLE void freezeFrameAtPlayhead();
+    Q_INVOKABLE void previewClipRange(int trackIndex, int clipIndex);
+    Q_INVOKABLE void clearPreviewRange();
+    Q_INVOKABLE QVariantMap clipTimelineRange(int track, int clip) const;
     Q_INVOKABLE void copySelection();
     Q_INVOKABLE void cutSelection();
     Q_INVOKABLE void pasteAtPlayhead();
@@ -1558,6 +1615,10 @@ public:
     // Same publish-to-gallery step as shareLastExport, handed to a player instead of a share
     // sheet. Shares the m_sharingExport guard, so the two cannot run the copy twice at once.
     Q_INVOKABLE void playLastExport();
+    Q_INVOKABLE void removeExport(const QString &uri);
+    // shareLastExport / playLastExport for any export-history entry (uri from exportHistory).
+    Q_INVOKABLE void shareFile(const QString &uri);
+    Q_INVOKABLE void viewFile(const QString &uri);
     // Copies a file into the shared media collection (Movies/Music/Pictures under "Drift") so it
     // outlives the app's own storage. Marketplace downloads land in AppDataLocation, which is gone
     // on uninstall or a "clear data" and invisible to every file manager — for something the user
@@ -1628,6 +1689,7 @@ signals:
     void exportInProgressChanged();
     void exportProgressChanged();
     void canShareExportChanged();
+    void exportHistoryChanged();
     // `location` is a human-readable folder ("Movies/Drift"), empty when ok is false.
     void savedToGallery(const QString &displayName, bool ok, const QString &location,
                         const QString &error);
@@ -1897,6 +1959,8 @@ protected:
     // Select the clip with this id. Pinning a mask inserts a lane and normalization reorders, so
     // an index captured before the edit is stale by the time there is something to select.
     void selectClipById(const QString &clipId);
+    // An adjustment clip carrying `effectId` (empty for none), not yet placed on any track.
+    drift::Clip buildAdjustmentClip(const QString &effectId, drift::TimeUs start, drift::TimeUs durUs) const;
     // Re-establishes the two structural invariants the adjustment model rests on: no stack sits
     // on a media clip, and every lane is adjacent to and directly above its parent. Both passes
     // can insert or reorder tracks, so the selection is carried across by id. Idempotent and
@@ -1925,6 +1989,8 @@ protected:
     QString trackIdAt(int trackIndex) const;
     QList<QPair<QString, int>> captureSelectionByTrackId() const;
     void restoreSelectionByTrackId(const QList<QPair<QString, int>> &captured);
+    void captureSelectionClipIds();
+    void restoreSelectionClipIds();
     int assetIndexForClip(const drift::Clip &clip) const;
     drift::TimeUs clipDurationForAssetIndex(int assetIndex) const;
     // The absolute orientation (0/90/180/270) a video clip's frames come out at: its file's own
@@ -1961,6 +2027,8 @@ protected:
     void restoreFilmstripsAfterLoad();
     void normalizeSelection();
     bool isValidClipIndex(int trackIndex, int clipIndex) const;
+    // Indices of the tracks removeEmptyTracks() would delete, ascending.
+    QList<int> removableEmptyTrackIndices() const;
     // Adds a video Drift rendered to the bin as one undoable edit; returns its asset id.
     QString addRenderedVideoAsset(const QString &path, const QString &name,
                                   const QString &folderId, const MediaInfo &info,
@@ -1989,6 +2057,16 @@ protected:
     void rememberExportChoice(const QString &outputPath, const QVariantMap &settings);
     QJsonObject sessionJson() const;
     QString historyHashAt(int stackIndex) const;
+    // Every file a project state reachable by undo/redo points at, so cleanup does not take
+    // media the history still needs.
+    QSet<QString> historyMediaPaths() const;
+public:
+    // The "undoHistory" member of a saved document: states as plain JSON, deduplicated, plus the
+    // media they reference. Reads only the capture, so a worker can run it. `states` receives one
+    // entry per distinct state.
+    static QJsonObject historyJson(const drift::HistoryCapture &capture,
+                                   QList<drift::HistoryStatePtr> *states = nullptr);
+protected:
     int historyIndexForHash(const QString &prefix) const;
     QByteArray historyJsonAt(int stackIndex) const;
     static QString historySnapshotDir();
@@ -1996,7 +2074,7 @@ protected:
 
     AssetLibrary *m_assetLibrary = nullptr;
     AddonManager *m_addonManager = nullptr;
-    MarketClient *m_marketClient = nullptr;
+    McpMarketContext m_marketplace;
     JobRegistry *m_jobs = nullptr;
     CloudProviders *m_cloud = nullptr;
     // These trees must outlive m_playback: the compositor thread holds a bare
@@ -2067,6 +2145,8 @@ protected:
     QFuture<void> m_exportFuture;
     QUrl m_lastExportUrl;
     QString m_lastExportName;
+    void recordExport(const QUrl &url, double durationSeconds, qint64 sizeBytes, const QString &thumbnail);
+    void openExportedFile(const QString &uri, bool share);
     // Android: the publish-to-gallery copy behind Share is on a worker, so canShareExport reports
     // false while it runs — that both hides the button (the dialog binds its visibility to it) and
     // stops a second tap from starting the copy again. Unused on desktop.
@@ -2120,6 +2200,10 @@ protected:
     int m_selectedTransitionTrack = -1;
     int m_selectedTransitionLeftClip = -1;
     QList<QPair<int, int>> m_selection;
+    mutable QString m_capturedPrimaryClipId;
+    QStringList m_undoSelectionIds;
+    QString m_undoPrimaryId;
+    bool m_undoSelectionCaptured = false;
     int m_selectionRevision = 0;
     int m_timelineTrimCursorSide = 0;
     int m_timelineTrimCursorHeight = 0;
@@ -2140,6 +2224,7 @@ protected:
     SceneDetectController *m_sceneDetect = nullptr;
     DepthController *m_depth = nullptr;
     DenoiseController *m_denoise = nullptr;
+    AudioAlignController *m_audioAlign = nullptr;
     ColorController *m_color = nullptr;
     KeyframeController *m_keyframes = nullptr;
     MaskingController *m_masking = nullptr;
@@ -2211,6 +2296,7 @@ protected:
     // Set while commitPreviewDrag finishes a drag that left the selection on the same clip:
     // finishEdit then skips selectionChanged.
     bool m_quietSelection = false;
+    void writeClipSourceFrame(int t, int c, const QRectF &frame, double turn);
     void emitPreviewFrame();
     void emitPreviewEdit(int trackIndex, int clipIndex, const QStringList &keys);
     void beginImplicitPreviewDrag(const QString &undoText);
@@ -2282,6 +2368,4 @@ protected:
     static QString newFreezeFramePath(const QString &projectId);
 
     void setProjectLayoutChosen(bool chosen);
-
-    static constexpr int kMaxUndoSteps = 50;
 };

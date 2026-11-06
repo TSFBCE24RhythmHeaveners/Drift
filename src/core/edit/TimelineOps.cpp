@@ -1,9 +1,13 @@
 #include "core/edit/TimelineOps.h"
 
+#include "core/edit/MaskSpace.h"
+
 #include <QUuid>
+#include <QtMath>
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <optional>
 
 namespace drift {
@@ -252,7 +256,7 @@ int adjustmentLaneParentIndex(const Project &project, int laneIndex)
 }
 
 int ensureAdjustmentLane(Project &project, int parentIndex, AdjustmentKind kind, TimeUs startUs,
-                         TimeUs durationUs)
+                         TimeUs durationUs, bool visibleOnly)
 {
     if (parentIndex < 0 || parentIndex >= project.tracks().size())
         return -1;
@@ -266,6 +270,8 @@ int ensureAdjustmentLane(Project &project, int parentIndex, AdjustmentKind kind,
 
     for (const int laneIndex : adjustmentLaneIndexes(project, parentIndex)) {
         const Track &lane = project.tracks().at(laneIndex);
+        if (visibleOnly && lane.hidden)
+            continue;
         if (!lane.clips.isEmpty() && lane.clips.first().adjustmentKind != kind)
             continue;
         bool collides = false;
@@ -361,6 +367,8 @@ QList<LaneMask> laneMasksAt(const Project &project, int trackIndex, TimeUs timel
                 adjustment.id, adjustment.timelineStart, adjustment.srcIn});
         }
     }
+    std::stable_partition(result.begin(), result.end(),
+                          [](const LaneMask &m) { return m.mask.cropShape.isEmpty(); });
     return result;
 }
 
@@ -416,6 +424,179 @@ void setLinkedMask(Project &project, int trackIndex, int clipIndex, const Mask &
     appendToMaskLane(project, trackIndex,
                      makeMaskAdjustment(mask, source.id, source.timelineStart,
                                         source.timelineDuration));
+}
+
+QStringList clipShapeIds()
+{
+    return {QStringLiteral("original"), QStringLiteral("circle"),   QStringLiteral("ellipse"),
+            QStringLiteral("triangle"), QStringLiteral("square"),   QStringLiteral("diamond"),
+            QStringLiteral("pentagon"), QStringLiteral("hexagon"),  QStringLiteral("octagon"),
+            QStringLiteral("star"),     QStringLiteral("heart")};
+}
+
+Mask clipShapeMask(const QString &id, double hostW, double hostH)
+{
+    Mask mask;
+    mask.op = MaskOp::Intersect;
+    mask.cropShape = id;
+    hostW = qMax(1.0, hostW);
+    hostH = qMax(1.0, hostH);
+    const double side = qMin(hostW, hostH);
+    const double w = side / hostW;
+    const double h = side / hostH;
+
+    const auto polygon = [&](int sides, double rotationDeg) {
+        mask.shape = MaskShape::Freeform;
+        const double start = qDegreesToRadians(rotationDeg - 90.0);
+        for (int i = 0; i < sides; ++i) {
+            const double a = start + i * 2.0 * M_PI / sides;
+            mask.points.append(QPointF(0.5 + 0.5 * w * std::cos(a), 0.5 + 0.5 * h * std::sin(a)));
+        }
+    };
+
+    if (id == QLatin1String("ellipse")) {
+        mask.shape = MaskShape::Ellipse;
+        mask.w = mask.h = 1.0;
+    } else if (id == QLatin1String("circle")) {
+        mask.shape = MaskShape::Ellipse;
+        mask.w = w;
+        mask.h = h;
+    } else if (id == QLatin1String("square")) {
+        mask.shape = MaskShape::Rectangle;
+        mask.w = w;
+        mask.h = h;
+    } else if (id == QLatin1String("heart")) {
+        mask.shape = MaskShape::Heart;
+        mask.w = w;
+        mask.h = h;
+    } else if (id == QLatin1String("triangle")) {
+        polygon(3, 0.0);
+    } else if (id == QLatin1String("diamond")) {
+        polygon(4, 0.0);
+    } else if (id == QLatin1String("pentagon")) {
+        polygon(5, 0.0);
+    } else if (id == QLatin1String("hexagon")) {
+        polygon(6, 0.0);
+    } else if (id == QLatin1String("octagon")) {
+        polygon(8, 22.5);
+    } else if (id == QLatin1String("star")) {
+        mask.shape = MaskShape::Freeform;
+        for (int i = 0; i < 10; ++i) {
+            const double a = qDegreesToRadians(-90.0 + i * 36.0);
+            const double r = i % 2 == 0 ? 1.0 : 0.4;
+            mask.points.append(QPointF(0.5 + 0.5 * w * r * std::cos(a), 0.5 + 0.5 * h * r * std::sin(a)));
+        }
+    }
+    return mask;
+}
+
+QString linkedClipShape(const Project &project, int trackIndex, int clipIndex)
+{
+    for (const ClipRef &ref : linkedMaskAdjustments(project, trackIndex, clipIndex)) {
+        const QString &id = project.tracks().at(ref.trackIndex).clips.at(ref.clipIndex).mask.cropShape;
+        if (!id.isEmpty())
+            return id;
+    }
+    return QStringLiteral("original");
+}
+
+void setLinkedClipShape(Project &project, int trackIndex, int clipIndex, const QString &id)
+{
+    if (trackIndex < 0 || trackIndex >= project.tracks().size())
+        return;
+    if (clipIndex < 0 || clipIndex >= project.tracks().at(trackIndex).clips.size())
+        return;
+
+    project.ensureTrackIds();
+    const Clip host = project.tracks().at(trackIndex).clips.at(clipIndex);
+    const QString hostTrackId = project.tracks().at(trackIndex).id;
+
+    QStringList emptiedLaneIds;
+    const QList<ClipRef> existing = linkedMaskAdjustments(project, trackIndex, clipIndex);
+    for (int i = existing.size() - 1; i >= 0; --i) {
+        const ClipRef &ref = existing.at(i);
+        if (project.tracks().at(ref.trackIndex).clips.at(ref.clipIndex).mask.cropShape.isEmpty())
+            continue;
+        project.tracks()[ref.trackIndex].clips.removeAt(ref.clipIndex);
+        if (project.tracks().at(ref.trackIndex).clips.isEmpty())
+            emptiedLaneIds.append(project.tracks().at(ref.trackIndex).id);
+    }
+    for (const QString &laneId : std::as_const(emptiedLaneIds)) {
+        const int laneIndex = project.trackIndexById(laneId);
+        if (laneIndex >= 0)
+            project.tracks().removeAt(laneIndex);
+    }
+
+    const HostFrame frame = hostFrameAt(project, host, host.timelineStart);
+    const Mask mask = clipShapeMask(id, frame.w, frame.h);
+    if (!mask.contributes())
+        return;
+
+    const int hostIndex = project.trackIndexById(hostTrackId);
+    const int laneIndex = ensureAdjustmentLane(project, hostIndex, AdjustmentKind::Mask, host.timelineStart,
+                                               host.timelineDuration, true);
+    if (laneIndex < 0)
+        return;
+    project.tracks()[laneIndex].clips.append(
+        makeMaskAdjustment(mask, host.id, host.timelineStart, host.timelineDuration));
+}
+
+void moveLinkedAdjustmentsToHostTrack(Project &project, const QString &hostClipId)
+{
+    project.ensureTrackIds();
+    int hostTrack = -1;
+    int hostClip = -1;
+    for (int t = 0; t < project.tracks().size() && hostTrack < 0; ++t) {
+        const Track &track = project.tracks().at(t);
+        if (track.isAdjustment())
+            continue;
+        for (int c = 0; c < track.clips.size(); ++c) {
+            if (track.clips.at(c).id == hostClipId) {
+                hostTrack = t;
+                hostClip = c;
+                break;
+            }
+        }
+    }
+    if (hostTrack < 0)
+        return;
+
+    const Clip host = project.tracks().at(hostTrack).clips.at(hostClip);
+    const QString hostTrackId = project.tracks().at(hostTrack).id;
+
+    QList<Clip> moving;
+    QStringList touchedLaneIds;
+    for (Track &lane : project.tracks()) {
+        if (!lane.isAdjustmentLane() || lane.parentTrackId == hostTrackId)
+            continue;
+        for (int i = lane.clips.size() - 1; i >= 0; --i) {
+            if (lane.clips.at(i).linkedClipId != hostClipId
+                || lane.clips.at(i).adjustmentKind == AdjustmentKind::Transform)
+                continue;
+            Clip adjustment = lane.clips.at(i);
+            adjustment.timelineStart = host.timelineStart;
+            adjustment.timelineDuration = host.timelineDuration;
+            lane.clips.removeAt(i);
+            moving.prepend(adjustment);
+            if (!touchedLaneIds.contains(lane.id))
+                touchedLaneIds.append(lane.id);
+        }
+    }
+
+    for (const Clip &adjustment : std::as_const(moving)) {
+        const int laneIndex = ensureAdjustmentLane(project, project.trackIndexById(hostTrackId),
+                                                   adjustment.adjustmentKind,
+                                                   adjustment.timelineStart,
+                                                   adjustment.timelineDuration);
+        if (laneIndex >= 0)
+            project.tracks()[laneIndex].clips.append(adjustment);
+    }
+
+    for (const QString &laneId : std::as_const(touchedLaneIds)) {
+        const int laneIndex = project.trackIndexById(laneId);
+        if (laneIndex >= 0 && project.tracks().at(laneIndex).clips.isEmpty())
+            project.tracks().removeAt(laneIndex);
+    }
 }
 
 ClipRef addLinkedMask(Project &project, int trackIndex, int clipIndex, const Mask &mask)
@@ -1136,9 +1317,16 @@ TimeUs sourceDurationForClip(const Project &project, const Clip &clip)
     return qMax(clip.srcOut, clip.timelineDuration);
 }
 
-bool splitClipAtOffset(Clip &head, Clip &tail, TimeUs offset)
+TimeUs minClipDurationUs(double fps)
 {
-    return splitClipAtOffsetMin(head, tail, offset, kMinClipDurationUs);
+    if (fps <= 0.0)
+        return kUsPerSecond / 120;
+    return static_cast<TimeUs>(std::ceil(static_cast<double>(kUsPerSecond) / fps));
+}
+
+bool splitClipAtOffset(Clip &head, Clip &tail, TimeUs offset, double fps)
+{
+    return splitClipAtOffsetMin(head, tail, offset, minClipDurationUs(fps));
 }
 
 bool splitClipAtOffsetMin(Clip &head, Clip &tail, TimeUs offset, TimeUs minEdgeUs)
@@ -1232,6 +1420,7 @@ void retargetClipToSource(Clip &dst, const Clip &src, TimeUs srcMediaDurationUs)
     dst.assetId = src.assetId;
     dst.path = src.path;
     dst.sourceFrame = src.sourceFrame;
+    dst.sourceFrameAngle = src.sourceFrameAngle;
     dst.type = src.type;
     dst.name = src.name;
     dst.thumbnailPath = src.thumbnailPath;
@@ -1495,6 +1684,23 @@ void retimeLinkedSubtitles(const Project &before, Project &project, const QHash<
     }
 }
 
+void muteAllButClip(Project &snap, const QString &clipId)
+{
+    for (Track &track : snap.tracks()) {
+        bool has = false;
+        for (Clip &clip : track.clips) {
+            if (clip.id == clipId) {
+                has = true;
+                continue;
+            }
+            clip.volume.setKeyframe(0, 0.0);
+            clip.suppressEmbeddedAudio = true;
+        }
+        if (!has)
+            track.muted = true;
+    }
+}
+
 QList<ClipRef> linkedPartners(const Project &project, const Clip &clip)
 {
     QList<ClipRef> out;
@@ -1600,9 +1806,10 @@ int multicamCutIndexAtOrBefore(const QList<MulticamCut> &cuts, TimeUs timeUs)
 } // namespace
 
 MulticamSwitchResult applyMulticamSwitch(QList<MulticamCut> &cuts, TimeUs rangeStart, TimeUs rangeEnd,
-                                         int angle, TimeUs atUs, int initialAngle)
+                                         int angle, TimeUs atUs, int initialAngle, double fps)
 {
-    if (rangeEnd - rangeStart < kMinClipDurationUs)
+    const TimeUs minUs = minClipDurationUs(fps);
+    if (rangeEnd - rangeStart < minUs)
         return MulticamSwitchResult::OutOfRange;
     if (atUs < rangeStart || atUs >= rangeEnd)
         return MulticamSwitchResult::OutOfRange;
@@ -1614,7 +1821,7 @@ MulticamSwitchResult applyMulticamSwitch(QList<MulticamCut> &cuts, TimeUs rangeS
             cuts.append(MulticamCut{rangeStart, angle});
             return MulticamSwitchResult::Applied;
         }
-        if (atUs - rangeStart < kMinClipDurationUs || rangeEnd - atUs < kMinClipDurationUs)
+        if (atUs - rangeStart < minUs || rangeEnd - atUs < minUs)
             return MulticamSwitchResult::TooCloseToEdge;
         cuts.append(MulticamCut{rangeStart, initialAngle});
         cuts.append(MulticamCut{atUs, angle});
@@ -1633,7 +1840,7 @@ MulticamSwitchResult applyMulticamSwitch(QList<MulticamCut> &cuts, TimeUs rangeS
         return MulticamSwitchResult::Applied;
     }
 
-    if (atUs - intervalStart < kMinClipDurationUs || intervalEnd - atUs < kMinClipDurationUs)
+    if (atUs - intervalStart < minUs || intervalEnd - atUs < minUs)
         return MulticamSwitchResult::TooCloseToEdge;
 
     cuts.insert(index + 1, MulticamCut{atUs, angle});
@@ -1686,6 +1893,9 @@ void forEachKeyframeTrack(Clip &clip, Fn &&fn)
     fn(clip.rotationY);
     fn(clip.positionZ);
     fn(clip.perspective);
+    fn(clip.anchorX);
+    fn(clip.anchorY);
+    fn(clip.anchorZ);
     fn(clip.volume);
     const auto visitMap = [&fn](QMap<QString, KeyframeTrack<double>> &tracks) {
         for (auto it = tracks.begin(); it != tracks.end(); ++it)
@@ -1725,11 +1935,11 @@ void rebaseKeyframesForSplitTail(Clip &tail, TimeUs offset)
     });
 }
 
-bool sliceClipToTimelineRange(const Clip &src, TimeUs start, TimeUs end, Clip &out)
+bool sliceClipToTimelineRange(const Clip &src, TimeUs start, TimeUs end, Clip &out, double fps)
 {
     const TimeUs from = qMax(start, src.timelineStart);
     const TimeUs to = qMin(end, src.timelineEnd());
-    if (to - from < kMinClipDurationUs)
+    if (to - from < minClipDurationUs(fps))
         return false;
 
     Clip work = src;

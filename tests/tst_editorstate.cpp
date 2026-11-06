@@ -1,4 +1,24 @@
 #include <algorithm>
+#include "app/bin/AssetPreviewController.h"
+#include "app/color/ColorController.h"
+#include "app/jobs/audio/DenoiseController.h"
+#include "app/jobs/audio/AudioAlignController.h"
+#include "app/jobs/vision/DepthController.h"
+#include "app/jobs/vision/FaceTrackingController.h"
+#include "app/mcp/McpController.h"
+#include "app/jobs/vision/RestoreController.h"
+#include "app/jobs/vision/SceneDetectController.h"
+#include "app/jobs/vision/SegmentationController.h"
+#include "app/jobs/vision/TrackingController.h"
+#include "app/jobs/audio/TtsController.h"
+#include "app/jobs/audio/VoiceLibrary.h"
+#include "app/editor/sessions/CurveEditorController.h"
+#include "app/editor/sessions/SubtitleController.h"
+#include "app/jobs/vision/StabilizeController.h"
+#include "app/bin/MediaBinController.h"
+#include "app/editor/sessions/SpeedCurveController.h"
+#include "ui/preview/PreviewController.h"
+#include "ui/preview/Outliner3dModel.h"
 #include <QtTest>
 
 #include <QAccessible>
@@ -40,11 +60,20 @@
 #include "engine/encode/proxies/ProxyNaming.h"
 #include "engine/encode/proxies/ReverseProxyCache.h"
 #include "app/editor/PreferencesController.h"
+#include "app/editor/sessions/KeyframeController.h"
+#include "app/editor/sessions/KeyframeCurvesModel.h"
+#include "app/editor/sessions/KeyframeRowsModel.h"
+#include "app/editor/sessions/KeyframeSelection.h"
+#include "app/editor/sessions/KeyframeTimeView.h"
+#include "app/editor/sessions/MaskStackModel.h"
+#include "app/jobs/vision/TrackerListModel.h"
 #include "engine/compositor/FrameCompositor.h"
 #include "engine/compositor/GpuCompositor.h"
 #include "engine/tracking/MotionTracking.h"
 #include "engine/decode/readers/ClipReaderPool.h"
 #include "app/editor/AppController.h"
+#include "app/editor/AppControllerDetail.h"
+#include "app/mcp/McpDetail.h"
 #include "app/editor/TimelineClipsModel.h"
 #include "app/editor/sessions/SubtitleCueFilterModel.h"
 #include "ui/timeline/TimelineLayout.h"
@@ -57,6 +86,10 @@
 #include "ui/imageproviders/multicam/MulticamImageProvider.h"
 #include "ui/imageproviders/multicam/MulticamImageStore.h"
 
+#include "core/edit/MaskSpace.h"
+#include "core/base/CameraEuler.h"
+#include "engine/render3d/scene/SceneCamera3d.h"
+#include "engine/tracking/MotionTracking.h"
 #include "core/project/clip/Clip.h"
 #include "core/animation/EasingPresetStore.h"
 #include "core/effects/EffectStackStore.h"
@@ -69,6 +102,7 @@
 #include "core/edit/TimelineOps.h"
 #include "engine/encode/export/Exporter.h"
 #include "engine/encode/writers/MatteWriter.h"
+#include "app/editor/ProjectFileController.h"
 #include <QPainter>
 #include "core/effects/Mask.h"
 #include "app/editor/sessions/MaskingController.h"
@@ -99,14 +133,13 @@ class EditorStateTest : public QObject
     Q_OBJECT
 
 private slots:
-    void driftAssetStoreInstallsVerified();
-    void driftAssetStoreInstallsOneVariantSeparately();
     void snapTimeEnabled();
     void compositeFromSelectionUndoRedo();
     void compositeClipGetsAPreviewBox();
     void cameraMovesThePreviewOverlayWithThePicture();
     void cameraGizmoMovesAndTurnsTheEye();
     void flyMovesTheCameraWhenLookingThrough();
+    void outlinerListsCamerasAndFollowsSelection();
     void undoRestoresEditsMadeThroughEarlierPointers();
     void compositeClipSpeedRetimesToFit();
     void importedMediaIsCentredAndResetsToItsFit();
@@ -114,9 +147,12 @@ private slots:
     void transformLayerParentsPreviewBoxes();
     void transformSpanOptionsAndValidation();
     void transformLayerEntryPoints();
+    void linkedVideoMovesWithItsAudioAndAdjustments();
     void pasteSelectsWhatItPastedWhenATrackIsAdded();
     void compositeTabEditUndoesFromMain();
+    void removeEmptyTracksKeepsPopulatedAndUndoes();
     void compositeSeparateAudioAndRemoval();
+    void dissolveCompositeRoundTrip();
     void retimeKeepsDisabledKeyframeTrackDisabled();
     void effectStackCopyPasteAppendsAndRescales();
     void chromaKeyHueIsFlaggedForTheColourSwatch();
@@ -154,6 +190,12 @@ private slots:
     void undoTrackMute();
     void packagedProjectCarriesDerivedArtifacts();
     void undoBookmarkAdd();
+    void undoHistorySurvivesSaveAndLoad();
+    void savedBundleKeepsHistoryAndShrinksIt();
+    void editDuringSaveKeepsProjectModified();
+    void overlappingSavesRunInOrder();
+    void recoveryFileIsCompressedAndRestores();
+    void legacyPlainRecoveryFileStillRestores();
     void bookmarkNavigationAndToggle();
     void editPointNavigationWalksEveryClipEdge();
     void arrowKeysJogAndJumpThePlayhead();
@@ -245,6 +287,7 @@ private slots:
     void commitTrimWithoutMovementLeavesNoUndoStep();
     void trimmingCarriesTheLinkedAudioPartner();
     void previewTrimMatchesTheCommittedTrim();
+    void compositorStreamsTakeTurns();
     void movedClipDoesNotSnapToItsOwnEdges();
     void snapTargetsStillIncludeOtherClips();
     void trimClickWithoutMovementLeavesNoUndoStep();
@@ -296,6 +339,12 @@ private slots:
     void keyframePreviewMoveIsOneUndoStep();
     void keyframePreviewStretchScalesOffsetAndTangent();
     void keyframeCopyPasteRemapsEffectsAndSkipsOutOfRange();
+    void keyframeRowsModelDiffsRebuildsAndNavigates();
+    void keyframeMoveReportsCollisions();
+    void keyframeNudgesFoldIntoOneUndoStep();
+    void keyframeScaleMoveCarriesItsPins();
+    void keyframeCurvesModelHitTestsMarqueesAndFits();
+    void keyframeScaleMathMatchesTheCanvasBox();
     void depthEffectEditorStateResolvesHandles();
     void behindSubjectTargetsAChosenClip();
     void effectRemovalRemapsGraphSelection();
@@ -356,18 +405,55 @@ private slots:
     void maskingStackListsPinnedMasks();
     void maskingStandaloneAdjustmentHasOneMask();
     void maskingPolygonMaskIsCreated();
+    void clipShapeReplacesItsMaskAndOriginalRemovesOnlyIt();
+    void clipReframeKeepsTheBoxAndOneUndoStep();
     void maskingPathKeysAnimateShape();
     void maskingInsertPointUpdatesPathKeys();
+    void maskEditSessionMovesVertexOnStaticMask();
+    void maskEditSessionMovesVertexOnPathKeyedMask();
+    void maskEditSessionMovesKeyframedRect();
+    void maskEditSessionResizeRotateAndSnap();
+    void maskEditSessionNudgeAndBars();
     void trackingTranslationDrivesMaskKeys();
     void trackingPlanarConvertsRectangleToFreeform();
     void trackingFollowClipOffsetsTransformKeys();
+    void trackingStabilizeClipHoldsTheAnchor();
+    void trackingStabilizeClipFollowsRotationAndZoom();
+    void trackingStabilizeFillZoomCoversTheCanvas();
+    void trackingStabilizeIsOnePerClipAndSurvivesJson();
+    void trackingStabilizeCameraHoldsAPointTrack();
+    void trackingStabilizeCameraSolvesAPlanarTrack();
+    void trackingStabilizeCameraFillZoomCoversTheCanvas();
     void trackingClearSamplesKeepsUserKeysAndEarlierSamples();
     void trackingSurvivesProjectRoundTrip();
     void trackingFollowsMovingSquareBothWays();
     void trackingSingleFrameStepKeepsLaterSamples();
     void trackingUndoRevertsOnlyTheTracker();
     void trackingCorrectPlanarCornersAwayFromReference();
+    void trackingDrivesStandaloneAdjustmentMaskInCanvasSpace();
+    void trackingCorrectionDropsStaleSamplesAndReappliesTargets();
+    void trackingFrameKeepsAGhostMarkerOffTheTrackedSpan();
+    void maskStackModelListsRolesAndShapeKeys();
+    void trackerShortcutsAreRegistered();
+    void trackingClipIdOverloadsMatchTheIndexCalls();
+    void maskStackModelCarriesTrackerRoles();
+    void maskingBlurAreaMovesMaskToEffectLayerInOneUndoStep();
+    void maskingBlurAreaRefusesCutouts();
+    void trackingEnsureMaskTrackerReusesAndIsOneUndoStep();
+    void trackingDraggingATrackedMaskWritesAUserKey();
+    void trackingFollowFromTheFollowersSide();
+    void maskingBrushFixesACutoutFrameAsAPatch();
+    void maskingCutoutPatchSurvivesInspectorEdits();
+    void trackerListModelKeepsSelectionAndFiltersCandidates();
+    void segmentationNearestPointPicksTheClosestWithinTolerance();
+    void maskingBrushOpacityCapsASingleStroke();
+    void maskingClearWithoutBrushMaskCreatesNothing();
+    void maskingUndoWaitsForBrushSave();
+    void maskingSweepDropsUnreferencedBrushMattes();
     void maskingBrushPaintsAndErases();
+    void maskingBrushPressureScalesTheRadiusPerPoint();
+    void maskingStrokeBeginAddEndCommitsByClipId();
+    void maskingStrokeIgnoresNonMediaAndCancels();
     void maskingBrushStrokeCreatesAndUpdatesAMatte();
     void maskingBrushStrokesChainBeforeSaving();
     void freeformPointsCrossToQmlAsNamedFields();
@@ -503,172 +589,6 @@ void EditorStateTest::snapTimeEnabled()
     state.setSnapEnabled(true);
     QCOMPARE(state.snapTime(0.0), 0.0);
     QVERIFY(state.snapTime(1.234) >= 0.0);
-}
-
-// Files come from file:// URLs here; the store only cares that each one matches its sha256.
-void EditorStateTest::driftAssetStoreInstallsVerified()
-{
-    QStandardPaths::setTestModeEnabled(true);
-    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
-    QDir(DriftAssetStore::installRoot()).removeRecursively();
-
-    QTemporaryDir src;
-    QVERIFY(src.isValid());
-    const QByteArray lottie = R"({"v":"5.7.0","fr":30,"ip":0,"op":30,"w":100,"h":100,"layers":[]})";
-    auto fileEntry = [&](const QString &role, const QString &name, const QByteArray &data,
-                         const QByteArray &claimed) {
-        QFile f(src.filePath(name));
-        if (!f.open(QIODevice::WriteOnly))
-            qFatal("cannot write %s", qPrintable(f.fileName()));
-        f.write(data);
-        return QJsonObject{
-            {QStringLiteral("role"), role},
-            {QStringLiteral("name"), name},
-            {QStringLiteral("size"), qint64(claimed.size())},
-            {QStringLiteral("sha256"),
-             QString::fromLatin1(QCryptographicHash::hash(claimed, QCryptographicHash::Sha256).toHex())},
-            {QStringLiteral("url"), QUrl::fromLocalFile(src.filePath(name)).toString()},
-        };
-    };
-    auto asset = [&](const QString &id, const QString &name, const QByteArray &served) {
-        return QJsonObject{
-            {QStringLiteral("id"), id},
-            {QStringLiteral("name"), name},
-            {QStringLiteral("kind"), QStringLiteral("lottie")},
-            {QStringLiteral("category"), QStringLiteral("reactions")},
-            {QStringLiteral("tags"), QJsonArray{QStringLiteral("party")}},
-            {QStringLiteral("files"),
-             QJsonArray{fileEntry(QStringLiteral("meta"), id + QStringLiteral("-asset.json"), "{}", "{}"),
-                        fileEntry(QStringLiteral("main"), id + QStringLiteral(".json"), served, lottie)}},
-        };
-    };
-
-    AssetLibrary library;
-    AppController state(&library);
-    DriftAssetStore store(nullptr, &library, &state);
-    store.applyPack(QJsonObject{
-        {QStringLiteral("categories"),
-         QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("reactions")}}}},
-        {QStringLiteral("assets"),
-         QJsonArray{asset(QStringLiteral("confetti-burst"), QStringLiteral("Confetti Burst"), lottie),
-                    asset(QStringLiteral("tampered"), QStringLiteral("Tampered"), "{}")}},
-    });
-
-    QCOMPARE(store.search(QStringLiteral("confetti")).size(), 1);
-    QCOMPARE(store.search(QStringLiteral("party burst")).size(), 1);
-    QCOMPARE(store.search(QStringLiteral("party")).size(), 2);
-    QCOMPARE(store.state(QStringLiteral("confetti-burst")), QStringLiteral("none"));
-
-    QSignalSpy ready(&store, &DriftAssetStore::ready);
-    QSignalSpy failed(&store, &DriftAssetStore::failed);
-    store.install(QStringLiteral("confetti-burst"));
-    QTRY_COMPARE(ready.size(), 1);
-    QCOMPARE(store.state(QStringLiteral("confetti-burst")), QStringLiteral("installed"));
-    const QString binId = ready.first().at(1).toString();
-    QVERIFY(!binId.isEmpty());
-    QCOMPARE(library.assetIdForPath(store.localPath(QStringLiteral("confetti-burst"))), binId);
-
-    // A second install reuses the files and the bin entry.
-    store.install(QStringLiteral("confetti-burst"));
-    QTRY_COMPARE(ready.size(), 2);
-    QCOMPARE(ready.last().at(1).toString(), binId);
-
-    store.install(QStringLiteral("tampered"));
-    QTRY_COMPARE(failed.size(), 1);
-    QCOMPARE(store.state(QStringLiteral("tampered")), QStringLiteral("failed"));
-    QVERIFY(store.localPath(QStringLiteral("tampered")).isEmpty());
-}
-
-void EditorStateTest::driftAssetStoreInstallsOneVariantSeparately()
-{
-    QStandardPaths::setTestModeEnabled(true);
-    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
-    QDir(DriftAssetStore::installRoot()).removeRecursively();
-
-    QTemporaryDir src;
-    QVERIFY(src.isValid());
-    const QByteArray classic = R"({"v":"5.7.0","fr":30,"ip":0,"op":30,"w":100,"h":100,"layers":[]})";
-    const QByteArray outline = R"({"v":"5.7.0","fr":30,"ip":0,"op":45,"w":100,"h":100,"layers":[]})";
-    auto fileEntry = [&](const QString &role, const QString &name, const QByteArray &bytes) {
-        QFile f(src.filePath(name));
-        if (!f.open(QIODevice::WriteOnly))
-            return QJsonObject();
-        f.write(bytes);
-        return QJsonObject{
-            {QStringLiteral("role"), role},
-            {QStringLiteral("name"), name},
-            {QStringLiteral("size"), qint64(bytes.size())},
-            {QStringLiteral("sha256"),
-             QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex())},
-            {QStringLiteral("url"), QUrl::fromLocalFile(src.filePath(name)).toString()},
-        };
-    };
-    const QJsonArray classicFiles{
-        fileEntry(QStringLiteral("meta"), QStringLiteral("asset.json"), QByteArray("{}")),
-        fileEntry(QStringLiteral("main"), QStringLiteral("lower-third.json"), classic),
-    };
-    const QJsonArray outlineFiles{
-        fileEntry(QStringLiteral("meta"), QStringLiteral("asset.json"), QByteArray("{}")),
-        fileEntry(QStringLiteral("main"), QStringLiteral("lower-third--outline.json"), outline),
-    };
-
-    AssetLibrary library;
-    AppController state(&library);
-    DriftAssetStore store(nullptr, &library, &state);
-    store.applyPack(QJsonObject{
-        {QStringLiteral("categories"),
-         QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("reactions")}}}},
-        {QStringLiteral("assets"),
-         QJsonArray{QJsonObject{
-             {QStringLiteral("id"), QStringLiteral("lower-third")},
-             {QStringLiteral("name"), QStringLiteral("Lower Third")},
-             {QStringLiteral("kind"), QStringLiteral("lottie")},
-             {QStringLiteral("category"), QStringLiteral("reactions")},
-             {QStringLiteral("description"), QStringLiteral("A bar for a name")},
-             {QStringLiteral("files"), classicFiles},
-             {QStringLiteral("variants"),
-              QJsonArray{
-                  QJsonObject{{QStringLiteral("id"), QStringLiteral("classic")},
-                              {QStringLiteral("name"), QStringLiteral("Classic")},
-                              {QStringLiteral("files"), classicFiles}},
-                  QJsonObject{{QStringLiteral("id"), QStringLiteral("outline")},
-                              {QStringLiteral("name"), QStringLiteral("Outline")},
-                              {QStringLiteral("description"), QStringLiteral("outlined edges")},
-                              {QStringLiteral("tags"), QJsonArray{QStringLiteral("line")}},
-                              {QStringLiteral("files"), outlineFiles}},
-              }},
-         }}},
-    });
-
-    QCOMPARE(store.search(QStringLiteral("outlined")).size(), 1);
-    QCOMPARE(store.search(QStringLiteral("line")).size(), 1);
-    QCOMPARE(store.installKey(QStringLiteral("lower-third"), QStringLiteral("classic")),
-             QStringLiteral("lower-third"));
-    QCOMPARE(store.installKey(QStringLiteral("lower-third"), QStringLiteral("outline")),
-             QStringLiteral("lower-third--outline"));
-    QCOMPARE(store.variantState(QStringLiteral("lower-third"), QStringLiteral("outline")),
-             QStringLiteral("none"));
-
-    QSignalSpy ready(&store, &DriftAssetStore::ready);
-    store.install(QStringLiteral("lower-third"));
-    QTRY_COMPARE(ready.size(), 1);
-    QCOMPARE(ready.first().at(0).toString(), QStringLiteral("lower-third"));
-    QCOMPARE(readFile(store.localPath(QStringLiteral("lower-third"))), classic);
-
-    store.installVariant(QStringLiteral("lower-third"), QStringLiteral("outline"));
-    QTRY_COMPARE(ready.size(), 2);
-    QCOMPARE(ready.last().at(0).toString(), QStringLiteral("lower-third--outline"));
-    QCOMPARE(ready.last().at(1).toString() == ready.first().at(1).toString(), false);
-    QCOMPARE(readFile(store.localPath(QStringLiteral("lower-third--outline"))), outline);
-    QCOMPARE(store.state(QStringLiteral("lower-third")), QStringLiteral("installed"));
-    QCOMPARE(store.variantState(QStringLiteral("lower-third"), QStringLiteral("outline")),
-             QStringLiteral("installed"));
-
-    const QString root = DriftAssetStore::installRoot() + QStringLiteral("/lottie");
-    QVERIFY(QFileInfo::exists(root + QStringLiteral("/lower-third/lower-third.json")));
-    QVERIFY(!QFileInfo::exists(root + QStringLiteral("/lower-third/lower-third--outline.json")));
-    QVERIFY(QFileInfo::exists(root + QStringLiteral("/lower-third--outline/lower-third--outline.json")));
-    QVERIFY(!QDir(root).exists(QStringLiteral("lower-third--classic")));
 }
 
 void EditorStateTest::audioAdjustmentTrackArrivesWithAClip()
@@ -987,7 +907,7 @@ void EditorStateTest::cameraMovesThePreviewOverlayWithThePicture()
     QVERIFY(state.preview()->cameraActive());
 
     // Pan the camera 60 px right; the picture must go left, and the overlay with it.
-    state.previewSetClipPosition(cameraTrack, 0, 60, 0);
+    state.previewSetClipPosition(cameraTrack, 0, state.project()->width() / 2.0 + 60, state.project()->height() / 2.0);
     state.setPlayheadSeconds(0.0);
 
     const QPointF movedRendered = renderedCentre();
@@ -1019,6 +939,28 @@ void EditorStateTest::cameraMovesThePreviewOverlayWithThePicture()
     QVERIFY(state.preview()->clipAtCanvasPoint(restRendered.x(), restRendered.y()).isEmpty());
 }
 
+void EditorStateTest::outlinerListsCamerasAndFollowsSelection()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.project()->setResolution(1000, 1000);
+    Outliner3dModel *outliner = state.preview()->outliner();
+    QCOMPARE(outliner->rowCount(), 0);
+
+    state.addCameraTrack();
+    state.setPlayheadSeconds(0.0);
+    QCOMPARE(outliner->rowCount(), 1);
+    const QModelIndex row = outliner->index(0);
+    QCOMPARE(outliner->data(row, Outliner3dModel::GroupRole).toInt(), int(Outliner3dModel::Cameras));
+    QVERIFY(outliner->data(row, Outliner3dModel::SelectedRole).toBool());
+    QVERIFY(!outliner->data(row, Outliner3dModel::HiddenRole).toBool());
+
+    const int track = outliner->data(row, Outliner3dModel::TrackRole).toInt();
+    state.setTrackHidden(track, true);
+    QVERIFY(outliner->data(outliner->index(0), Outliner3dModel::HiddenRole).toBool());
+    QCOMPARE(state.preview()->sceneCameras().size(), 1);
+}
+
 void EditorStateTest::flyMovesTheCameraWhenLookingThrough()
 {
     AssetLibrary library;
@@ -1026,14 +968,15 @@ void EditorStateTest::flyMovesTheCameraWhenLookingThrough()
     state.project()->setResolution(1000, 1000);
     state.addCameraTrack();
     state.setPlayheadSeconds(0.0);
-    state.preview()->setMode(QStringLiteral("3d"));
-    const QVariantMap rest = state.preview()->cameraBox();
+    state.preview()->setViewport3dOpen(true);
+    const QVariantMap rest = state.preview()->cameraBox(1);
     const int track = rest.value(QStringLiteral("track")).toInt();
     const int clip = rest.value(QStringLiteral("clip")).toInt();
     const auto eyeOf = [&] {
         return drift::sceneCameraEye(drift::sceneCameraFromClip(
-            state.project()->tracks().at(track).clips.at(clip), 0, 1.0));
+            state.project()->tracks().at(track).clips.at(clip), 0, 1.0, QSizeF(1000, 1000)));
     };
+    const double zoom = drift::defaultClipPerspective(1000.0);
 
     // From the free view, flying moves the view and leaves the camera alone.
     state.preview()->setFlying(true);
@@ -1041,7 +984,7 @@ void EditorStateTest::flyMovesTheCameraWhenLookingThrough()
     const QVector3D viewEye = drift::editorViewEye(state.preview()->currentView());
     state.preview()->fly(0.0, 0.0, 0.1, 0.0, 0.0);
     QVERIFY((drift::editorViewEye(state.preview()->currentView()) - viewEye).length() > 1.f);
-    QVERIFY((eyeOf() - QVector3D(0, 0, 2000)).length() < 0.01f);
+    QVERIFY((eyeOf() - QVector3D(500, 500, float(-zoom))).length() < 0.01f);
     state.preview()->setFlying(false);
 
     // Through the camera, the camera flies: W moves the eye along its view, by lens multiples.
@@ -1049,15 +992,16 @@ void EditorStateTest::flyMovesTheCameraWhenLookingThrough()
     state.preview()->setFlying(true);
     state.preview()->fly(0.0, 0.0, 0.1, 0.0, 0.0);
     QVERIFY(state.preview()->lookThrough());
-    QVERIFY2((eyeOf() - QVector3D(0, 0, 1800)).length() < 0.5f, qPrintable(QString::number(eyeOf().z())));
+    const QVector3D flown(500, 500, float(-zoom * 0.9));
+    QVERIFY2((eyeOf() - flown).length() < 0.5f, qPrintable(QString::number(eyeOf().z())));
     // Turning keeps the eye in place and yaws the camera.
     state.preview()->fly(30.0, 0.0, 0.0, 0.0, 0.0);
-    QVERIFY((eyeOf() - QVector3D(0, 0, 1800)).length() < 0.5f);
+    QVERIFY((eyeOf() - flown).length() < 0.5f);
     QVERIFY(std::abs(state.project()->tracks().at(track).clips.at(clip).rotationY.evaluateAt(0)) > 1.0);
     // Landing makes the whole flight one undo step.
     state.preview()->setFlying(false);
     state.undo();
-    QVERIFY((eyeOf() - QVector3D(0, 0, 2000)).length() < 0.5f);
+    QVERIFY((eyeOf() - QVector3D(500, 500, float(-zoom))).length() < 0.5f);
 }
 
 void EditorStateTest::cameraGizmoMovesAndTurnsTheEye()
@@ -1070,15 +1014,16 @@ void EditorStateTest::cameraGizmoMovesAndTurnsTheEye()
     QVERIFY(!state.cameraStateAtPlayhead().value(QStringLiteral("active")).toBool());
     state.addCameraTrack();
     state.setPlayheadSeconds(0.0);
-    QVERIFY(state.preview()->cameraBox().isEmpty());
+    QVERIFY(state.preview()->cameraBox(0).isEmpty());
 
-    state.preview()->setMode(QStringLiteral("3d"));
-    QCOMPARE(state.preview()->mode(), QStringLiteral("3d"));
-    const QVariantMap start = state.preview()->cameraBox();
+    state.preview()->setViewport3dOpen(true);
+    QVERIFY(state.preview()->viewport3dOpen());
+    const QVariantMap start = state.preview()->cameraBox(1);
     QCOMPARE(start.value(QStringLiteral("kind")).toString(), QStringLiteral("camera"));
-    // The box stands at the eye: 2000 px in front of the canvas centre.
+    // The box stands at the eye: a default zoom in front of the canvas centre (z is away from the viewer).
+    const double zoom = drift::defaultClipPerspective(1000.0);
     QCOMPARE(start.value(QStringLiteral("x")).toDouble() + 0.5, 500.0);
-    QCOMPARE(start.value(QStringLiteral("z")).toDouble(), 2000.0);
+    QVERIFY(std::abs(start.value(QStringLiteral("z")).toDouble() + zoom) < 1e-3);
     const int track = start.value(QStringLiteral("track")).toInt();
     const int clip = start.value(QStringLiteral("clip")).toInt();
 
@@ -1090,56 +1035,55 @@ void EditorStateTest::cameraGizmoMovesAndTurnsTheEye()
     QVERIFY(state.preview()->lookThrough());
     state.preview()->toggleLookThrough();
 
-    // Move along X through the 3D view: the eye goes right, so the camera's position does too
-    // (unturned, position and eye differ only by the lens along z).
+    // Move along X through the 3D view: the eye goes right, and the camera's position is the eye.
     QMatrix4x4 view = drift::editorViewProjection(drift::EditorView3d::overview(QSizeF(1000, 1000)),
-                                                  QSizeF(1000, 1000));
+                                                  QSizeF(1000, 1000), drift::defaultSceneCamera(QSizeF(1000, 1000)));
     const auto onOverlay = [&view](const QVector3D &p) {
         const QVector4D h = view.map(QVector4D(p, 1.f));
         return QPointF(h.x() / h.w(), h.y() / h.w());
     };
-    const QVector3D eye(0, 0, 2000);
+    const QVector3D eye(500, 500, float(-zoom));
     state.preview()->setGizmoTool(QStringLiteral("move"));
     state.preview()->setGizmoOrientation(QStringLiteral("global"));
     state.beginPreviewDrag();
     const QPointF press = onOverlay(eye);
     const QPointF now = onOverlay(eye + QVector3D(150, 0, 0));
     const QVariantMap moved = state.preview()->applyGizmoDrag(start, QStringLiteral("x"), press.x(), press.y(),
-                                                          now.x(), now.y(), false, 1.0);
+                                                          now.x(), now.y(), false, 1.0, 1);
     state.commitPreviewDrag();
     const drift::Clip &camera = state.project()->tracks().at(track).clips.at(clip);
-    QVERIFY2(std::abs(camera.transformX.evaluateAt(0) - 150.0) < 0.5,
+    QVERIFY2(std::abs(camera.transformX.evaluateAt(0) - 650.0) < 0.5,
              qPrintable(QString::number(camera.transformX.evaluateAt(0))));
-    QVERIFY(std::abs(camera.positionZ.isEmpty() ? 0.0 : camera.positionZ.evaluateAt(0)) < 0.5);
+    QVERIFY(std::abs((camera.positionZ.isEmpty() ? -zoom : camera.positionZ.evaluateAt(0)) + zoom) < 0.5);
     QVERIFY(std::abs(moved.value(QStringLiteral("x")).toDouble() + 0.5 - 650.0) < 0.5);
 
-    // Turning keeps the eye where it is: a yaw about the eye moves the stored position, not the eye.
-    const QVariantMap before = state.preview()->cameraBox();
+    // Turning keeps the eye where it is: a yaw about the eye leaves the position alone.
+    const QVariantMap before = state.preview()->cameraBox(1);
     state.preview()->setGizmoTool(QStringLiteral("rotate"));
-    const QVector3D eyeNow(150, 0, 2000);
+    const QVector3D eyeNow(650, 500, float(-zoom));
     state.beginPreviewDrag();
     const QPointF a = onOverlay(eyeNow + QVector3D(60, 0, 0));
-    const QPointF b = onOverlay(eyeNow + QVector3D(0, 0, -60));
-    state.preview()->applyGizmoDrag(before, QStringLiteral("y"), a.x(), a.y(), b.x(), b.y(), false, 1.0);
+    const QPointF b = onOverlay(eyeNow + QVector3D(0, 0, 60));
+    state.preview()->applyGizmoDrag(before, QStringLiteral("y"), a.x(), a.y(), b.x(), b.y(), false, 1.0, 1);
     state.commitPreviewDrag();
-    const QVariantMap after = state.preview()->cameraBox();
+    const QVariantMap after = state.preview()->cameraBox(1);
     QVERIFY(std::abs(after.value(QStringLiteral("rotationY")).toDouble()) > 1.0);
     QVERIFY(std::abs(after.value(QStringLiteral("x")).toDouble() - before.value(QStringLiteral("x")).toDouble()) < 0.5);
     QVERIFY(std::abs(after.value(QStringLiteral("z")).toDouble() - before.value(QStringLiteral("z")).toDouble()) < 0.5);
 
     // A camera has nothing to scale.
     state.preview()->setGizmoTool(QStringLiteral("scale"));
-    QVERIFY(!state.preview()->gizmoGeometry(after, 1.0, 1.0).value(QStringLiteral("valid")).toBool());
+    QVERIFY(!state.preview()->gizmoGeometry(after, 1.0, 1.0, 1).value(QStringLiteral("valid")).toBool());
 
-    // Reset puts it back at rest, keeping the lens, in one undo step.
+    // Reset puts it back at rest, zoom included, in one undo step.
     state.project()->tracks()[track].clips[clip].perspective.setKeyframe(0, 1500.0);
     QVERIFY(state.preview()->resetSceneCamera());
-    const QVariantMap rest = state.preview()->cameraBox();
+    const QVariantMap rest = state.preview()->cameraBox(1);
     QCOMPARE(rest.value(QStringLiteral("x")).toDouble() + 0.5, 500.0);
-    QCOMPARE(rest.value(QStringLiteral("z")).toDouble(), 1500.0);
+    QVERIFY(std::abs(rest.value(QStringLiteral("z")).toDouble() + zoom) < 1e-3);
     QCOMPARE(rest.value(QStringLiteral("rotationY")).toDouble(), 0.0);
     state.undo();
-    QVERIFY(std::abs(state.preview()->cameraBox().value(QStringLiteral("rotationY")).toDouble()) > 1.0);
+    QVERIFY(std::abs(state.preview()->cameraBox(1).value(QStringLiteral("rotationY")).toDouble()) > 1.0);
     QVERIFY(!state.preview()->resetSceneCamera(0, 99));
 
     // Adding a camera again makes a new shot on the same lane, never one on top of another.
@@ -1158,8 +1102,7 @@ void EditorStateTest::cameraGizmoMovesAndTurnsTheEye()
     }
     state.setPlayheadSeconds(0.0);
 
-    state.preview()->setMode(QStringLiteral("2d"));
-    QVERIFY(state.preview()->cameraBox().isEmpty());
+    QVERIFY(state.preview()->cameraBox(0).isEmpty());
 }
 
 void EditorStateTest::compositeClipGetsAPreviewBox()
@@ -1443,6 +1386,74 @@ void EditorStateTest::transformLayerEntryPoints()
     QCOMPARE(state.project()->tracks().at(3).clips.size(), 1);
 }
 
+void EditorStateTest::linkedVideoMovesWithItsAudioAndAdjustments()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::Project &project = *state.project();
+    project.tracks().clear();
+    for (const auto &spec : {std::pair{QStringLiteral("v1"), drift::TrackType::Video},
+                             std::pair{QStringLiteral("v2"), drift::TrackType::Video},
+                             std::pair{QStringLiteral("a1"), drift::TrackType::Audio}}) {
+        drift::Track track{.type = spec.second};
+        track.id = spec.first;
+        project.tracks().append(track);
+    }
+    const auto makeClip = [](const QString &id, drift::ClipType type, drift::TimeUs start) {
+        drift::Clip clip;
+        clip.id = id;
+        clip.type = type;
+        clip.linkId = QStringLiteral("pair");
+        clip.timelineStart = start;
+        clip.timelineDuration = drift::secondsToUs(2.0);
+        clip.srcOut = clip.timelineDuration;
+        return clip;
+    };
+    project.tracks()[0].clips.append(makeClip(QStringLiteral("vid"), drift::ClipType::Video, 0));
+    project.tracks()[2].clips.append(makeClip(QStringLiteral("aud"), drift::ClipType::Audio, 0));
+    // A different clip already sitting where the audio is headed.
+    drift::Clip blocker = makeClip(QStringLiteral("blocker"), drift::ClipType::Audio,
+                                   drift::secondsToUs(3.0));
+    blocker.linkId.clear();
+    project.tracks()[2].clips.append(blocker);
+    drift::Mask mask;
+    mask.shape = drift::MaskShape::Ellipse;
+    drift::addLinkedMask(project, 0, 0, mask);
+
+    state.selectClip(0, 0);
+    state.moveClipToTrack(0, 0, project.trackIndexById(QStringLiteral("v2")), 2.0);
+
+    int videoTrack = -1;
+    int videoClip = -1;
+    int audioTrack = -1;
+    int audioClip = -1;
+    QVERIFY(drift::mcpdetail::findClipById(project, QStringLiteral("vid"), &videoTrack, &videoClip));
+    QVERIFY(drift::mcpdetail::findClipById(project, QStringLiteral("aud"), &audioTrack, &audioClip));
+    QCOMPARE(project.tracks().at(videoTrack).id, QStringLiteral("v2"));
+    QCOMPARE(project.tracks().at(videoTrack).clips.at(videoClip).timelineStart, drift::secondsToUs(2.0));
+    QCOMPARE(project.tracks().at(videoTrack).clips.at(videoClip).linkId, QStringLiteral("pair"));
+    QCOMPARE(project.tracks().at(audioTrack).clips.at(audioClip).timelineStart, drift::secondsToUs(2.0));
+    QCOMPARE(project.tracks().at(audioTrack).clips.at(audioClip).linkId, QStringLiteral("pair"));
+    // 2s..4s overlaps the blocker at 3s..5s, so the audio gets a new audio track.
+    QCOMPARE(project.tracks().at(audioTrack).type, drift::TrackType::Audio);
+    QVERIFY(project.tracks().at(audioTrack).id != QStringLiteral("a1"));
+
+    QCOMPARE(drift::linkedMaskAdjustments(project, videoTrack, videoClip).size(), 1);
+    QVERIFY(drift::linkedMaskAdjustments(project, 0, 0).isEmpty());
+    QCOMPARE(state.selectedTrack(), videoTrack);
+    QCOMPARE(state.selectedClip(), videoClip);
+
+    state.undo();
+    QVERIFY(drift::mcpdetail::findClipById(project, QStringLiteral("vid"), &videoTrack, &videoClip));
+    QVERIFY(drift::mcpdetail::findClipById(project, QStringLiteral("aud"), &audioTrack, &audioClip));
+    QCOMPARE(project.tracks().at(videoTrack).id, QStringLiteral("v1"));
+    QCOMPARE(project.tracks().at(audioTrack).id, QStringLiteral("a1"));
+    QCOMPARE(project.tracks().at(audioTrack).clips.size(), 2);
+    QCOMPARE(project.tracks().size(), 4);
+    QCOMPARE(state.selectedTrack(), videoTrack);
+    QCOMPARE(state.selectedClip(), videoClip);
+}
+
 // Pasting a clip whose kind has no track mints one at the top, pushing the tracks an earlier clip
 // of the same paste went to down a row; the selection used to point at the old positions.
 void EditorStateTest::pasteSelectsWhatItPastedWhenATrackIsAdded()
@@ -1479,6 +1490,33 @@ void EditorStateTest::pasteSelectsWhatItPastedWhenATrackIsAdded()
         kinds.insert(clip.type);
     }
     QCOMPARE(kinds, (QSet<drift::ClipType>{drift::ClipType::Shape, drift::ClipType::Text}));
+}
+
+void EditorStateTest::removeEmptyTracksKeepsPopulatedAndUndoes()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    setUpTwoClipSelection(library, state);
+    drift::Track emptyAudio;
+    emptyAudio.type = drift::TrackType::Audio;
+    state.project()->tracks().append(emptyAudio);
+    state.project()->ensureTrackIds();
+    const int before = state.project()->tracks().size();
+    QVERIFY(before >= 2);
+
+    QVERIFY(state.hasEmptyTracks());
+    const int removed = state.removeEmptyTracks();
+    QVERIFY(removed >= 1);
+    QCOMPARE(state.project()->tracks().size(), before - removed);
+    int clipCount = 0;
+    for (const drift::Track &track : state.project()->tracks())
+        clipCount += track.clips.size();
+    QCOMPARE(clipCount, 2);
+    QVERIFY(!state.hasEmptyTracks());
+    QCOMPARE(state.removeEmptyTracks(), 0);
+
+    state.undo();
+    QCOMPARE(state.project()->tracks().size(), before);
 }
 
 void EditorStateTest::compositeTabEditUndoesFromMain()
@@ -1518,6 +1556,62 @@ void EditorStateTest::compositeTabEditUndoesFromMain()
     state.closeSequenceTab(sequenceId);
     QVERIFY(state.activeSequenceId().isEmpty());
     QVERIFY(state.sequenceTabs().isEmpty());
+}
+
+void EditorStateTest::dissolveCompositeRoundTrip()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    setUpTwoClipSelection(library, state);
+    drift::Track second;
+    second.type = drift::TrackType::Video;
+    drift::Clip moved = state.project()->tracks()[0].clips.takeLast();
+    second.clips.append(moved);
+    state.project()->tracks().append(second);
+    state.project()->ensureTrackIds();
+    QCOMPARE(state.project()->tracks().size(), 2);
+    state.setSelection({QVariantMap{{QStringLiteral("track"), 0}, {QStringLiteral("clip"), 0}},
+                        QVariantMap{{QStringLiteral("track"), 1}, {QStringLiteral("clip"), 0}}});
+    state.makeCompositeFromSelection();
+    QCOMPARE(state.project()->sequenceIds().size(), 1);
+    QCOMPARE(library.count(), 2);
+
+    int compositeTrack = -1;
+    for (int t = 0; t < state.project()->tracks().size(); ++t) {
+        for (const drift::Clip &clip : state.project()->tracks().at(t).clips) {
+            if (clip.type == drift::ClipType::Composite)
+                compositeTrack = t;
+        }
+    }
+    QVERIFY(compositeTrack >= 0);
+    QVERIFY(state.canDissolveComposite(compositeTrack, 0));
+    state.dissolveComposite(compositeTrack, 0);
+
+    const drift::Project &project = *state.project();
+    QVERIFY(project.sequenceIds().isEmpty());
+    QCOMPARE(library.count(), 1);
+    QList<drift::TimeUs> starts;
+    int clips = 0;
+    int occupied = 0;
+    for (const drift::Track &track : project.tracks()) {
+        QCOMPARE(track.type, drift::TrackType::Video);
+        if (!track.clips.isEmpty())
+            ++occupied;
+        for (const drift::Clip &clip : track.clips) {
+            ++clips;
+            QCOMPARE(clip.type, drift::ClipType::Video);
+            QCOMPARE(clip.timelineDuration, drift::secondsToUs(5.0));
+            starts.append(clip.timelineStart);
+        }
+    }
+    std::sort(starts.begin(), starts.end());
+    QCOMPARE(clips, 2);
+    QCOMPARE(starts, (QList<drift::TimeUs>{drift::secondsToUs(1.0), drift::secondsToUs(10.0)}));
+    QCOMPARE(state.selection().size(), 2);
+    QVERIFY(occupied >= 1);
+
+    state.undo();
+    QCOMPARE(project.sequenceIds().size(), 1);
 }
 
 void EditorStateTest::compositeSeparateAudioAndRemoval()
@@ -1646,6 +1740,239 @@ void EditorStateTest::undoBookmarkAdd()
     QVERIFY(state.undoAvailable());
     state.undo();
     QCOMPARE(state.bookmarks().size(), 0);
+}
+
+void EditorStateTest::undoHistorySurvivesSaveAndLoad()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    for (int i = 0; i < 60; ++i)
+        state.addBookmark(i + 1.0, QStringLiteral("B%1").arg(i));
+    QCOMPARE(state.bookmarks().size(), 60);
+    state.undo();
+    state.undo();
+    QCOMPARE(state.bookmarks().size(), 58);
+    const QByteArray saved = state.serializeProjectJson();
+
+    AppController reopened(&library);
+    QString error;
+    QVERIFY2(reopened.applyProjectJson(saved, &error), qPrintable(error));
+    QCOMPARE(reopened.bookmarks().size(), 58);
+    QCOMPARE(reopened.m_undoStack.count(), 60);
+    QCOMPARE(reopened.undoIndex(), 58);
+    QVERIFY(reopened.undoAvailable());
+    QVERIFY(reopened.redoAvailable());
+    QVERIFY(!reopened.m_projectFile->hasUnsavedChanges());
+
+    reopened.redo();
+    reopened.redo();
+    QCOMPARE(reopened.bookmarks().size(), 60);
+    reopened.undo();
+    reopened.undo();
+    reopened.undo();
+    QCOMPARE(reopened.bookmarks().size(), 57);
+
+    reopened.addBookmark(100.0, QStringLiteral("New"));
+    QVERIFY(!reopened.redoAvailable());
+    QCOMPARE(reopened.m_undoStack.count(), 58);
+
+    AppController legacy(&library);
+    QJsonObject root = QJsonDocument::fromJson(saved).object();
+    root.remove(QStringLiteral("undoHistory"));
+    QVERIFY(legacy.applyProjectJson(QJsonDocument(root).toJson(), &error));
+    QCOMPARE(legacy.bookmarks().size(), 58);
+    QVERIFY(!legacy.undoAvailable());
+    QVERIFY(!legacy.redoAvailable());
+
+    // States are plain JSON objects, one per distinct project content.
+    const QJsonObject history = QJsonDocument::fromJson(saved).object().value(QStringLiteral("undoHistory")).toObject();
+    QVERIFY(!history.contains(QStringLiteral("blobs")));
+    QCOMPARE(history.value(QStringLiteral("states")).toArray().size(), 61);
+    QVERIFY(history.value(QStringLiteral("states")).toArray().at(0).isObject());
+    QCOMPARE(history.value(QStringLiteral("steps")).toArray().size(), 60);
+}
+
+void EditorStateTest::savedBundleKeepsHistoryAndShrinksIt()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    for (int i = 0; i < 6; ++i)
+        state.addTextClip(QStringLiteral("Title %1 with a reasonably long caption").arg(i), i * 2.0);
+    for (int i = 0; i < 50; ++i)
+        state.addBookmark(i + 1.0, QStringLiteral("Bookmark %1").arg(i));
+    state.undo();
+    state.undo();
+    const int steps = state.m_undoStack.count();
+    const int index = state.undoIndex();
+    QVERIFY(steps >= 50);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("history.drift"));
+    state.projectFile()->saveProject(QUrl::fromLocalFile(path));
+    QVERIFY(state.projectFile()->saveInFlight());
+    state.projectFile()->waitForSave();
+    QVERIFY(!state.projectFile()->saveInFlight());
+    QVERIFY(!state.projectFile()->hasUnsavedChanges());
+    QCOMPARE(state.lastMessage(), QStringLiteral("Project saved"));
+
+    // What the first design stored: every state compressed and base64-encoded on its own.
+    qint64 perStateBytes = 0;
+    {
+        const QJsonObject history = QJsonDocument::fromJson(state.serializeProjectJson())
+                                        .object().value(QStringLiteral("undoHistory")).toObject();
+        for (const QJsonValue &value : history.value(QStringLiteral("states")).toArray()) {
+            const QByteArray json = QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact);
+            perStateBytes += qCompress(json, 6).toBase64().size();
+        }
+    }
+    const qint64 bundleBytes = QFileInfo(path).size();
+    qInfo() << "history steps" << steps << "per-state qCompress+base64 bytes" << perStateBytes
+            << "bundle bytes" << bundleBytes;
+    QVERIFY(bundleBytes < perStateBytes);
+
+    AppController reopened(&library);
+    reopened.projectFile()->loadProject(QUrl::fromLocalFile(path));
+    QTRY_VERIFY(!reopened.projectFile()->projectLoadPending());
+    QCOMPARE(reopened.m_undoStack.count(), steps);
+    QCOMPARE(reopened.undoIndex(), index);
+    QVERIFY(reopened.redoAvailable());
+    reopened.redo();
+    reopened.redo();
+    QCOMPARE(reopened.bookmarks().size(), 50);
+}
+
+void EditorStateTest::editDuringSaveKeepsProjectModified()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    state.addBookmark(1.0, QStringLiteral("Before"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("edited.drift"));
+    state.projectFile()->saveProject(QUrl::fromLocalFile(path));
+    // The completion is queued behind this call, so this edit lands after the snapshot.
+    state.addBookmark(2.0, QStringLiteral("During"));
+    state.projectFile()->waitForSave();
+    QVERIFY(state.projectFile()->hasUnsavedChanges());
+    QCOMPARE(state.projectFile()->currentProjectPath(), path);
+
+    AppController reopened(&library);
+    reopened.projectFile()->loadProject(QUrl::fromLocalFile(path));
+    QTRY_VERIFY(!reopened.projectFile()->projectLoadPending());
+    QCOMPARE(reopened.bookmarks().size(), 1);
+
+    state.projectFile()->saveProject(QUrl::fromLocalFile(path));
+    state.projectFile()->waitForSave();
+    QVERIFY(!state.projectFile()->hasUnsavedChanges());
+}
+
+void EditorStateTest::overlappingSavesRunInOrder()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    state.addBookmark(1.0, QStringLiteral("One"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath(QStringLiteral("first.drift"));
+    const QString second = dir.filePath(QStringLiteral("second.drift"));
+    state.projectFile()->saveProject(QUrl::fromLocalFile(first));
+    state.addBookmark(2.0, QStringLiteral("Two"));
+    state.projectFile()->saveProject(QUrl::fromLocalFile(second));
+    state.projectFile()->waitForSave();
+
+    QVERIFY(!state.projectFile()->saveInFlight());
+    QVERIFY(!state.projectFile()->hasUnsavedChanges());
+    QCOMPARE(state.projectFile()->currentProjectPath(), second);
+
+    AppController a(&library);
+    a.projectFile()->loadProject(QUrl::fromLocalFile(first));
+    QTRY_VERIFY(!a.projectFile()->projectLoadPending());
+    QCOMPARE(a.bookmarks().size(), 1);
+    AppController b(&library);
+    b.projectFile()->loadProject(QUrl::fromLocalFile(second));
+    QTRY_VERIFY(!b.projectFile()->projectLoadPending());
+    QCOMPARE(b.bookmarks().size(), 2);
+}
+
+void EditorStateTest::recoveryFileIsCompressedAndRestores()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+    const QString recovery = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                           + QStringLiteral("/recovery/autosave.json");
+    QFile::remove(recovery);
+    const auto cleanup = qScopeGuard([recovery] { QFile::remove(recovery); });
+
+    AssetLibrary library;
+    {
+        AppController state(&library);
+        for (int i = 0; i < 20; ++i)
+            state.addBookmark(i + 1.0, QStringLiteral("B%1").arg(i));
+        state.undo();
+        QVERIFY(state.projectFile()->hasUnsavedChanges());
+        state.projectFile()->flushRecoverySnapshot();
+        QTRY_VERIFY(QFileInfo::exists(recovery));
+    }
+    QFile file(recovery);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.read(4), QByteArray("\x28\xb5\x2f\xfd", 4));
+    file.close();
+
+    AppController reopened(&library);
+    QVERIFY(reopened.projectFile()->recoveryAvailable());
+    reopened.projectFile()->restoreAutosave();
+    QTRY_VERIFY(!reopened.projectFile()->projectLoadPending());
+    QCOMPARE(reopened.bookmarks().size(), 19);
+    QCOMPARE(reopened.m_undoStack.count(), 20);
+    QCOMPARE(reopened.undoIndex(), 19);
+    QVERIFY(reopened.redoAvailable());
+}
+
+void EditorStateTest::legacyPlainRecoveryFileStillRestores()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+    const QString recovery = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                           + QStringLiteral("/recovery/autosave.json");
+    QDir().mkpath(QFileInfo(recovery).absolutePath());
+    const auto cleanup = qScopeGuard([recovery] { QFile::remove(recovery); });
+
+    AssetLibrary library;
+    {
+        AppController state(&library);
+        for (int i = 0; i < 5; ++i)
+            state.addBookmark(i + 1.0, QStringLiteral("B%1").arg(i));
+        QJsonObject root = QJsonDocument::fromJson(state.serializeProjectJson()).object();
+        root.insert(QStringLiteral("__recovery"),
+                    QJsonObject{{QStringLiteral("originalPath"), QString()},
+                                {QStringLiteral("projectName"), QStringLiteral("Legacy")},
+                                {QStringLiteral("savedAt"), QStringLiteral("2026-01-01T00:00:00")}});
+        QFile::remove(recovery);
+        QFile file(recovery);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    }
+
+    AppController reopened(&library);
+    QVERIFY(reopened.projectFile()->recoveryAvailable());
+    QCOMPARE(reopened.projectFile()->recoveryInfo().value(QStringLiteral("projectName")).toString(),
+             QStringLiteral("Legacy"));
+    reopened.projectFile()->restoreAutosave();
+    QTRY_VERIFY(!reopened.projectFile()->projectLoadPending());
+    QCOMPARE(reopened.bookmarks().size(), 5);
+    QCOMPARE(reopened.m_undoStack.count(), 5);
 }
 
 void EditorStateTest::bookmarkNavigationAndToggle()
@@ -2925,6 +3252,8 @@ void EditorStateTest::projectPersistenceRoundTrip()
     tempFile.close();
 
     state.projectFile()->saveProject(QUrl::fromLocalFile(tempFile.fileName()));
+
+    state.projectFile()->waitForSave();
     state.projectFile()->loadProject(QUrl::fromLocalFile(tempFile.fileName()));
     QTRY_VERIFY(!state.projectFile()->projectLoadPending());
 
@@ -2951,12 +3280,16 @@ void EditorStateTest::saveProjectAsDuplicatesProject()
     const QString copyPath = dir.filePath(QStringLiteral("wedding-short.drift"));
 
     state.projectFile()->saveProject(QUrl::fromLocalFile(originalPath));
+
+    state.projectFile()->waitForSave();
     QCOMPARE(state.projectFile()->currentProjectPath(), originalPath);
     const QString originalId = state.project()->id();
     const QByteArray originalBytes = readFile(originalPath);
     QVERIFY(!originalBytes.isEmpty());
 
     state.projectFile()->saveProjectAs(QUrl::fromLocalFile(copyPath));
+
+    state.projectFile()->waitForSave();
     QCOMPARE(state.lastMessage(), QStringLiteral("Saved a copy"));
     QVERIFY(!state.projectFile()->hasUnsavedChanges());
     // The session continues in the copy, and the copy is its own project.
@@ -2973,6 +3306,7 @@ void EditorStateTest::saveProjectAsDuplicatesProject()
     // Editing the copy and saving must still leave the original alone.
     state.addTextClip(QStringLiteral("Only in the copy"), 5.0);
     state.projectFile()->saveProject(QUrl::fromLocalFile(copyPath));
+    state.projectFile()->waitForSave();
     QCOMPARE(readFile(originalPath), originalBytes);
 
     const auto clipCount = [&state]() {
@@ -3011,6 +3345,8 @@ void EditorStateTest::projectJsonExportImportRoundTrip()
     const QString driftPath = dir.filePath(QStringLiteral("project.drift"));
 
     state.projectFile()->saveProject(QUrl::fromLocalFile(driftPath));
+
+    state.projectFile()->waitForSave();
     QVERIFY(!state.projectFile()->hasUnsavedChanges());
     QCOMPARE(state.projectFile()->currentProjectPath(), driftPath);
 
@@ -5077,6 +5413,272 @@ void EditorStateTest::keyframePreviewStretchScalesOffsetAndTangent()
     QCOMPARE(moved.value(QStringLiteral("outDx")).toDouble(), 2.0 * second.value(QStringLiteral("outDx")).toDouble());
 }
 
+void EditorStateTest::keyframeRowsModelDiffsRebuildsAndNavigates()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.addTextClip(QStringLiteral("Rows"), 0.0);
+    const int track = state.selectedTrack();
+    const int clip = state.selectedClip();
+    state.setPositionLinked(false);
+    state.setClipKeyframe(track, clip, QStringLiteral("rotation"), 1.0, 10.0);
+    state.setClipKeyframe(track, clip, QStringLiteral("rotation"), 2.0, 20.0);
+
+    KeyframeTimeView view;
+    KeyframeRowsModel model;
+    model.setController(state.keyframes());
+    model.setTimeView(&view);
+    model.setProperty("track", track);
+    model.setProperty("clip", clip);
+    QSignalSpy inserted(&model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy removed(&model, &QAbstractItemModel::rowsRemoved);
+
+    model.rebuild();
+    QVERIFY(model.rowCount() > 1);
+    QCOMPARE(model.index(0, 0).data(KeyframeRowsModel::RowKeyRole).toString(), QStringLiteral("g:transform"));
+    int rotationRow = -1;
+    for (int i = 0; i < model.rowCount(); ++i) {
+        if (model.rowAt(i).value(QStringLiteral("prop")).toString() == QLatin1String("rotation"))
+            rotationRow = i;
+    }
+    QVERIFY(rotationRow > 0);
+    QCOMPARE(model.rowAt(rotationRow).value(QStringLiteral("keys")).toList().size(), 2);
+
+    const int rowsBefore = model.rowCount();
+    const int insertedBefore = inserted.count();
+    model.rebuild();
+    QCOMPARE(model.rowCount(), rowsBefore);
+    QCOMPARE(inserted.count(), insertedBefore);
+    QCOMPARE(removed.count(), 0);
+
+    QCOMPARE(model.nextKeyTime({rotationRow}, 1.0), 2.0);
+    QCOMPARE(model.prevKeyTime({rotationRow}, 2.0), 1.0);
+    QCOMPARE(model.prevKeyTime({rotationRow}, 1.0), -1.0);
+    QCOMPARE(model.refsAt(rotationRow, 1.0, 1e-4).size(), 1);
+    QVERIFY(model.allVisibleKeyRefs().size() >= 2);
+
+    const QVariantList targets = model.targetIndices({QStringLiteral("rotation")}, QString());
+    QCOMPARE(targets, QVariantList{rotationRow});
+    QVERIFY(model.targetsHaveKeys(targets));
+    QVERIFY(model.allTargetsKeyed(targets, 1.0, 0.01));
+    QVERIFY(!model.allTargetsKeyed(targets, 1.5, 0.01));
+    QCOMPARE(model.targetTracks(targets), QStringList{QStringLiteral("rotation")});
+
+    view.setPxPerSecond(100);
+    const double lanePx = 40;
+    const QVariantMap hit = model.hitTest(view.xFor(1.0) + 2, rotationRow * lanePx + 5, 0, lanePx, 6);
+    QCOMPARE(hit.value(QStringLiteral("row")).toInt(), rotationRow);
+    QCOMPARE(hit.value(QStringLiteral("seconds")).toDouble(), 1.0);
+
+    // Snapping lands on the frame grid and the playhead; the moved key itself is no target.
+    view.setClipStart(0.0);
+    view.setClipDuration(10.0);
+    const QVariantList self{QVariantMap{{QStringLiteral("prop"), QStringLiteral("rotation")},
+                                        {QStringLiteral("seconds"), 1.0}}};
+    const double fps = state.projectFile()->projectFps();
+    QCOMPARE(model.moveDelta(1.0, 0.0, self, true, false), 0.0);
+    QVERIFY(qAbs(model.moveDelta(1.0, 50.3, self, true, false) - std::round(0.503 * fps) / fps) < 1e-9);
+
+    model.setProperty("animatedOnly", true);
+    model.rebuild();
+    QVERIFY(model.rowCount() < rowsBefore);
+    QVERIFY(removed.count() > 0);
+    model.clear();
+    QCOMPARE(model.rowCount(), 0);
+}
+
+void EditorStateTest::keyframeMoveReportsCollisions()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.addTextClip(QStringLiteral("Collide"), 0.0);
+    const int track = state.selectedTrack();
+    const int clip = state.selectedClip();
+    const QString rotation = QStringLiteral("rotation");
+    state.setPositionLinked(false);
+    state.setClipKeyframe(track, clip, rotation, 1.0, 10.0);
+    state.setClipKeyframe(track, clip, rotation, 2.0, 20.0);
+
+    QSignalSpy spy(state.keyframes(), &KeyframeController::collisionsChanged);
+    const QVariantList press{QVariantMap{{QStringLiteral("prop"), rotation}, {QStringLiteral("seconds"), 1.0}}};
+    state.keyframes()->previewMoveKeys(track, clip, press, 1.0);
+    QCOMPARE(state.keyframes()->collisions().size(), 1);
+    QVERIFY(state.keyframes()->collidesWith(QVariantList{QVariantMap{{QStringLiteral("prop"), rotation},
+                                                                       {QStringLiteral("seconds"), 2.0}}}));
+    state.keyframes()->previewMoveKeys(track, clip, press, 0.5);
+    QVERIFY(state.keyframes()->collisions().isEmpty());
+    QVERIFY(spy.count() >= 2);
+    state.keyframes()->previewMoveKeys(track, clip, press, 1.0);
+    state.keyframes()->clearCollisions();
+    QVERIFY(state.keyframes()->collisions().isEmpty());
+    state.cancelPreviewDrag();
+}
+
+void EditorStateTest::keyframeNudgesFoldIntoOneUndoStep()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.addTextClip(QStringLiteral("Nudge"), 0.0);
+    const int track = state.selectedTrack();
+    const int clip = state.selectedClip();
+    const QString rotation = QStringLiteral("rotation");
+    state.setPositionLinked(false);
+    state.setClipKeyframe(track, clip, rotation, 1.0, 10.0);
+    state.setClipKeyframe(track, clip, rotation, 3.0, 20.0);
+
+    const double step = 1.0 / std::max(1, state.projectFile()->projectFps());
+    QVariantList sel{QVariantMap{{QStringLiteral("prop"), rotation}, {QStringLiteral("seconds"), 1.0}}};
+    for (int i = 0; i < 3; ++i) {
+        sel = state.keyframes()->nudgeKeys(track, clip, sel, step);
+        QCOMPARE(sel.size(), 1);
+    }
+    QVERIFY(qAbs(sel.first().toMap().value(QStringLiteral("seconds")).toDouble() - (1.0 + 3 * step)) < 1e-4);
+    QVERIFY(state.previewDragActive());
+    state.commitPreviewDrag();
+
+    state.undo();
+    const QVariantList keys = state.clipKeyframes(track, clip, rotation);
+    QCOMPARE(keys.size(), 2);
+    QVERIFY(qAbs(keys.first().toMap().value(QStringLiteral("seconds")).toDouble() - 1.0) < 1e-6);
+}
+
+void EditorStateTest::keyframeScaleMoveCarriesItsPins()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.addTextClip(QStringLiteral("Pins"), 0.0);
+    const int track = state.selectedTrack();
+    const int clip = state.selectedClip();
+    state.setPositionLinked(false);
+    const QString x = QStringLiteral("x");
+    const QString y = QStringLiteral("y");
+    const QString width = QStringLiteral("width");
+    const QString height = QStringLiteral("height");
+
+    state.keyframes()->addKeysAt(track, clip, {width, height}, 1.0);
+    state.setClipKeyframe(track, clip, x, 1.01, 5.0);
+    state.setClipKeyframe(track, clip, x, 2.0, 7.0);
+    const auto has = [&](const QString &prop, double seconds) {
+        for (const QVariant &k : state.clipKeyframes(track, clip, prop)) {
+            if (qAbs(k.toMap().value(QStringLiteral("seconds")).toDouble() - seconds) < 1e-4)
+                return true;
+        }
+        return false;
+    };
+    const auto count = [&](const QString &prop) { return state.clipKeyframes(track, clip, prop).size(); };
+    const int xCount = count(x);
+    const int yCount = count(y);
+    QVERIFY(has(x, 1.0) && has(x, 1.01) && has(x, 2.0) && has(y, 1.0) && has(width, 1.0));
+
+    const auto ref = [](const QString &prop, double seconds) {
+        return QVariantMap{{QStringLiteral("prop"), prop}, {QStringLiteral("seconds"), seconds}};
+    };
+    const QVariantList scale{ref(width, 1.0), ref(height, 1.0)};
+    state.keyframes()->previewMoveKeys(track, clip, scale, 0.5);
+    state.keyframes()->previewMoveKeys(track, clip, scale, 0.75);
+    QVERIFY(has(width, 1.75) && has(height, 1.75));
+    QVERIFY(has(y, 1.75) && !has(y, 1.0));
+    QVERIFY(has(x, 1.75) && !has(x, 1.0));
+    QVERIFY(has(x, 1.01) && has(x, 2.0));
+    QCOMPARE(count(x), xCount);
+    QCOMPARE(count(y), yCount);
+
+    state.commitPreviewDrag();
+    state.undo();
+    QVERIFY(has(width, 1.0) && has(height, 1.0));
+    QVERIFY(has(x, 1.0) && has(y, 1.0) && has(x, 1.01) && has(x, 2.0));
+    QVERIFY(!has(x, 1.75) && !has(y, 1.75));
+}
+
+void EditorStateTest::keyframeCurvesModelHitTestsMarqueesAndFits()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.addTextClip(QStringLiteral("Curves"), 0.0);
+    const int track = state.selectedTrack();
+    const int clip = state.selectedClip();
+    state.setPositionLinked(false);
+    const QString rotation = QStringLiteral("rotation");
+    state.setClipKeyframe(track, clip, rotation, 1.0, 10.0);
+    state.setClipKeyframe(track, clip, rotation, 2.0, 20.0);
+
+    KeyframeTimeView view;
+    view.setPxPerSecond(100);
+    KeyframeRowsModel rows;
+    rows.setController(state.keyframes());
+    rows.setTimeView(&view);
+    rows.setProperty("track", track);
+    rows.setProperty("clip", clip);
+    rows.rebuild();
+    KeyframeSelection selection;
+    KeyframeCurvesModel curves;
+    curves.setRowsModel(&rows);
+    curves.setSelection(&selection);
+    curves.setGraphMargin(8);
+    curves.setViewHeight(116);
+    QCOMPARE(curves.graphHeight(), 100.0);
+    curves.setCurveShown({{rotation, true}});
+    QCOMPARE(curves.count(), 1);
+
+    QVERIFY(qAbs(curves.vMin() - 9.0) < 1e-9);
+    QVERIFY(qAbs(curves.vMax() - 21.0) < 1e-9);
+    QVERIFY(qAbs(curves.screenY(10.0, 0) - (8 + 100 - 100.0 / 12)) < 1e-6);
+    QVERIFY(qAbs(curves.valueForY(curves.screenY(15.0, 0) - 8, 0) - 15.0) < 1e-6);
+
+    const double y1 = curves.screenY(10.0, 0);
+    const QVariantMap hit = curves.hitTest(view.xFor(1.0) + 2, y1 + 1, 6);
+    QCOMPARE(hit.value(QStringLiteral("seconds")).toDouble(), 1.0);
+    QCOMPARE(hit.value(QStringLiteral("entryIndex")).toInt(), 0);
+    QCOMPARE(hit.value(QStringLiteral("refs")).toList().size(), 1);
+    const QVariantMap miss = curves.hitTest(view.xFor(1.0) + 40, y1, 6);
+    QVERIFY(!miss.value(QStringLiteral("dot")).isValid() || miss.value(QStringLiteral("dot")).isNull());
+    QCOMPARE(miss.value(QStringLiteral("row")).toInt(), -1);
+    QCOMPARE(miss.value(QStringLiteral("seconds")).toDouble(), 1.4);
+
+    const QVariantList base{QVariantMap{{QStringLiteral("prop"), QStringLiteral("z")}, {QStringLiteral("seconds"), 9.0}}};
+    QCOMPARE(curves.marqueeRefs(50, 150, 0, 200, base).size(), 2);
+    QCOMPARE(curves.marqueeRefs(50, 250, 0, 200, base).size(), 3);
+    QCOMPARE(curves.marqueeRefs(150, 250, 0, 40, {}).size(), 1);
+    QCOMPARE(curves.marqueeRefs(150, 250, 150, 200, {}).size(), 0);
+
+    selection.replace({QVariantMap{{QStringLiteral("prop"), rotation}, {QStringLiteral("seconds"), 2.0}}});
+    curves.fitValues(true);
+    QVERIFY(qAbs(curves.vMin() - 18.0) < 1e-9 && qAbs(curves.vMax() - 22.0) < 1e-9);
+    selection.clear();
+    curves.fitValues(true);
+    QVERIFY(qAbs(curves.vMin() - 9.0) < 1e-9 && qAbs(curves.vMax() - 21.0) < 1e-9);
+
+    curves.lockRanges();
+    curves.panValuesBy(50);
+    QVERIFY(qAbs(curves.vMin() - 15.0) < 1e-9);
+    QVERIFY(qAbs(curves.series().first().toMap().value(QStringLiteral("valueMin")).toDouble() - 9.0) < 1e-9);
+    QVERIFY(qAbs(curves.valueDelta(rotation, -100) - 12.0) < 1e-9);
+    curves.unlockRanges();
+    QVERIFY(qAbs(curves.series().first().toMap().value(QStringLiteral("valueMin")).toDouble() - 15.0) < 1e-9);
+    QCOMPARE(curves.valueDelta(rotation, -100), 0.0);
+
+    curves.setNormalize(true);
+    const QVariantMap own = curves.series().first().toMap();
+    QCOMPARE(own.value(QStringLiteral("valueMin")).toDouble(), -180.0);
+    QCOMPARE(own.value(QStringLiteral("valueMax")).toDouble(), 180.0);
+}
+
+void EditorStateTest::keyframeScaleMathMatchesTheCanvasBox()
+{
+    QCOMPARE(KeyframeController::scaleOf(960, 540, 1920, 1080), 0.5);
+    QCOMPARE(KeyframeController::scaleOf(1920, 400, 1920, 1080), 1.0);
+    const QVariantMap start{{QStringLiteral("x"), 100.0}, {QStringLiteral("y"), 50.0}, {QStringLiteral("w"), 200.0},
+                            {QStringLiteral("h"), 100.0}, {QStringLiteral("scale"), 0.5}, {QStringLiteral("rot"), 0.0}};
+    const QVariantMap centred = KeyframeController::scaledRect(start, 1.0, QPointF(0.5, 0.5));
+    QCOMPARE(centred.value(QStringLiteral("k")).toDouble(), 2.0);
+    QCOMPARE(centred.value(QStringLiteral("w")).toDouble(), 400.0);
+    QCOMPARE(centred.value(QStringLiteral("x")).toDouble(), 0.0);
+    QCOMPARE(centred.value(QStringLiteral("y")).toDouble(), 0.0);
+    const QVariantMap corner = KeyframeController::scaledRect(start, 1.0, QPointF(0.0, 0.0));
+    QCOMPARE(corner.value(QStringLiteral("x")).toDouble(), 100.0);
+    QCOMPARE(corner.value(QStringLiteral("y")).toDouble(), 50.0);
+}
+
 void EditorStateTest::keyframeCopyPasteRemapsEffectsAndSkipsOutOfRange()
 {
     AssetLibrary library;
@@ -7051,6 +7653,28 @@ void EditorStateTest::compositorRequestDedupKeepsEveryOption()
     FrameCompositor::RenderOptions noProxies = exact;
     noProxies.allowProxies = false;
     QVERIFY(!CompositorService::isRedundantRequest(1000, noProxies, 1000, exact));
+}
+
+// One worker serves both preview streams: whichever has something to draw goes next after the
+// stream served last, so neither starves, and a stream with nothing new is skipped.
+void EditorStateTest::compositorStreamsTakeTurns()
+{
+    const bool both[kPreviewStreamCount] = {true, true};
+    QCOMPARE(CompositorService::nextStreamToServe(0, both), 1);
+    QCOMPARE(CompositorService::nextStreamToServe(1, both), 0);
+
+    const bool onlyCamera[kPreviewStreamCount] = {true, false};
+    QCOMPARE(CompositorService::nextStreamToServe(0, onlyCamera), 0);
+    QCOMPARE(CompositorService::nextStreamToServe(1, onlyCamera), 0);
+
+    const bool none[kPreviewStreamCount] = {false, false};
+    QCOMPARE(CompositorService::nextStreamToServe(0, none), -1);
+
+    FrameCompositor::RenderOptions camera;
+    FrameCompositor::RenderOptions editor;
+    editor.editor.active = true;
+    editor.editor.serial = 5;
+    QVERIFY(!CompositorService::isRedundantRequest(1000, editor, 1000, camera));
 }
 
 void EditorStateTest::movedClipDoesNotSnapToItsOwnEdges()
@@ -11298,6 +11922,98 @@ void EditorStateTest::maskingPolygonMaskIsCreated()
     QCOMPARE(mask.points.at(2), QPointF(0.5, 0.8));
 }
 
+// The Shape picker owns one mask per clip: a new shape replaces it, and Original removes only it.
+void EditorStateTest::clipShapeReplacesItsMaskAndOriginalRemovesOnlyIt()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+
+    state.masking()->addPolygonMask(0, 0, QVariantList{maskVertex(0.2, 0.2), maskVertex(0.8, 0.2),
+                                                       maskVertex(0.5, 0.8)});
+    QCOMPARE(state.masking()->clipShape(0, 0), QStringLiteral("original"));
+
+    const auto shapeMasks = [&state]() {
+        QList<drift::Mask> found;
+        for (const drift::ClipRef &ref : drift::linkedMaskAdjustments(*state.project(), 0, 0)) {
+            const drift::Mask &mask = state.project()->tracks().at(ref.trackIndex).clips.at(ref.clipIndex).mask;
+            if (!mask.cropShape.isEmpty())
+                found.append(mask);
+        }
+        return found;
+    };
+
+    state.masking()->setClipShape(0, 0, QStringLiteral("hexagon"));
+    QCOMPARE(state.masking()->clipShape(0, 0), QStringLiteral("hexagon"));
+    QCOMPARE(drift::linkedMaskAdjustments(*state.project(), 0, 0).size(), 2);
+    QCOMPARE(shapeMasks().size(), 1);
+    QCOMPARE(shapeMasks().constFirst().points.size(), 6);
+    QCOMPARE(shapeMasks().constFirst().op, drift::MaskOp::Intersect);
+
+    for (const drift::ClipRef &ref : drift::linkedMaskAdjustments(*state.project(), 0, 0)) {
+        const drift::Clip &adjustment = state.project()->tracks().at(ref.trackIndex).clips.at(ref.clipIndex);
+        QCOMPARE(adjustment.timelineStart, state.project()->tracks().at(0).clips.at(0).timelineStart);
+        QCOMPARE(adjustment.timelineDuration, state.project()->tracks().at(0).clips.at(0).timelineDuration);
+        QVERIFY(!state.project()->tracks().at(ref.trackIndex).hidden);
+    }
+
+    // The shape mask renders last even though the other mask sits on a later lane.
+    const QList<drift::LaneMask> ordered = drift::laneMasksAt(*state.project(), 0, 0, QStringLiteral("clip-0"));
+    QCOMPARE(ordered.size(), 2);
+    QVERIFY(ordered.constLast().mask.cropShape == QStringLiteral("hexagon"));
+
+    state.masking()->setClipShape(0, 0, QStringLiteral("circle"));
+    QCOMPARE(drift::linkedMaskAdjustments(*state.project(), 0, 0).size(), 2);
+    QCOMPARE(shapeMasks().size(), 1);
+    QCOMPARE(shapeMasks().constFirst().shape, drift::MaskShape::Ellipse);
+    // 16:9 canvas: the circle takes the shorter side, so it is narrower than the frame.
+    QVERIFY(qFuzzyCompare(shapeMasks().constFirst().w * 1920.0, shapeMasks().constFirst().h * 1080.0));
+    QVERIFY(shapeMasks().constFirst().w < 1.0);
+
+    state.masking()->setClipShape(0, 0, QStringLiteral("original"));
+    QCOMPARE(state.masking()->clipShape(0, 0), QStringLiteral("original"));
+    const QList<drift::ClipRef> left = drift::linkedMaskAdjustments(*state.project(), 0, 0);
+    QCOMPARE(left.size(), 1);
+    QCOMPARE(state.project()->tracks().at(left.constFirst().trackIndex).clips.at(left.constFirst().clipIndex).mask.shape,
+             drift::MaskShape::Freeform);
+
+    state.undo();
+    QCOMPARE(state.masking()->clipShape(0, 0), QStringLiteral("circle"));
+}
+
+// Reframing moves the source window at a fixed aspect, so the clip's box and shape do not change.
+void EditorStateTest::clipReframeKeepsTheBoxAndOneUndoStep()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.masking()->setClipShape(0, 0, QStringLiteral("star"));
+
+    state.masking()->setReframe(0, 0, 2.0, 0.5, 0.5);
+    QRectF frame = state.project()->tracks().at(0).clips.at(0).sourceFrame;
+    QVERIFY(qFuzzyCompare(frame.width(), 0.5));
+    QVERIFY(qFuzzyCompare(frame.height(), 0.5));
+    QVERIFY(qFuzzyCompare(state.masking()->reframe(0, 0).value(QStringLiteral("zoom")).toDouble(), 2.0));
+
+    const int undoBefore = state.undoIndex();
+    state.masking()->previewReframe(0, 0, 3.0, 0.5, 0.5);
+    state.masking()->previewReframe(0, 0, 4.0, 1.0, 0.0);
+    state.commitPreviewDrag();
+    QCOMPARE(state.undoIndex(), undoBefore + 1);
+    frame = state.project()->tracks().at(0).clips.at(0).sourceFrame;
+    QVERIFY(qFuzzyCompare(frame.width(), 0.25));
+    QVERIFY(qFuzzyIsNull(frame.x()));
+    QVERIFY(qFuzzyCompare(frame.y(), 0.75));
+
+    state.masking()->centerReframe(0, 0);
+    frame = state.project()->tracks().at(0).clips.at(0).sourceFrame;
+    QVERIFY(qFuzzyCompare(frame.x(), 0.375));
+
+    state.masking()->showWholeVideo(0, 0);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(0).sourceFrame, QRectF(0, 0, 1, 1));
+    QCOMPARE(state.masking()->clipShape(0, 0), QStringLiteral("star"));
+}
+
 // Shape animation on a polygon: keys are stored relative to the adjustment's start, and every
 // read or write takes timeline seconds.
 void EditorStateTest::maskingPathKeysAnimateShape()
@@ -11353,6 +12069,177 @@ void EditorStateTest::maskingPathKeysAnimateShape()
     QVERIFY(maskOf().points == remaining);
 }
 
+namespace {
+
+drift::Clip &pinnedMaskClip(AppController &state)
+{
+    const QList<drift::ClipRef> pinned = drift::linkedMaskAdjustments(*state.project(), 0, 0);
+    return state.project()->tracks()[pinned.constFirst().trackIndex].clips[pinned.constFirst().clipIndex];
+}
+
+} // namespace
+
+void EditorStateTest::maskEditSessionMovesVertexOnStaticMask()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.masking()->addPolygonMask(0, 0, QVariantList{maskVertex(0.2, 0.2), maskVertex(0.8, 0.2),
+                                                       maskVertex(0.5, 0.8)});
+    MaskEditSession *session = state.masking()->editSession();
+    const QString id = pinnedMaskClip(state).id;
+
+    QVERIFY(!session->begin(QStringLiteral("missing"), 100, 100));
+    QVERIFY(session->begin(id, 1000, 500));
+    QVERIFY(session->active());
+    session->movePoint(0, 0.1, 0.3);
+    QCOMPARE(session->livePoints().at(0), QPointF(0.1, 0.3));
+    QCOMPARE(pinnedMaskClip(state).mask.points.at(0), QPointF(0.1, 0.3));
+    QCOMPARE(pinnedMaskClip(state).mask.points.at(1), QPointF(0.8, 0.2));
+    session->movePoint(7, 0.0, 0.0);
+    session->commit();
+    QVERIFY(!session->active());
+    QCOMPARE(pinnedMaskClip(state).mask.points.at(0), QPointF(0.1, 0.3));
+
+    state.undo();
+    QCOMPARE(pinnedMaskClip(state).mask.points.at(0), QPointF(0.2, 0.2));
+
+    state.redo();
+    session->insertPoint(id, 1, 0.5, 0.1);
+    QCOMPARE(pinnedMaskClip(state).mask.points.size(), 4);
+    session->removePoint(id, 1);
+    QCOMPARE(pinnedMaskClip(state).mask.points.size(), 3);
+    session->removePoint(id, 0);
+    QCOMPARE(pinnedMaskClip(state).mask.points.size(), 3);
+}
+
+void EditorStateTest::maskEditSessionMovesVertexOnPathKeyedMask()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.masking()->addPolygonMask(0, 0, QVariantList{maskVertex(0.2, 0.2), maskVertex(0.8, 0.2),
+                                                       maskVertex(0.5, 0.8)});
+    const QList<drift::ClipRef> pinned = drift::linkedMaskAdjustments(*state.project(), 0, 0);
+    state.masking()->setMaskPathAnimated(pinned.constFirst().trackIndex, pinned.constFirst().clipIndex, true);
+    state.setPlayheadSeconds(1.0);
+    MaskEditSession *session = state.masking()->editSession();
+
+    QVERIFY(session->begin(pinnedMaskClip(state).id, 1000, 500));
+    session->movePoint(2, 0.6, 0.9);
+    session->commit();
+
+    const drift::Mask &mask = pinnedMaskClip(state).mask;
+    QCOMPARE(mask.pathKeys.size(), 2);
+    QCOMPARE(mask.pathKeys.last().at(2), QPointF(0.6, 0.9));
+    QCOMPARE(mask.pathKeys.first().at(2), QPointF(0.5, 0.8));
+}
+
+void EditorStateTest::maskEditSessionMovesKeyframedRect()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.masking()->addShapeMask(0, 0, QStringLiteral("rectangle"), 0.5, 0.5, 0.2, 0.2);
+    state.setAutoKeyEnabled(true);
+    const auto restoreAutoKey = qScopeGuard([&state] { state.setAutoKeyEnabled(false); });
+    state.setClipKeyframe(0, 0, QStringLiteral("mask.x"), 0.0, 0.2);
+    state.setClipKeyframe(0, 0, QStringLiteral("mask.x"), 2.0, 0.8);
+    state.setPlayheadSeconds(1.0);
+    MaskEditSession *session = state.masking()->editSession();
+
+    QVERIFY(session->begin(pinnedMaskClip(state).id, 1000, 1000));
+    QCOMPARE(session->liveX(), 0.5);
+    session->beginBody(0.5, 0.5);
+    session->moveBody(0.6, 0.55, true);
+    session->commit();
+
+    const drift::Mask &mask = pinnedMaskClip(state).mask;
+    QVERIFY(qAbs(mask.resolvedAt(drift::secondsToUs(1.0)).x - 0.6) < 1e-9);
+    QVERIFY(qAbs(mask.valueAt(QStringLiteral("x"), 0) - 0.2) < 1e-9);
+}
+
+void EditorStateTest::maskEditSessionResizeRotateAndSnap()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.masking()->addShapeMask(0, 0, QStringLiteral("rectangle"), 0.5, 0.5, 0.2, 0.2);
+    MaskEditSession *session = state.masking()->editSession();
+    const QString id = pinnedMaskClip(state).id;
+
+    // The right edge grows; the left edge stays put.
+    QVERIFY(session->begin(id, 1000, 1000));
+    session->beginResize(1, 0, 0.6, 0.5);
+    session->resize(0.7, 0.5, false);
+    QVERIFY(qAbs(session->liveW() - 0.3) < 1e-9);
+    QVERIFY(qAbs(session->liveX() - 0.55) < 1e-9);
+    QVERIFY(qAbs(session->liveH() - 0.2) < 1e-9);
+    session->commit();
+    QVERIFY(qAbs(pinnedMaskClip(state).mask.w - 0.3) < 1e-9);
+
+    // A corner with the aspect locked keeps the ratio.
+    QVERIFY(session->begin(id, 1000, 1000));
+    session->beginResize(1, 1, 0.7, 0.6);
+    session->resize(0.8, 0.6, true);
+    QVERIFY(qAbs(session->liveW() / session->liveH() - 0.3 / 0.2) < 1e-9);
+    session->cancel();
+    QVERIFY(qAbs(pinnedMaskClip(state).mask.w - 0.3) < 1e-9);
+
+    // Straight above the centre is zero degrees, clockwise positive; Shift rounds to 15.
+    QVERIFY(session->begin(id, 1000, 1000));
+    session->rotate(0.65, 0.5, false);
+    QVERIFY(qAbs(session->liveRotation() - 90.0) < 1e-9);
+    session->rotate(0.55, 0.3, false);
+    QVERIFY(qAbs(session->liveRotation()) < 1e-9);
+    session->rotate(0.65, 0.4, false);
+    QVERIFY(qAbs(session->liveRotation() - 45.0) < 1e-9);
+    session->rotate(0.65, 0.35, true);
+    QVERIFY(qAbs(std::fmod(session->liveRotation(), 15.0)) < 1e-9);
+    session->commit();
+    QVERIFY(std::abs(pinnedMaskClip(state).mask.rotation) > 1.0);
+
+    // Body drag: edges and centre lines pull within 8 px; Ctrl bypasses.
+    state.masking()->removeMask(drift::linkedMaskAdjustments(*state.project(), 0, 0).constFirst().trackIndex,
+                                drift::linkedMaskAdjustments(*state.project(), 0, 0).constFirst().clipIndex);
+    state.masking()->addShapeMask(0, 0, QStringLiteral("rectangle"), 0.5, 0.5, 0.2, 0.2);
+    const QString id2 = pinnedMaskClip(state).id;
+    QVERIFY(session->begin(id2, 1000, 1000));
+    session->beginBody(0.5, 0.5);
+    session->moveBody(0.504, 0.6, false);
+    QVERIFY(qAbs(session->liveX() - 0.5) < 1e-9);
+    QVERIFY(qAbs(session->liveY() - 0.6) < 1e-9);
+    session->moveBody(0.504, 0.6, true);
+    QVERIFY(qAbs(session->liveX() - 0.504) < 1e-9);
+    session->cancel();
+}
+
+void EditorStateTest::maskEditSessionNudgeAndBars()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.masking()->addShapeMask(0, 0, QStringLiteral("rectangle"), 0.5, 0.5, 0.2, 0.2);
+    MaskEditSession *session = state.masking()->editSession();
+    const QString id = pinnedMaskClip(state).id;
+
+    session->nudge(id, 1, 0, false, 1000, 500);
+    QVERIFY(qAbs(pinnedMaskClip(state).mask.x - 0.501) < 1e-9);
+    session->nudge(id, 0, -1, true, 1000, 500);
+    QVERIFY(qAbs(pinnedMaskClip(state).mask.y - 0.48) < 1e-9);
+    QVERIFY(!session->active());
+
+    state.masking()->addShapeMask(0, 0, QStringLiteral("rectangle"), 0.5, 0.5, 0.2, 0.2);
+    drift::Clip &barsClip = pinnedMaskClip(state);
+    barsClip.mask.shape = drift::MaskShape::Bars;
+    QVERIFY(session->begin(barsClip.id, 1000, 500));
+    session->setBarsHeight(5.0);
+    QCOMPARE(session->liveH(), 2.0);
+    session->setBarsHeight(0.3);
+    session->commit();
+    QVERIFY(qAbs(pinnedMaskClip(state).mask.h - 0.3) < 1e-9);
+}
+
 // Inserting a vertex into the static shape also splits the same edge in every shape key, so a
 // key with the old count keeps matching the static shape.
 void EditorStateTest::maskingInsertPointUpdatesPathKeys()
@@ -11393,6 +12280,88 @@ void EditorStateTest::maskingBrushPaintsAndErases()
 
     drift::masking::paintBrushStroke(image, QVector<QPointF>{QPointF(100, 50)}, 10, 0.7, 1.0, true);
     QVERIFY(qGray(image.pixel(100, 50)) < 5);
+}
+
+void EditorStateTest::maskingBrushPressureScalesTheRadiusPerPoint()
+{
+    QCOMPARE(brushPressureScale(1.0, true), 1.0);
+    QCOMPARE(brushPressureScale(0.0, true), 0.3);
+    QCOMPARE(brushPressureScale(0.0, false), 1.0);
+
+    QImage image(300, 100, QImage::Format_Grayscale8);
+    image.fill(0);
+    const QVector<QPointF> line{QPointF(30, 50), QPointF(270, 50)};
+    drift::masking::paintBrushStroke(image, line, QVector<double>{4.0, 20.0}, 1.0, 1.0, false);
+    QVERIFY(qGray(image.pixel(45, 50)) > 250);
+    QCOMPARE(qGray(image.pixel(45, 40)), 0);
+    QVERIFY(qGray(image.pixel(255, 35)) > 250);
+    QVERIFY(qGray(image.pixel(150, 50)) > 250);
+    QVERIFY(qGray(image.pixel(150, 40)) > 0);
+}
+
+void EditorStateTest::maskingStrokeBeginAddEndCommitsByClipId()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.selectClip(0, 0);
+    MaskingController *masking = state.masking();
+    const QString id = masking->clipIdAt(0, 0);
+    QVERIFY(!id.isEmpty());
+
+    QVERIFY(masking->strokeBegin(id, 100, 50, 400, 200, false));
+    QVERIFY(masking->strokeActive());
+    masking->strokeAdd(101, 50, 0.5);
+    QCOMPARE(masking->previewStroke(-1)->points.size(), 1);
+    masking->strokeAdd(200, 50, 0.5);
+    masking->strokeAdd(300, 50, 1.0);
+    const BrushPreviewStroke *live = masking->previewStroke(-1);
+    QCOMPARE(live->points.size(), 3);
+    QCOMPARE(live->points.at(1), QPointF(0.5, 0.25));
+    QCOMPARE(live->pressures.at(1), 0.5);
+
+    masking->strokeEnd();
+    QVERIFY(!masking->strokeActive());
+    QCOMPARE(masking->pendingStrokeCount(), 1);
+    QVERIFY(masking->waitForBrushSaves());
+    QCOMPARE(masking->pendingStrokeCount(), 0);
+
+    const QList<drift::ClipRef> pinned = drift::linkedMaskAdjustments(*state.project(), 0, 0);
+    QCOMPARE(pinned.size(), 1);
+    const drift::Mask mask = state.project()->tracks().at(pinned.constFirst().trackIndex)
+                                 .clips.at(pinned.constFirst().clipIndex).mask;
+    QVERIFY(mask.isMedia());
+    const QImage matte(mask.mediaPath);
+    QVERIFY(!matte.isNull());
+    QVERIFY(qGray(matte.pixel(matte.width() / 2, matte.height() / 4)) > 200);
+    QCOMPARE(qGray(matte.pixel(matte.width() / 2, matte.height() * 3 / 4)), 0);
+}
+
+void EditorStateTest::maskingStrokeIgnoresNonMediaAndCancels()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.selectClip(0, 0);
+    MaskingController *masking = state.masking();
+
+    QVERIFY(!masking->strokeBegin(QStringLiteral("no-such-clip"), 1, 1, 100, 100, false));
+    QVERIFY(!masking->strokeActive());
+
+    const QString id = masking->clipIdAt(0, 0);
+    QVERIFY(masking->strokeBegin(id, 10, 10, 100, 100, true));
+    masking->strokeCancel();
+    QVERIFY(!masking->strokeActive());
+    masking->strokeEnd();
+    QVERIFY(masking->waitForBrushSaves());
+    QCOMPARE(drift::linkedMaskAdjustments(*state.project(), 0, 0).size(), 0);
+    QCOMPARE(masking->pendingStrokeCount(), 0);
 }
 
 void EditorStateTest::maskingBrushStrokeCreatesAndUpdatesAMatte()
@@ -12893,7 +13862,7 @@ void EditorStateTest::trackingTranslationDrivesMaskKeys()
 
     state.tracking()->setTarget(0, 0, id, maskId, QStringLiteral("mask"));
     const drift::Mask &mask = fx.clipById(maskId)->mask;
-    const auto &x = mask.keyframes.value(QStringLiteral("x")).keyframes();
+    const auto x = mask.keyframes.value(QStringLiteral("x")).keyframes();
     QCOMPARE(x.size(), 2);
     QCOMPARE(x.firstKey(), drift::TimeUs(0));
     QCOMPARE(x.lastKey(), 29 * fx.frame);
@@ -12962,6 +13931,377 @@ void EditorStateTest::trackingCorrectPlanarCornersAwayFromReference()
     }
 }
 
+void EditorStateTest::trackingDrivesStandaloneAdjustmentMaskInCanvasSpace()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+
+    const double canvasW = state.project()->width();
+    state.project()->tracks()[0].clips[0].transformX.setKeyframe(0, 100.0);
+    state.project()->tracks()[0].clips[0].transformW.setKeyframe(0, canvasW / 2.0);
+
+    drift::Track layer;
+    layer.type = drift::TrackType::Adjustment;
+    drift::Clip adjustment;
+    adjustment.id = QStringLiteral("adjustment");
+    adjustment.name = QStringLiteral("Blur layer");
+    adjustment.type = drift::ClipType::Adjustment;
+    adjustment.adjustmentKind = drift::AdjustmentKind::VideoEffects;
+    adjustment.timelineStart = 0;
+    adjustment.timelineDuration = drift::secondsToUs(2.0);
+    adjustment.mask.shape = drift::MaskShape::Ellipse;
+    adjustment.mask.x = 0.3;
+    adjustment.mask.y = 0.5;
+    adjustment.mask.w = 0.2;
+    adjustment.mask.h = 0.2;
+    layer.clips.append(adjustment);
+    state.project()->tracks().append(layer);
+
+    const QVariantList candidates = state.tracking()->targetCandidates(0, 0);
+    QVERIFY(std::any_of(candidates.begin(), candidates.end(), [](const QVariant &c) {
+        return c.toMap().value(QStringLiteral("clipId")).toString() == QStringLiteral("adjustment")
+               && c.toMap().value(QStringLiteral("kind")).toString() == QStringLiteral("mask");
+    }));
+
+    const QString id = state.tracking()->addPointTracker(0, 0, 0.5, 0.5);
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), id);
+    for (int k = 1; k < 30; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5 + 0.01 * k, 0.5), 0.95f, false});
+
+    state.tracking()->setTarget(0, 0, id, QStringLiteral("adjustment"), QStringLiteral("mask"));
+    const drift::Mask &mask = fx.clipById(QStringLiteral("adjustment"))->mask;
+    const auto x = mask.keyframes.value(QStringLiteral("x")).keyframes();
+    QCOMPARE(x.size(), 2);
+    QVERIFY(qAbs(x.first().value - 0.3) < 1e-6);
+    // 0.29 of the host's width, which is half the canvas.
+    QVERIFY(qAbs(x.last().value - (0.3 + 0.29 / 2.0)) < 1e-6);
+    QVERIFY(qAbs(mask.keyframes.value(QStringLiteral("y")).keyframes().last().value - 0.5) < 1e-6);
+}
+
+void EditorStateTest::trackingCorrectionDropsStaleSamplesAndReappliesTargets()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const QString maskId = fx.addMask(QStringLiteral("clip-0"));
+
+    const QString id = state.tracking()->addPointTracker(0, 0, 0.5, 0.5);
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), id);
+    for (int k = 1; k < 30; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5 + 0.01 * k, 0.5), 0.95f, false});
+    tracker.points[0].samples.insert(25 * fx.frame, drift::TrackSample{QPointF(0.2, 0.2), 1.0f, true});
+    state.tracking()->setTarget(0, 0, id, maskId, QStringLiteral("mask"));
+
+    state.setPlayheadUs(10 * fx.frame);
+    state.tracking()->setTrackerPoint(0, 0, id, 0, 0.9, 0.5);
+
+    const auto &samples = fx.tracker(QStringLiteral("clip-0"), id).points[0].samples;
+    QVERIFY(samples.value(10 * fx.frame).userKey);
+    QVERIFY(!samples.contains(11 * fx.frame));
+    QVERIFY(!samples.contains(24 * fx.frame));
+    QVERIFY(samples.contains(25 * fx.frame));
+    QVERIFY(samples.contains(26 * fx.frame));
+    QVERIFY(samples.contains(9 * fx.frame));
+
+    const drift::Mask &mask = fx.clipById(maskId)->mask;
+    const auto x = mask.keyframes.value(QStringLiteral("x")).keyframes();
+    QVERIFY(x.contains(10 * fx.frame));
+    QVERIFY(qAbs(x.value(10 * fx.frame).value - 0.9) < 1e-6);
+}
+
+// The Masking panel's list: rows diffed by mask id, shape-key state following the playhead.
+void EditorStateTest::maskStackModelListsRolesAndShapeKeys()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    MaskStackModel *model = state.masking()->stackModel();
+
+    model->refresh();
+    QCOMPARE(model->rowCount(), 0);
+    QVERIFY(!model->hasEnabled());
+
+    state.selectClip(0, 0);
+    state.masking()->addPolygonMask(0, 0, QVariantList{maskVertex(0.2, 0.2), maskVertex(0.8, 0.2),
+                                                       maskVertex(0.5, 0.8)});
+    model->refresh();
+    QCOMPARE(model->rowCount(), 1);
+    const auto roleOf = [model](const char *name) {
+        return model->roleNames().key(QByteArray(name));
+    };
+    QCOMPARE(model->data(model->index(0), roleOf("shape")).toString(), QStringLiteral("freeform"));
+    QVERIFY(model->data(model->index(0), roleOf("selected")).toBool());
+    QVERIFY(model->hasEnabled());
+    const QString id = model->data(model->index(0), roleOf("id")).toString();
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(model->shapeKeyCount(), 0);
+    QVERIFY(model->refineMaskId().isEmpty());
+
+    const QList<drift::ClipRef> pinned = drift::linkedMaskAdjustments(*state.project(), 0, 0);
+    const int track = pinned.constFirst().trackIndex;
+    const int clip = pinned.constFirst().clipIndex;
+
+    QSignalSpy resets(model, &QAbstractItemModel::modelReset);
+    QSignalSpy changed(model, &QAbstractItemModel::dataChanged);
+    state.masking()->setMaskProperty(track, clip, QStringLiteral("enabled"), false);
+    model->refresh();
+    QCOMPARE(resets.size(), 0);
+    QVERIFY(changed.size() >= 1);
+    QVERIFY(!model->hasEnabled());
+    QVERIFY(!model->data(model->index(0), roleOf("enabled")).toBool());
+
+    state.masking()->setMaskPathAnimated(track, clip, true);
+    model->refresh();
+    QCOMPARE(model->shapeKeyCount(), 1);
+    QCOMPARE(model->data(model->index(0), roleOf("pathKeyCount")).toInt(), 1);
+    QCOMPARE(model->data(model->index(0), roleOf("shapeKeyTimes")).toList().size(), 1);
+    QVERIFY(model->playheadOnShapeKey());
+    QVERIFY(!model->earlierShapeKey());
+    QVERIFY(!model->laterShapeKey());
+
+    state.setPlayheadSeconds(1.0);
+    QVERIFY(!model->playheadOnShapeKey());
+    QVERIFY(model->earlierShapeKey());
+    model->toggleShapeKey(id);
+    model->refresh();
+    QCOMPARE(model->shapeKeyCount(), 2);
+    QVERIFY(model->playheadOnShapeKey());
+
+    state.setPlayheadSeconds(0.5);
+    QVERIFY(model->earlierShapeKey());
+    QVERIFY(model->laterShapeKey());
+    model->stepShapeKey(false);
+    QCOMPARE(state.playheadSeconds(), 1.0);
+    model->stepShapeKey(true);
+    QCOMPARE(state.playheadSeconds(), 0.0);
+    model->stepShapeKey(true);
+    QCOMPARE(state.playheadSeconds(), 0.0);
+
+    state.setPlayheadSeconds(1.0);
+    model->toggleShapeKey(id);
+    model->refresh();
+    QCOMPARE(model->shapeKeyCount(), 1);
+
+    state.masking()->removeMask(track, clip);
+    model->refresh();
+    QCOMPARE(model->rowCount(), 0);
+    QCOMPARE(model->shapeKeyCount(), 0);
+}
+
+// The Tracking panel's list: selection stays on an existing row; candidates() drops what is driven.
+void EditorStateTest::trackerListModelKeepsSelectionAndFiltersCandidates()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    TrackerListModel *model = state.tracking()->trackerList();
+
+    model->refresh(0, 0);
+    QCOMPARE(model->rowCount(), 0);
+    QVERIFY(model->selectedId().isEmpty());
+
+    const QString maskId = fx.addMask(QStringLiteral("clip-0"));
+    const QString first = state.tracking()->addPointTracker(0, 0, 0.4, 0.4);
+    const QString second = state.tracking()->addPointTracker(0, 0, 0.6, 0.6);
+    QVERIFY(!first.isEmpty() && !second.isEmpty());
+    QSignalSpy selection(model, &TrackerListModel::selectedIdChanged);
+    model->refresh(0, 0);
+    QCOMPARE(model->rowCount(), 2);
+    QCOMPARE(model->selectedId(), first);
+    QCOMPARE(selection.size(), 1);
+
+    model->setSelectedId(second);
+    model->refresh(0, 0);
+    QCOMPARE(model->selectedId(), second);
+
+    const int idRole = model->roleNames().key("id");
+    const int targetsRole = model->roleNames().key("targets");
+    QSet<QString> ids;
+    for (int i = 0; i < model->rowCount(); ++i)
+        ids.insert(model->data(model->index(i), idRole).toString());
+    QCOMPARE(ids, QSet<QString>({first, second}));
+
+    bool maskOffered = false;
+    for (const QVariant &c : model->candidates(first))
+        maskOffered = maskOffered || c.toMap().value(QStringLiteral("clipId")).toString() == maskId;
+    QVERIFY(maskOffered);
+
+    QSignalSpy resets(model, &QAbstractItemModel::modelReset);
+    QSignalSpy changed(model, &QAbstractItemModel::dataChanged);
+    state.tracking()->setTarget(0, 0, first, maskId, QStringLiteral("mask"));
+    model->refresh(0, 0);
+    QCOMPARE(resets.size(), 0);
+    QVERIFY(changed.size() >= 1);
+    int firstRow = -1;
+    for (int i = 0; i < model->rowCount(); ++i) {
+        if (model->data(model->index(i), idRole).toString() == first)
+            firstRow = i;
+    }
+    QVERIFY(firstRow >= 0);
+    QCOMPARE(model->data(model->index(firstRow), targetsRole).toList().size(), 1);
+    for (const QVariant &c : model->candidates(first))
+        QVERIFY(c.toMap().value(QStringLiteral("clipId")).toString() != maskId);
+    bool stillOffered = false;
+    for (const QVariant &c : model->candidates(second))
+        stillOffered = stillOffered || c.toMap().value(QStringLiteral("clipId")).toString() == maskId;
+    QVERIFY(stillOffered);
+
+    const QVariantList framePoints = state.tracking()->trackerFrame(0, 0, second, 0.0)
+                                         .value(QStringLiteral("points")).toList();
+    const double expected = framePoints.isEmpty()
+                                ? 0.0
+                                : framePoints.first().toMap().value(QStringLiteral("patternW")).toDouble() * 100.0;
+    QCOMPARE(model->patternPercent(second, 0.0), expected);
+    QCOMPARE(model->patternPercent(QStringLiteral("nope"), 0.0), 0.0);
+
+    state.tracking()->removeTracker(0, 0, second, false);
+    model->refresh(0, 0);
+    QCOMPARE(model->rowCount(), 1);
+    QCOMPARE(model->selectedId(), first);
+
+    model->refresh(-1, -1);
+    QCOMPARE(model->rowCount(), 0);
+    QVERIFY(model->selectedId().isEmpty());
+}
+
+void EditorStateTest::segmentationNearestPointPicksTheClosestWithinTolerance()
+{
+    const QList<QPointF> points{QPointF(0.5, 0.5), QPointF(0.52, 0.5), QPointF(0.9, 0.9)};
+    QCOMPARE(drift::segplan::nearestPointIndex(points, 0.505, 0.5, 8, 1000, 500), 0);
+    QCOMPARE(drift::segplan::nearestPointIndex(points, 0.519, 0.5, 8, 1000, 500), 1);
+    QCOMPARE(drift::segplan::nearestPointIndex(points, 0.7, 0.7, 8, 1000, 500), -1);
+    QCOMPARE(drift::segplan::nearestPointIndex(points, 0.9, 0.9 + 6.0 / 500, 8, 1000, 500), 2);
+    QCOMPARE(drift::segplan::nearestPointIndex(points, 0.9, 0.9 + 9.0 / 500, 8, 1000, 500), -1);
+    QCOMPARE(drift::segplan::nearestPointIndex({}, 0.5, 0.5, 8, 1000, 500), -1);
+}
+
+void EditorStateTest::trackingFrameKeepsAGhostMarkerOffTheTrackedSpan()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+
+    const QString id = state.tracking()->addPointTracker(0, 0, 0.5, 0.5);
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), id);
+    for (int k = 1; k <= 10; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5 + 0.01 * k, 0.5), 0.95f, false});
+
+    const auto pointAt = [&](int frameIndex) {
+        const QVariantMap frame = state.tracking()->trackerFrame(0, 0, id, drift::usToSeconds(frameIndex * fx.frame));
+        return frame.value(QStringLiteral("points")).toList().first().toMap();
+    };
+    QVERIFY(pointAt(5).value(QStringLiteral("has")).toBool());
+    QVERIFY(!pointAt(5).value(QStringLiteral("ghost")).toBool());
+    const QVariantMap past = pointAt(20);
+    QVERIFY(!past.value(QStringLiteral("has")).toBool());
+    QVERIFY(past.value(QStringLiteral("ghost")).toBool());
+    QVERIFY(qAbs(past.value(QStringLiteral("x")).toDouble() - 0.6) < 1e-9);
+}
+
+void EditorStateTest::maskingBrushOpacityCapsASingleStroke()
+{
+    QImage image(200, 100, QImage::Format_Grayscale8);
+    image.fill(0);
+    const QVector<QPointF> line{QPointF(20, 50), QPointF(180, 50)};
+    drift::masking::paintBrushStroke(image, line, 10, 1.0, 0.3, false);
+    QVERIFY(qAbs(qGray(image.pixel(100, 50)) - 77) <= 3);
+    QCOMPARE(qGray(image.pixel(100, 5)), 0);
+
+    drift::masking::paintBrushStroke(image, line, 10, 1.0, 1.0, true);
+    QVERIFY(qGray(image.pixel(100, 50)) < 5);
+}
+
+void EditorStateTest::maskingClearWithoutBrushMaskCreatesNothing()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.selectClip(0, 0);
+
+    QVERIFY(!state.masking()->hasSelectedBrushMask(0, 0));
+    state.masking()->brushFill(0, 0, true);
+    QVERIFY(state.masking()->waitForBrushSaves());
+    QCOMPARE(drift::linkedMaskAdjustments(*state.project(), 0, 0).size(), 0);
+
+    state.masking()->brushFill(0, 0, false);
+    QVERIFY(state.masking()->waitForBrushSaves());
+    QCOMPARE(drift::linkedMaskAdjustments(*state.project(), 0, 0).size(), 1);
+    QVERIFY(state.masking()->hasSelectedBrushMask(0, 0));
+}
+
+void EditorStateTest::maskingUndoWaitsForBrushSave()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.selectClip(0, 0);
+
+    state.masking()->brushStroke(0, 0, QVariantList{maskVertex(0.2, 0.5), maskVertex(0.8, 0.5)}, false);
+    state.undo();
+    QVERIFY(!state.masking()->brushSaving());
+    QCOMPARE(drift::linkedMaskAdjustments(*state.project(), 0, 0).size(), 0);
+}
+
+void EditorStateTest::maskingSweepDropsUnreferencedBrushMattes()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftTestMatteSweep"));
+    const auto restoreNames = qScopeGuard([&] {
+        QSettings().remove(QStringLiteral("recentProjects"));
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+    });
+    QSettings().remove(QStringLiteral("recentProjects"));
+
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.selectClip(0, 0);
+
+    state.masking()->brushStroke(0, 0, QVariantList{maskVertex(0.2, 0.5), maskVertex(0.4, 0.5)}, false);
+    QVERIFY(state.masking()->waitForBrushSaves());
+    state.masking()->brushStroke(0, 0, QVariantList{maskVertex(0.6, 0.5), maskVertex(0.8, 0.5)}, false);
+    QVERIFY(state.masking()->waitForBrushSaves());
+
+    const QList<drift::ClipRef> pinned = drift::linkedMaskAdjustments(*state.project(), 0, 0);
+    const QString current = state.project()->tracks().at(pinned.constFirst().trackIndex)
+                                .clips.at(pinned.constFirst().clipIndex).mask.mediaPath;
+    QCOMPARE(state.masking()->sessionBrushMattes().size(), 2);
+    QString stale;
+    for (const QString &path : std::as_const(state.masking()->sessionBrushMattes())) {
+        if (path != QFileInfo(current).absoluteFilePath())
+            stale = path;
+    }
+    QVERIFY(QFileInfo::exists(stale));
+
+    // A matte from an earlier session may belong to a project that left the recent list.
+    const QString foreign = QDir(drift::matteCacheDir()).filePath(QStringLiteral("earlier-session.png"));
+    QImage(4, 4, QImage::Format_Grayscale8).save(foreign, "PNG");
+    const auto removeForeign = qScopeGuard([&] { QFile::remove(foreign); });
+
+    // The earlier matte is still what undo restores, so history keeps it alive.
+    state.projectFile()->sweepBrushMattes();
+    QVERIFY(QFileInfo::exists(stale));
+
+    state.m_undoStack.clear();
+    state.projectFile()->sweepBrushMattes();
+    QVERIFY(!QFileInfo::exists(stale));
+    QVERIFY(QFileInfo::exists(current));
+    QVERIFY(QFileInfo::exists(foreign));
+}
+
 void EditorStateTest::trackingFollowClipOffsetsTransformKeys()
 {
     AssetLibrary library;
@@ -13012,6 +14352,421 @@ void EditorStateTest::trackingFollowClipOffsetsTransformKeys()
     QCOMPARE(restored->transformY.keyframes().size(), 1);
     QVERIFY(qAbs(restored->transformX.keyframes().first().value - 100.0) < 1e-6);
     QVERIFY(qAbs(restored->transformY.keyframes().first().value - 50.0) < 1e-6);
+}
+
+namespace {
+
+// Where the anchor of a tracker sits on the canvas at frame k, in canvas pixels, given the tracked
+// position there (normalized to the clip frame).
+QPointF canvasPixels(AppController &state, const drift::Clip &host, drift::TimeUs t, QPointF normalized)
+{
+    const QPointF c = drift::hostFrameToCanvas(*state.project(), host, t, normalized);
+    return QPointF(c.x() * state.project()->width(), c.y() * state.project()->height());
+}
+
+double distance(QPointF a, QPointF b)
+{
+    return std::hypot(a.x() - b.x(), a.y() - b.y());
+}
+
+} // namespace
+
+void EditorStateTest::trackingStabilizeClipHoldsTheAnchor()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const double W = state.project()->width();
+    const double H = state.project()->height();
+
+    const QString id = state.tracking()->addPointTracker(0, 0, 0.5, 0.5);
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), id);
+    for (int k = 1; k < 30; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5 + 0.01 * k, 0.5 + 0.005 * k), 0.95f, false});
+
+    const QPointF reference(0.5 * W, 0.5 * H);
+    state.tracking()->setStabilize(QStringLiteral("clip-0"), id, QStringLiteral("clip"));
+    const drift::Clip *host = fx.clipById(QStringLiteral("clip-0"));
+    QCOMPARE(host->motionTrackers.first().targets.size(), 1);
+    QVERIFY(host->motionTrackers.first().targets.first().mode == drift::TrackerTarget::Mode::Stabilize);
+    // The tracked clip moved against the track: two end keys, scale and rotation untouched.
+    QCOMPARE(host->transformX.keyframes().size(), 2);
+    QVERIFY(host->transformW.isEmpty());
+    for (int k = 0; k < 30; ++k) {
+        const QPointF sample = k == 0 ? QPointF(0.5, 0.5) : QPointF(0.5 + 0.01 * k, 0.5 + 0.005 * k);
+        QVERIFY2(distance(canvasPixels(state, *host, k * fx.frame, sample), reference) < 0.6, qPrintable(QString::number(k)));
+    }
+
+    // Center in frame puts the anchor on the canvas centre (the host's own rest pose is full-canvas).
+    state.tracking()->setTargetCenter(QStringLiteral("clip-0"), id, QStringLiteral("clip-0"), true);
+    host = fx.clipById(QStringLiteral("clip-0"));
+    for (int k = 0; k < 30; ++k) {
+        const QPointF sample = k == 0 ? QPointF(0.5, 0.5) : QPointF(0.5 + 0.01 * k, 0.5 + 0.005 * k);
+        QVERIFY(distance(canvasPixels(state, *host, k * fx.frame, sample), QPointF(W / 2, H / 2)) < 0.6);
+    }
+
+    // Removing the target puts the clip back on its rest pose.
+    state.tracking()->removeTarget(QStringLiteral("clip-0"), id, QStringLiteral("clip-0"));
+    host = fx.clipById(QStringLiteral("clip-0"));
+    QCOMPARE(host->transformX.keyframes().size(), 1);
+    QCOMPARE(host->transformY.keyframes().size(), 1);
+    QVERIFY(qAbs(host->transformX.evaluateAt(10 * fx.frame)) < 1e-6);
+    QVERIFY(qAbs(host->transformY.evaluateAt(10 * fx.frame)) < 1e-6);
+    QVERIFY(host->motionTrackers.first().targets.isEmpty());
+
+    // Applying and removing are each one undo step.
+    state.tracking()->setStabilize(QStringLiteral("clip-0"), id, QStringLiteral("clip"));
+    QVERIFY(fx.clipById(QStringLiteral("clip-0"))->transformX.keyframes().size() == 2);
+    state.undo();
+    QVERIFY(fx.clipById(QStringLiteral("clip-0"))->motionTrackers.first().targets.isEmpty());
+}
+
+void EditorStateTest::trackingStabilizeClipFollowsRotationAndZoom()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const double W = state.project()->width();
+    const double H = state.project()->height();
+
+    const QString id = state.tracking()->addPointTracker(0, 0, 0.4, 0.5);
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), id);
+    tracker.solve = drift::MotionTracker::Solve::TranslateRotate;
+    drift::TrackPoint second = tracker.points[0];
+    second.samples.clear();
+    second.samples.insert(tracker.referenceUs, drift::TrackSample{QPointF(0.6, 0.5), 1.0f, true});
+    tracker.points.append(second);
+
+    // The pair spins about the frame centre and drifts.
+    const auto moved = [&](QPointF ref, int k) {
+        const double a = qDegreesToRadians(0.5 * k);
+        const QPointF d(ref.x() * W - W / 2, ref.y() * H - H / 2);
+        const QPointF r(d.x() * std::cos(a) - d.y() * std::sin(a), d.x() * std::sin(a) + d.y() * std::cos(a));
+        return QPointF((W / 2 + r.x() + 2.0 * k) / W, (H / 2 + r.y() + 1.0 * k) / H);
+    };
+    for (int k = 1; k < 30; ++k) {
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{moved(QPointF(0.4, 0.5), k), 0.95f, false});
+        tracker.points[1].samples.insert(k * fx.frame, drift::TrackSample{moved(QPointF(0.6, 0.5), k), 0.95f, false});
+    }
+
+    state.tracking()->setStabilize(QStringLiteral("clip-0"), id, QStringLiteral("clip"));
+    const drift::Clip *host = fx.clipById(QStringLiteral("clip-0"));
+    QVERIFY(!host->rotation.isEmpty());
+    for (int k = 0; k < 30; ++k) {
+        for (const QPointF &ref : {QPointF(0.4, 0.5), QPointF(0.6, 0.5)}) {
+            const QPointF at = k == 0 ? ref : moved(ref, k);
+            QVERIFY2(distance(canvasPixels(state, *host, k * fx.frame, at), QPointF(ref.x() * W, ref.y() * H)) < 0.6,
+                     qPrintable(QString::number(k)));
+        }
+    }
+
+    // Zoom scales about the anchor (the pair's midpoint, the frame centre here): the anchor stays put.
+    // The 0.05 degree rotation tolerance of the keys, seen from twice as far, allows a couple of pixels.
+    state.tracking()->setTargetZoom(QStringLiteral("clip-0"), id, QStringLiteral("clip-0"), 2.0);
+    host = fx.clipById(QStringLiteral("clip-0"));
+    QVERIFY(qAbs(host->transformW.evaluateAt(10 * fx.frame) - 2.0 * W) < 1.0);
+    QVERIFY(qAbs(host->transformH.evaluateAt(10 * fx.frame) - 2.0 * H) < 1.0);
+    for (int k = 0; k < 30; ++k) {
+        const QPointF anchor = k == 0 ? QPointF(0.5, 0.5) : (moved(QPointF(0.4, 0.5), k) + moved(QPointF(0.6, 0.5), k)) / 2.0;
+        QVERIFY2(distance(canvasPixels(state, *host, k * fx.frame, anchor), QPointF(W / 2, H / 2)) < 1.0,
+                 qPrintable(QString::number(k)));
+    }
+
+    // Zoom is clamped, and removing the target drops the scale keys with the rest.
+    state.tracking()->setTargetZoom(QStringLiteral("clip-0"), id, QStringLiteral("clip-0"), 9.0);
+    QCOMPARE(fx.clipById(QStringLiteral("clip-0"))->motionTrackers.first().targets.first().zoom, 4.0);
+    state.tracking()->removeTarget(QStringLiteral("clip-0"), id, QStringLiteral("clip-0"));
+    host = fx.clipById(QStringLiteral("clip-0"));
+    QVERIFY(qAbs(host->transformW.evaluateAt(10 * fx.frame) - W) < 1e-6);
+    QVERIFY(qAbs(host->rotation.evaluateAt(10 * fx.frame)) < 1e-6);
+}
+
+void EditorStateTest::trackingStabilizeFillZoomCoversTheCanvas()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const double W = state.project()->width();
+    const double H = state.project()->height();
+
+    const QString id = state.tracking()->addPointTracker(0, 0, 0.5, 0.5);
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), id);
+    for (int k = 1; k < 30; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5 + 0.01 * k, 0.5 + 0.005 * k), 0.95f, false});
+
+    QCOMPARE(state.tracking()->fillZoom(QStringLiteral("clip-0"), id), 1.0);
+    state.tracking()->setStabilize(QStringLiteral("clip-0"), id, QStringLiteral("clip"));
+    const double fill = state.tracking()->fillZoom(QStringLiteral("clip-0"), id);
+    // The clip centre sits 29 % of the width off after the lock, and zoom scales that offset too:
+    // 0.29 z <= (z - 1) / 2 gives z = 2.38.
+    QVERIFY2(fill > 2.3 && fill < 2.45, qPrintable(QString::number(fill)));
+
+    state.tracking()->autoZoom(QStringLiteral("clip-0"), id);
+    const drift::Clip *host = fx.clipById(QStringLiteral("clip-0"));
+    QCOMPARE(host->motionTrackers.first().targets.first().zoom, fill);
+    for (int k = 0; k < 30; ++k) {
+        const drift::TimeUs t = k * fx.frame;
+        const double x = host->transformX.evaluateAt(t);
+        const double y = host->transformY.evaluateAt(t);
+        QVERIFY2(x <= 0.5 && y <= 0.5, qPrintable(QString::number(k)));
+        QVERIFY2(x + host->transformW.evaluateAt(t) >= W - 0.5 && y + host->transformH.evaluateAt(t) >= H - 0.5,
+                 qPrintable(QString::number(k)));
+    }
+}
+
+void EditorStateTest::trackingStabilizeIsOnePerClipAndSurvivesJson()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+
+    const QString first = state.tracking()->addPointTracker(0, 0, 0.5, 0.5);
+    const QString second = state.tracking()->addPointTracker(0, 0, 0.3, 0.3);
+    state.tracking()->setStabilize(QStringLiteral("clip-0"), first, QStringLiteral("clip"));
+    state.tracking()->setStabilize(QStringLiteral("clip-0"), second, QStringLiteral("clip"));
+    QVERIFY(fx.tracker(QStringLiteral("clip-0"), first).targets.isEmpty());
+    QCOMPARE(fx.tracker(QStringLiteral("clip-0"), second).targets.size(), 1);
+
+    const QVariantList rows = state.tracking()->trackers(QStringLiteral("clip-0"));
+    const QVariantMap target = rows.last().toMap().value(QStringLiteral("targets")).toList().first().toMap();
+    QCOMPARE(target.value(QStringLiteral("mode")).toString(), QStringLiteral("stabilize"));
+    QCOMPARE(target.value(QStringLiteral("via")).toString(), QStringLiteral("clip"));
+    QCOMPARE(target.value(QStringLiteral("zoom")).toDouble(), 1.0);
+
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), second);
+    drift::TrackerTarget &stored = tracker.targets.first();
+    stored.via = drift::TrackerTarget::Via::Camera;
+    stored.zoom = 1.75;
+    stored.centerOnTrack = true;
+    stored.restCamera = {1, 2, 3, 4, 5, 6};
+    const drift::MotionTracker back = drift::motionTrackerFromJson(drift::toJson(tracker));
+    QCOMPARE(back.targets.size(), 1);
+    QVERIFY(back.targets.first().mode == drift::TrackerTarget::Mode::Stabilize);
+    QVERIFY(back.targets.first().via == drift::TrackerTarget::Via::Camera);
+    QCOMPARE(back.targets.first().zoom, 1.75);
+    QVERIFY(back.targets.first().centerOnTrack);
+    QCOMPARE(back.targets.first().restCamera, (QVector<double>{1, 2, 3, 4, 5, 6}));
+    QVERIFY(back.targets.first().hasRest);
+}
+
+namespace {
+
+const drift::Clip *cameraClipOf(AppController &state, drift::TimeUs at = 0)
+{
+    return drift::cameraClipAt(state.project()->tracks(), at);
+}
+
+// Where a world point on the canvas plane (given as a canvas pixel) lands through the camera the
+// clip describes at `t`.
+QPointF throughCamera(AppController &state, const drift::Clip &camera, drift::TimeUs t, QPointF canvasPoint)
+{
+    const QSizeF canvas(state.project()->width(), state.project()->height());
+    const QMatrix4x4 view = drift::cameraViewProjection(drift::sceneCameraFromClip(camera, t, 1.0, canvas), canvas);
+    const QVector4D p = view * QVector4D(float(canvasPoint.x()), float(canvasPoint.y()), 0.f, 1.f);
+    return QPointF(p.x() / p.w(), p.y() / p.w());
+}
+
+// A camera given as the old pan/dolly P, X-Y-Z angles and lens d (a frame about the canvas centre).
+drift::SceneCamera3d cameraFromOldNumbers(const QSizeF &canvas, const double p[3], const double rot[3], double d)
+{
+    const QMatrix4x4 world = drift::cameraWorldFromLegacy(p, rot, d, canvas.width(), canvas.height());
+    QMatrix4x4 turn = world;
+    turn.setColumn(3, QVector4D(0.f, 0.f, 0.f, 1.f));
+    const double nearest[3] = {0.0, 0.0, 0.0};
+    double angles[3];
+    drift::cameraEulerFromMatrix(turn, nearest, angles);
+    drift::SceneCamera3d c;
+    c.positionX = world(0, 3);
+    c.positionY = world(1, 3);
+    c.positionZ = world(2, 3);
+    c.rotationX = angles[0];
+    c.rotationY = angles[1];
+    c.rotationZ = angles[2];
+    c.zoom = d;
+    return c;
+}
+
+} // namespace
+
+void EditorStateTest::trackingStabilizeCameraHoldsAPointTrack()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const double W = state.project()->width();
+    const double H = state.project()->height();
+    QVERIFY(drift::cameraTrackIndex(state.project()->tracks()) < 0);
+
+    const QString id = state.tracking()->addPointTracker(0, 0, 0.3, 0.4);
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), id);
+    tracker.solve = drift::MotionTracker::Solve::TranslateRotateScale;
+    drift::TrackPoint second = tracker.points[0];
+    second.samples.clear();
+    second.samples.insert(tracker.referenceUs, drift::TrackSample{QPointF(0.5, 0.4), 1.0f, true});
+    tracker.points.append(second);
+
+    // The pair spins about the frame centre, grows and drifts.
+    const auto moved = [&](QPointF ref, int k) {
+        const double a = qDegreesToRadians(0.5 * k);
+        const double scale = 1.0 + 0.004 * k;
+        const QPointF d(ref.x() * W - W / 2, ref.y() * H - H / 2);
+        const QPointF r(d.x() * std::cos(a) - d.y() * std::sin(a), d.x() * std::sin(a) + d.y() * std::cos(a));
+        return QPointF((W / 2 + r.x() * scale + 2.0 * k) / W, (H / 2 + r.y() * scale + 1.0 * k) / H);
+    };
+    const QPointF left(0.3, 0.4);
+    const QPointF right(0.5, 0.4);
+    for (int k = 1; k < 30; ++k) {
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{moved(left, k), 0.95f, false});
+        tracker.points[1].samples.insert(k * fx.frame, drift::TrackSample{moved(right, k), 0.95f, false});
+    }
+
+    state.tracking()->setStabilize(QStringLiteral("clip-0"), id, QStringLiteral("camera"));
+    const drift::Clip *host = fx.clipById(QStringLiteral("clip-0"));
+    // No camera existed: a track and a clip spanning the tracked clip were made, the clip itself was left alone.
+    const drift::Clip *camera = cameraClipOf(state);
+    QVERIFY(camera);
+    QCOMPARE(camera->timelineStart, host->timelineStart);
+    QCOMPARE(camera->timelineEnd(), host->timelineEnd());
+    QVERIFY(host->transformX.isEmpty() && host->transformW.isEmpty() && host->rotation.isEmpty());
+    QCOMPARE(host->motionTrackers.first().targets.size(), 1);
+    QCOMPARE(host->motionTrackers.first().targets.first().clipId, camera->id);
+    for (const drift::TimeUs t : {drift::TimeUs(0), 10 * fx.frame, 29 * fx.frame}) {
+        const drift::SceneCamera3d c = drift::sceneCameraFromClip(*camera, t, 1.0, QSizeF(W, H));
+        QVERIFY(std::abs(c.rotationX) < 0.05 && std::abs(c.rotationY) < 0.05);
+    }
+    QVERIFY(!camera->positionZ.isEmpty() && !camera->rotation.isEmpty());
+
+    for (int k = 0; k < 30; ++k) {
+        for (const QPointF &ref : {left, right}) {
+            const QPointF at = k == 0 ? ref : moved(ref, k);
+            const QPointF onScreen = throughCamera(state, *camera, k * fx.frame, QPointF(at.x() * W, at.y() * H));
+            QVERIFY2(distance(onScreen, QPointF(ref.x() * W, ref.y() * H)) < 1.0, qPrintable(QString::number(k)));
+        }
+    }
+
+    // Center in frame puts the pair's midpoint on the canvas centre and keeps its shape.
+    state.tracking()->setTargetCenter(QStringLiteral("clip-0"), id, camera->id, true);
+    camera = cameraClipOf(state);
+    for (int k = 0; k < 30; ++k) {
+        const QPointF a = k == 0 ? left : moved(left, k);
+        const QPointF b = k == 0 ? right : moved(right, k);
+        const QPointF pa = throughCamera(state, *camera, k * fx.frame, QPointF(a.x() * W, a.y() * H));
+        const QPointF pb = throughCamera(state, *camera, k * fx.frame, QPointF(b.x() * W, b.y() * H));
+        QVERIFY2(distance((pa + pb) / 2.0, QPointF(W / 2, H / 2)) < 1.0, qPrintable(QString::number(k)));
+        QVERIFY2(distance(pb - pa, QPointF(0.2 * W, 0.0)) < 1.0, qPrintable(QString::number(k)));
+    }
+
+    // Removing the target puts the camera back at rest, and it is one undo step to bring it back.
+    state.tracking()->removeTarget(QStringLiteral("clip-0"), id, camera->id);
+    camera = cameraClipOf(state);
+    QVERIFY(camera);
+    for (int k = 0; k < 30; k += 7) {
+        const drift::SceneCamera3d rest = drift::sceneCameraFromClip(*camera, k * fx.frame, 1.0, QSizeF(W, H));
+        const drift::SceneCamera3d home = drift::defaultSceneCamera(QSizeF(W, H));
+        QVERIFY((drift::sceneCameraEye(rest) - drift::sceneCameraEye(home)).length() < 1e-3f);
+        QVERIFY(std::abs(rest.rotationX) + std::abs(rest.rotationY) + std::abs(rest.rotationZ) < 1e-6);
+    }
+    QVERIFY(fx.clipById(QStringLiteral("clip-0"))->motionTrackers.first().targets.isEmpty());
+    state.undo();
+    QCOMPARE(fx.clipById(QStringLiteral("clip-0"))->motionTrackers.first().targets.size(), 1);
+}
+
+void EditorStateTest::trackingStabilizeCameraSolvesAPlanarTrack()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const double W = state.project()->width();
+    const double H = state.project()->height();
+    const QSizeF canvas(W, H);
+
+    const auto corner = [](double x, double y) { return QVariantMap{{QStringLiteral("x"), x}, {QStringLiteral("y"), y}}; };
+    const QVariantList outline{corner(0.3, 0.3), corner(0.7, 0.3), corner(0.7, 0.7), corner(0.3, 0.7)};
+    const QString id = state.tracking()->addPlanarTracker(0, 0, outline);
+    QVERIFY(!id.isEmpty());
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), id);
+
+    // A camera that pans, pitches, yaws and rolls; the track is what that looks like on a flat
+    // picture, so a perfect lock exists.
+    const auto known = [&](int k) {
+        const double p[3] = {2.0 * k, -1.0 * k, 4.0 * k};
+        const double rot[3] = {0.3 * k, -0.2 * k, 0.15 * k};
+        return cameraFromOldNumbers(canvas, p, rot, drift::defaultClipPerspective(H));
+    };
+    using drift::tracking::Homography;
+    for (int k = 0; k < 30; ++k) {
+        const QMatrix4x4 view = drift::cameraViewProjection(known(k), canvas);
+        const Homography worldToCanvas{view(0, 0), view(0, 1), view(0, 3), view(1, 0), view(1, 1), view(1, 3), view(3, 0), view(3, 1), view(3, 3)};
+        Homography back;
+        QVERIFY(drift::tracking::invertHomography(worldToCanvas, &back));
+        const Homography toPixels{W, 0, 0, 0, H, 0, 0, 0, 1};
+        const Homography worldShift{1, 0, 0, 0, 1, 0, 0, 0, 1};
+        const Homography toNormalized{1 / W, 0, 0, 0, 1 / H, 0, 0, 0, 1};
+        using drift::tracking::composeHomography;
+        Homography h = composeHomography(toNormalized, composeHomography(worldShift, composeHomography(back, toPixels)));
+        for (double &e : h)
+            e /= h[8];
+        tracker.homographies.insert(k * fx.frame, h);
+    }
+
+    state.tracking()->setStabilize(QStringLiteral("clip-0"), id, QStringLiteral("camera"));
+    QVERIFY(!state.lastMessage().contains(QStringLiteral("can't match")));
+    const drift::Clip *camera = cameraClipOf(state);
+    QVERIFY(camera);
+    QVERIFY(!camera->rotationX.isEmpty() && !camera->rotationY.isEmpty() && !camera->rotation.isEmpty()
+            && !camera->positionZ.isEmpty());
+    for (int k = 0; k < 30; ++k) {
+        const drift::tracking::Homography &h = tracker.homographies.value(k * fx.frame);
+        for (const QVariant &entry : outline) {
+            const QPointF ref(entry.toMap().value(QStringLiteral("x")).toDouble(), entry.toMap().value(QStringLiteral("y")).toDouble());
+            const QPointF at = drift::tracking::applyHomography(h, ref);
+            const QPointF onScreen = throughCamera(state, *camera, k * fx.frame, QPointF(at.x() * W, at.y() * H));
+            QVERIFY2(distance(onScreen, QPointF(ref.x() * W, ref.y() * H)) < 1.0, qPrintable(QString::number(k)));
+        }
+    }
+    // The lock is the inverse of the known motion, so the solved camera is that motion.
+    const drift::SceneCamera3d last = drift::sceneCameraFromClip(*camera, 29 * fx.frame, 1.0, canvas);
+    QVERIFY2((drift::sceneCameraEye(last) - drift::sceneCameraEye(known(29))).length() < 3.0f,
+             qPrintable(QStringLiteral("last %1,%2,%3 rot %4,%5,%6 known %7,%8,%9 rot %10,%11,%12")
+                 .arg(last.positionX).arg(last.positionY).arg(last.positionZ).arg(last.rotationX).arg(last.rotationY).arg(last.rotationZ)
+                 .arg(known(29).positionX).arg(known(29).positionY).arg(known(29).positionZ).arg(known(29).rotationX).arg(known(29).rotationY).arg(known(29).rotationZ)));
+    const QMatrix4x4 lastView = drift::cameraViewProjection(last, canvas);
+    const QMatrix4x4 knownView = drift::cameraViewProjection(known(29), canvas);
+    for (const QVector3D point : {QVector3D(300, 200, 0), QVector3D(1500, 900, 0), QVector3D(960, 540, 0)}) {
+        const QVector4D a = lastView.map(QVector4D(point, 1.f));
+        const QVector4D b = knownView.map(QVector4D(point, 1.f));
+        QVERIFY(distance(QPointF(a.x() / a.w(), a.y() / a.w()), QPointF(b.x() / b.w(), b.y() / b.w())) < 1.0);
+    }
+}
+
+void EditorStateTest::trackingStabilizeCameraFillZoomCoversTheCanvas()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const double W = state.project()->width();
+    const double H = state.project()->height();
+
+    const QString id = state.tracking()->addPointTracker(0, 0, 0.5, 0.5);
+    drift::MotionTracker &tracker = fx.tracker(QStringLiteral("clip-0"), id);
+    for (int k = 1; k < 30; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5 + 0.01 * k, 0.5 + 0.005 * k), 0.95f, false});
+
+    state.tracking()->setStabilize(QStringLiteral("clip-0"), id, QStringLiteral("camera"));
+    const double fill = state.tracking()->fillZoom(QStringLiteral("clip-0"), id);
+    // Same geometry as the clip lock: 0.29 z <= (z - 1) / 2 gives z = 2.38.
+    QVERIFY2(fill > 2.3 && fill < 2.45, qPrintable(QString::number(fill)));
+
+    state.tracking()->autoZoom(QStringLiteral("clip-0"), id);
+    QCOMPARE(fx.clipById(QStringLiteral("clip-0"))->motionTrackers.first().targets.first().zoom, fill);
+    const drift::Clip *camera = cameraClipOf(state);
+    for (int k = 0; k < 30; ++k) {
+        const drift::TimeUs t = k * fx.frame;
+        const QPointF topLeft = throughCamera(state, *camera, t, QPointF(0, 0));
+        const QPointF bottomRight = throughCamera(state, *camera, t, QPointF(W, H));
+        QVERIFY2(topLeft.x() <= 0.5 && topLeft.y() <= 0.5 && bottomRight.x() >= W - 0.5 && bottomRight.y() >= H - 0.5,
+                 qPrintable(QString::number(k)));
+    }
 }
 
 void EditorStateTest::trackingClearSamplesKeepsUserKeysAndEarlierSamples()
@@ -13225,6 +14980,473 @@ void EditorStateTest::trackingUndoRevertsOnlyTheTracker()
     state.undo();
     QCOMPARE(fx.tracker(QStringLiteral("clip-0"), id).points[0].samples.size(), before);
     QVERIFY(fx.tracker(QStringLiteral("clip-0"), id).points[0].samples.contains(15 * fx.frame));
+}
+
+void EditorStateTest::trackerShortcutsAreRegistered()
+{
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftTestTrackerShortcuts"));
+    const auto restore = qScopeGuard([&] {
+        QSettings().remove(QStringLiteral("shortcuts"));
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+    });
+    QSettings().remove(QStringLiteral("shortcuts"));
+
+    AssetLibrary library;
+    AppController state(&library);
+    QCOMPARE(state.shortcutFor(QStringLiteral("trackForward")), QStringLiteral("Ctrl+T"));
+    QCOMPARE(state.shortcutFor(QStringLiteral("trackBackward")), QStringLiteral("Ctrl+Shift+T"));
+    QCOMPARE(state.shortcutFor(QStringLiteral("trackFrameForward")), QStringLiteral("Ctrl+Shift+Right"));
+    QCOMPARE(state.shortcutFor(QStringLiteral("trackFrameBackward")), QStringLiteral("Ctrl+Shift+Left"));
+    QVERIFY(state.shortcutFor(QStringLiteral("trackBoth")).isEmpty());
+
+    QStringList registered;
+    QSet<QString> trackerKeys;
+    for (const QVariant &action : state.actions()) {
+        const QVariantMap map = action.toMap();
+        registered.append(map.value(QStringLiteral("id")).toString());
+        if (map.value(QStringLiteral("id")).toString().startsWith(QStringLiteral("track")))
+            trackerKeys.insert(map.value(QStringLiteral("shortcut")).toString());
+    }
+    for (const char *id : {"trackForward", "trackBackward", "trackFrameForward", "trackFrameBackward", "trackBoth"})
+        QVERIFY2(registered.contains(QLatin1String(id)), id);
+    trackerKeys.remove(QString());
+    for (const QVariant &action : state.actions()) {
+        const QVariantMap map = action.toMap();
+        if (map.value(QStringLiteral("id")).toString().startsWith(QStringLiteral("track")))
+            continue;
+        QVERIFY2(!trackerKeys.contains(map.value(QStringLiteral("shortcut")).toString()),
+                 qPrintable(map.value(QStringLiteral("id")).toString()));
+    }
+
+    QCOMPARE(state.actionForArrowChord(Qt::Key_Right, Qt::ControlModifier | Qt::ShiftModifier),
+             QStringLiteral("trackFrameForward"));
+    QCOMPARE(state.actionForArrowChord(Qt::Key_Left, Qt::ControlModifier | Qt::ShiftModifier),
+             QStringLiteral("trackFrameBackward"));
+    QCOMPARE(state.actionForArrowChord(Qt::Key_Left, Qt::ControlModifier), QStringLiteral("jumpBackFar"));
+}
+
+void EditorStateTest::trackingClipIdOverloadsMatchTheIndexCalls()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const QString host = QStringLiteral("clip-0");
+
+    QVERIFY(state.tracking()->addPointTracker(QStringLiteral("missing"), 0.5, 0.5).isEmpty());
+    QVERIFY(state.tracking()->trackers(QStringLiteral("missing")).isEmpty());
+
+    const QString id = state.tracking()->addPointTracker(host, 0.5, 0.5);
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(state.tracking()->trackers(host).size(), 1);
+
+    state.tracking()->setTrackerProperty(host, id, QStringLiteral("solve"), QStringLiteral("translateRotate"));
+    QCOMPARE(fx.tracker(host, id).solve, drift::MotionTracker::Solve::TranslateRotate);
+
+    state.tracking()->addTrackerPoint(host, id, 0.6, 0.6);
+    QCOMPARE(fx.tracker(host, id).points.size(), 2);
+
+    drift::MotionTracker &tracker = fx.tracker(host, id);
+    for (int k = 1; k < 10; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5, 0.5), 0.9f, false});
+    state.setPlayheadUs(5 * fx.frame);
+    state.tracking()->clearSamples(host, id, true);
+    QVERIFY(!fx.tracker(host, id).points[0].samples.contains(8 * fx.frame));
+    QVERIFY(fx.tracker(host, id).points[0].samples.contains(3 * fx.frame));
+
+    const QString maskId = fx.addMask(host);
+    state.tracking()->setTarget(host, id, maskId, QStringLiteral("mask"));
+    QCOMPARE(fx.tracker(host, id).targets.size(), 1);
+    state.tracking()->setTargetCenter(host, id, maskId, false);
+    state.tracking()->apply(host, id);
+    state.tracking()->removeTarget(host, id, maskId);
+    QCOMPARE(fx.tracker(host, id).targets.size(), 0);
+
+    state.tracking()->removeTracker(host, id, false);
+    QVERIFY(state.tracking()->trackers(host).isEmpty());
+}
+
+void EditorStateTest::maskStackModelCarriesTrackerRoles()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const QString host = QStringLiteral("clip-0");
+    const QString maskId = fx.addMask(host);
+    state.selectClip(0, 0);
+    MaskStackModel *model = state.masking()->stackModel();
+    model->refresh();
+    QCOMPARE(model->rowCount(), 1);
+
+    const QHash<int, QByteArray> roles = model->roleNames();
+    for (const char *name : {"trackerId", "trackState", "solve"})
+        QVERIFY2(roles.values().contains(name), name);
+    QVERIFY(model->rowAt(0).value(QStringLiteral("trackerId")).toString().isEmpty());
+    QCOMPARE(model->rowAt(0).value(QStringLiteral("trackState")).toString(), QStringLiteral("none"));
+
+    const QString id = state.tracking()->addPointTracker(host, 0.5, 0.5);
+    state.tracking()->setTarget(host, id, maskId, QStringLiteral("mask"));
+    model->refresh();
+    QCOMPARE(model->rowAt(0).value(QStringLiteral("trackerId")).toString(), id);
+    QCOMPARE(model->rowAt(0).value(QStringLiteral("trackState")).toString(), QStringLiteral("none"));
+    QCOMPARE(model->rowAt(0).value(QStringLiteral("solve")).toString(), QStringLiteral("translate"));
+
+    drift::MotionTracker &tracker = fx.tracker(host, id);
+    for (int k = 1; k < 30; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5, 0.5), 0.9f, false});
+    model->refresh();
+    QCOMPARE(model->rowAt(0).value(QStringLiteral("trackState")).toString(), QStringLiteral("partial"));
+
+    for (int k = 30; k < 60; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5, 0.5), 0.9f, false});
+    model->refresh();
+    QCOMPARE(model->rowAt(0).value(QStringLiteral("trackState")).toString(), QStringLiteral("full"));
+
+    state.tracking()->setTrackerProperty(host, id, QStringLiteral("solve"), QStringLiteral("translateRotate"));
+    model->refresh();
+    QCOMPARE(model->rowAt(0).value(QStringLiteral("solve")).toString(), QStringLiteral("translateRotate"));
+}
+
+void EditorStateTest::maskingBlurAreaMovesMaskToEffectLayerInOneUndoStep()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const QString host = QStringLiteral("clip-0");
+    const double canvasW = state.project()->width();
+    const double canvasH = state.project()->height();
+    state.project()->tracks()[0].clips[0].transformX.setKeyframe(0, 100.0);
+    state.project()->tracks()[0].clips[0].transformW.setKeyframe(0, canvasW / 2.0);
+
+    const QString maskId = fx.addMask(host);
+    {
+        int t = 0;
+        int c = 0;
+        fx.clipById(maskId, &t, &c);
+        drift::Mask &mask = state.project()->tracks()[t].clips[c].mask;
+        mask.shape = drift::MaskShape::Ellipse;
+        mask.x = 0.25;
+        mask.y = 0.5;
+        mask.w = 0.2;
+        mask.h = 0.4;
+        mask.feather = 7.0;
+    }
+
+    const QString id = state.tracking()->addPointTracker(host, 0.25, 0.5);
+    drift::MotionTracker &tracker = fx.tracker(host, id);
+    for (int k = 1; k < 30; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.25 + 0.01 * k, 0.5), 0.95f, false});
+    state.tracking()->setTarget(host, id, maskId, QStringLiteral("mask"));
+
+    const int tracksBefore = state.project()->tracks().size();
+    state.setPlayheadUs(0);
+    const QString layerId =
+        state.masking()->moveMaskToEffectLayer(maskId, QStringLiteral("builtin.effects.gaussian_blur"));
+    QVERIFY(!layerId.isEmpty());
+
+    const drift::Clip *layer = fx.clipById(layerId);
+    QVERIFY(layer);
+    QCOMPARE(layer->type, drift::ClipType::Adjustment);
+    QCOMPARE(layer->adjustmentKind, drift::AdjustmentKind::VideoEffects);
+    QCOMPARE(layer->mask.shape, drift::MaskShape::Ellipse);
+    QCOMPARE(layer->mask.feather, 7.0);
+    QCOMPARE(layer->effects.size(), 1);
+    QCOMPARE(layer->effects.first().catalogId, QStringLiteral("builtin.effects.gaussian_blur"));
+    int hostTrack = 0;
+    const drift::Clip *hostClip = fx.clipById(host, &hostTrack);
+    QCOMPARE(layer->timelineStart, hostClip->timelineStart);
+    QCOMPARE(layer->timelineDuration, hostClip->timelineDuration);
+
+    // The host sits at x = 100 and is half the canvas wide, so its 0.25 is canvas (100 + 0.25 * W / 2) / W.
+    const drift::KeyframeTrack<double> xTrack = layer->mask.keyframes.value(QStringLiteral("x"));
+    const auto &xKeys = xTrack.keyframes();
+    QVERIFY(xKeys.size() >= 2);
+    QVERIFY(qAbs(xKeys.first().value - (100.0 + 0.25 * canvasW / 2.0) / canvasW) < 1e-6);
+    QVERIFY(qAbs(xKeys.last().value - xKeys.first().value - 0.29 * 0.5) < 1e-6);
+    QVERIFY(qAbs(layer->mask.w - 0.2 * 0.5) < 1e-6);
+    QVERIFY(qAbs(layer->mask.h - 0.4) < 1e-6);
+    Q_UNUSED(canvasH);
+
+    QVERIFY(!fx.clipById(maskId));
+    QCOMPARE(state.tracking()->trackers(host).first().toMap().value(QStringLiteral("targets")).toList()
+                 .first().toMap().value(QStringLiteral("clipId")).toString(),
+             layerId);
+    QVERIFY(drift::linkedMaskAdjustments(*state.project(), hostTrack, 0).isEmpty());
+    QVERIFY(hostTrack > 0);
+    QCOMPARE(state.selectedClipData().value(QStringLiteral("id")).toString(), layerId);
+
+    state.undo();
+    QVERIFY(fx.clipById(maskId));
+    QVERIFY(!fx.clipById(layerId));
+    QCOMPARE(state.project()->tracks().size(), tracksBefore);
+    QCOMPARE(state.tracking()->trackers(host).first().toMap().value(QStringLiteral("targets")).toList()
+                 .first().toMap().value(QStringLiteral("clipId")).toString(),
+             maskId);
+    QCOMPARE(fx.clipById(maskId)->mask.shape, drift::MaskShape::Ellipse);
+}
+
+void EditorStateTest::maskingBlurAreaRefusesCutouts()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    int t = 0;
+    int c = 0;
+    fx.clipById(QStringLiteral("clip-0"), &t, &c);
+    const drift::ClipRef added = drift::addLinkedMask(
+        *state.project(), t, c, drift::fullFrameMediaMask(QStringLiteral("/tmp/cutout-matte.mp4")));
+    const QString cutoutId = state.project()->tracks().at(added.trackIndex).clips.at(added.clipIndex).id;
+    const int tracks = state.project()->tracks().size();
+
+    QVERIFY(state.masking()->moveMaskToEffectLayer(cutoutId, QStringLiteral("builtin.effects.gaussian_blur")).isEmpty());
+    QVERIFY(fx.clipById(cutoutId));
+    QCOMPARE(state.project()->tracks().size(), tracks);
+    QVERIFY(!state.undoAvailable());
+}
+
+void EditorStateTest::trackingEnsureMaskTrackerReusesAndIsOneUndoStep()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const QString host = QStringLiteral("clip-0");
+    const QString maskId = fx.addMask(host);
+    {
+        int t = 0;
+        int c = 0;
+        fx.clipById(maskId, &t, &c);
+        state.project()->tracks()[t].clips[c].mask.x = 0.3;
+        state.project()->tracks()[t].clips[c].mask.y = 0.6;
+    }
+    QVERIFY(state.tracking()->trackerForTarget(maskId).isEmpty());
+
+    const QString id = state.tracking()->ensureMaskTracker(maskId, -1.0, -1.0);
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(state.tracking()->trackerForTarget(maskId), id);
+    const drift::MotionTracker &tracker = fx.tracker(host, id);
+    QCOMPARE(tracker.targets.size(), 1);
+    QCOMPARE(tracker.targets.first().clipId, maskId);
+    QCOMPARE(tracker.targets.first().mode, drift::TrackerTarget::Mode::Mask);
+    QVERIFY(qAbs(tracker.points[0].samples.first().pos.x() - 0.3) < 1e-9);
+    QVERIFY(qAbs(tracker.points[0].samples.first().pos.y() - 0.6) < 1e-9);
+
+    QCOMPARE(state.tracking()->ensureMaskTracker(maskId, 0.1, 0.1), id);
+    QCOMPARE(state.tracking()->trackers(host).size(), 1);
+
+    state.undo();
+    QVERIFY(state.tracking()->trackers(host).isEmpty());
+    QVERIFY(state.tracking()->trackerForTarget(maskId).isEmpty());
+    QVERIFY(fx.clipById(maskId));
+}
+
+void EditorStateTest::trackingDraggingATrackedMaskWritesAUserKey()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const QString host = QStringLiteral("clip-0");
+    const QString maskId = fx.addMask(host);
+    {
+        int t = 0;
+        int c = 0;
+        fx.clipById(maskId, &t, &c);
+        state.project()->tracks()[t].clips[c].mask.x = 0.5;
+        state.project()->tracks()[t].clips[c].mask.y = 0.5;
+    }
+    const QString id = state.tracking()->addPointTracker(host, 0.5, 0.5);
+    drift::MotionTracker &tracker = fx.tracker(host, id);
+    for (int k = 1; k < 30; ++k)
+        tracker.points[0].samples.insert(k * fx.frame, drift::TrackSample{QPointF(0.5 + 0.01 * k, 0.5), 0.95f, false});
+    state.tracking()->setTarget(host, id, maskId, QStringLiteral("mask"));
+
+    state.setPlayheadUs(10 * fx.frame);
+    MaskEditSession *session = state.masking()->editSession();
+    QVERIFY(session->begin(maskId, 400, 200));
+    session->beginBody(0.5, 0.5);
+    session->moveBody(0.6, 0.5, true);
+    session->commit();
+
+    const auto &samples = fx.tracker(host, id).points[0].samples;
+    QVERIFY(samples.contains(10 * fx.frame));
+    QVERIFY(samples.value(10 * fx.frame).userKey);
+    QVERIFY(samples.value(10 * fx.frame).pos.x() > 0.55);
+    QVERIFY(!samples.contains(20 * fx.frame));
+    const auto &xKeys = fx.clipById(maskId)->mask.keyframes.value(QStringLiteral("x"));
+    QVERIFY(qAbs(xKeys.evaluateAt(10 * fx.frame) - samples.value(10 * fx.frame).pos.x()) < 1e-6);
+}
+
+void EditorStateTest::trackingFollowFromTheFollowersSide()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const QString host = QStringLiteral("clip-0");
+    state.addTextClip(QStringLiteral("Tag"), 0.0);
+    QString textId;
+    for (const drift::Track &track : state.project()->tracks()) {
+        for (const drift::Clip &clip : track.clips) {
+            if (clip.type == drift::ClipType::Text)
+                textId = clip.id;
+        }
+    }
+    QVERIFY(!textId.isEmpty());
+    state.setPlayheadUs(5 * fx.frame);
+
+    const QVariantMap below = state.tracking()->videoUnder(textId);
+    QCOMPARE(below.value(QStringLiteral("clipId")).toString(), host);
+    QCOMPARE(below.value(QStringLiteral("name")).toString(), fx.clipById(host)->name);
+    QVERIFY(state.tracking()->videoUnder(host).isEmpty());
+    QVERIFY(state.tracking()->videoUnder(QStringLiteral("missing")).isEmpty());
+    QCOMPARE(state.tracking()->clipRefById(host).value(QStringLiteral("name")).toString(), fx.clipById(host)->name);
+
+    const QString id = state.tracking()->followWithNewTracker(host, textId, 0.4, 0.5);
+    QVERIFY(!id.isEmpty());
+    const drift::MotionTracker &tracker = fx.tracker(host, id);
+    QCOMPARE(tracker.targets.size(), 1);
+    QCOMPARE(tracker.targets.first().clipId, textId);
+    QCOMPARE(tracker.targets.first().mode, drift::TrackerTarget::Mode::FollowClip);
+
+    const QVariantList driving = state.tracking()->trackersDriving(textId);
+    QCOMPARE(driving.size(), 1);
+    QCOMPARE(driving.first().toMap().value(QStringLiteral("hostClipId")).toString(), host);
+    QCOMPARE(driving.first().toMap().value(QStringLiteral("trackerId")).toString(), id);
+    QVERIFY(state.tracking()->trackersDriving(host).isEmpty());
+
+    state.undo();
+    QVERIFY(state.tracking()->trackersDriving(textId).isEmpty());
+    QVERIFY(state.tracking()->trackers(host).isEmpty());
+
+    state.redo();
+    state.tracking()->removeTarget(host, id, textId);
+    QVERIFY(state.tracking()->trackersDriving(textId).isEmpty());
+}
+
+namespace {
+
+QString addCutout(AppController &state, TrackingFixture &fx, const QString &host, bool people = false)
+{
+    int t = 0;
+    int c = 0;
+    fx.clipById(host, &t, &c);
+    drift::Mask cutout = drift::fullFrameMediaMask(
+        QDir(drift::matteCacheDir()).filePath(QStringLiteral("test-cutout-%1.mkv").arg(QUuid::createUuid().toString(QUuid::WithoutBraces))));
+    if (people)
+        cutout.mediaFgrPath = QDir(drift::matteCacheDir()).filePath(QStringLiteral("test-cutout-fgr.mkv"));
+    const drift::ClipRef added = drift::addLinkedMask(*state.project(), t, c, cutout);
+    return state.project()->tracks().at(added.trackIndex).clips.at(added.clipIndex).id;
+}
+
+} // namespace
+
+// Brush strokes on a selected AI cutout paint a PNG for the playhead's matte frame instead of a
+// new matte: gray is the corrected coverage, alpha how much was painted.
+void EditorStateTest::maskingBrushFixesACutoutFrameAsAPatch()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const QString host = QStringLiteral("clip-0");
+    const QString cutoutId = addCutout(state, fx, host);
+    state.selectClipById(cutoutId);
+    MaskingController *masking = state.masking();
+    QVERIFY(masking->hasSelectedCutoutMask(0, 0) || masking->hasSelectedCutoutMask(1, 0));
+    QVERIFY(!masking->hasCutoutPatchAtPlayhead(cutoutId));
+
+    state.setPlayheadUs(5 * fx.frame);
+    const drift::TimeUs mediaUs = masking->cutoutMediaUs(cutoutId);
+    QCOMPARE(mediaUs, 5 * fx.frame);
+
+    const auto strokeAcross = [&](double y, bool erase) {
+        QVERIFY(masking->strokeBegin(host, 100, y * 200, 400, 200, erase));
+        masking->strokeAdd(300, y * 200, 1.0);
+        masking->strokeEnd();
+        QVERIFY(masking->waitForBrushSaves());
+    };
+    const auto cutoutMask = [&]() { return fx.clipById(cutoutId)->mask; };
+    const int tracksBefore = state.project()->tracks().size();
+
+    strokeAcross(0.25, false);
+    QCOMPARE(state.project()->tracks().size(), tracksBefore);
+    QCOMPARE(cutoutMask().mediaPatches.size(), 1);
+    QCOMPARE(cutoutMask().mediaPatches.firstKey(), mediaUs);
+    QVERIFY(cutoutMask().mediaPath.endsWith(QStringLiteral(".mkv")));
+    QVERIFY(masking->hasCutoutPatchAtPlayhead(cutoutId));
+    const QString first = cutoutMask().mediaPatches.first();
+    QImage patch(first);
+    QVERIFY(!patch.isNull());
+    patch = patch.convertToFormat(QImage::Format_ARGB32);
+    QVERIFY(qAlpha(patch.pixel(patch.width() / 2, patch.height() / 4)) > 240);
+    QVERIFY(qGray(patch.pixel(patch.width() / 2, patch.height() / 4)) > 240);
+    QCOMPARE(qAlpha(patch.pixel(patch.width() / 2, patch.height() * 3 / 4)), 0);
+
+    // An erase stroke elsewhere joins the same frame's patch and leaves the first stroke alone.
+    strokeAcross(0.75, true);
+    QCOMPARE(cutoutMask().mediaPatches.size(), 1);
+    QVERIFY(cutoutMask().mediaPatches.first() != first);
+    QImage both = QImage(cutoutMask().mediaPatches.first()).convertToFormat(QImage::Format_ARGB32);
+    QVERIFY(qAlpha(both.pixel(both.width() / 2, both.height() / 4)) > 240);
+    QVERIFY(qGray(both.pixel(both.width() / 2, both.height() / 4)) > 240);
+    QVERIFY(qAlpha(both.pixel(both.width() / 2, both.height() * 3 / 4)) > 240);
+    QVERIFY(qGray(both.pixel(both.width() / 2, both.height() * 3 / 4)) < 15);
+
+    // A stroke on another frame keeps its own patch.
+    state.setPlayheadUs(9 * fx.frame);
+    strokeAcross(0.5, false);
+    QCOMPARE(cutoutMask().mediaPatches.size(), 2);
+    QVERIFY(cutoutMask().mediaPatches.contains(9 * fx.frame));
+
+    // One undo step per stroke.
+    state.undo();
+    QCOMPARE(cutoutMask().mediaPatches.size(), 1);
+    QVERIFY(!cutoutMask().mediaPatches.contains(9 * fx.frame));
+
+    // Clearing the fix on the frame at the playhead is one undo step as well.
+    state.setPlayheadUs(5 * fx.frame);
+    masking->clearCutoutPatch(cutoutId);
+    QVERIFY(cutoutMask().mediaPatches.isEmpty());
+    QVERIFY(!masking->hasCutoutPatchAtPlayhead(cutoutId));
+    state.undo();
+    QCOMPARE(cutoutMask().mediaPatches.size(), 1);
+
+    // The saved project keeps the fix.
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(state.project()->toJson(), &error);
+    QVERIFY(error.isEmpty());
+    int lt = 0;
+    int lc = 0;
+    QVERIFY(drift::mcpdetail::findClipById(loaded, cutoutId, &lt, &lc));
+    QCOMPARE(loaded.tracks().at(lt).clips.at(lc).mask.mediaPatches.size(), 1);
+}
+
+void EditorStateTest::maskingCutoutPatchSurvivesInspectorEdits()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto restore = qScopeGuard([] { QStandardPaths::setTestModeEnabled(false); });
+
+    AssetLibrary library;
+    AppController state(&library);
+    TrackingFixture fx(&state);
+    const QString host = QStringLiteral("clip-0");
+    const QString cutoutId = addCutout(state, fx, host);
+    int t = 0;
+    int c = 0;
+    fx.clipById(cutoutId, &t, &c);
+    state.project()->tracks()[t].clips[c].mask.mediaPatches.insert(5 * fx.frame, QStringLiteral("/tmp/fix.png"));
+
+    // The inspector hands the mask back as a map that has no patches in it.
+    QVariantMap map = drift::appdetail::maskToMap(fx.clipById(cutoutId)->mask);
+    map.insert(QStringLiteral("invert"), true);
+    state.setClipMask(t, c, map);
+    const drift::Mask edited = fx.clipById(cutoutId)->mask;
+    QVERIFY(edited.invert);
+    QCOMPARE(edited.mediaPatches.size(), 1);
+    QCOMPARE(edited.mediaPatches.firstKey(), 5 * fx.frame);
 }
 
 QTEST_MAIN(EditorStateTest)

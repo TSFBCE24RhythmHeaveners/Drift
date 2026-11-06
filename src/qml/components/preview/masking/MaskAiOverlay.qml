@@ -19,10 +19,9 @@ Item {
     property var target: ({ kind: "none" })
     readonly property bool aiActive: target.kind === "clip"
 
-    // The clip the segmentation session is open on, -1 when none. Kept here so that closing or
-    // retargeting always ends the session that was actually begun.
-    property int sessionTrack: -1
-    property int sessionClip: -1
+    // The clip the segmentation session is open on, empty when none. Kept here so that closing or
+    // retargeting always ends the session that was actually begun. By id: inserted tracks shift indices.
+    property string sessionClipId: ""
 
     property int hoverIndex: -1
 
@@ -44,16 +43,14 @@ Item {
     }
 
     function syncSession() {
-        const wantTrack = visible && aiActive ? target.track : -1
-        const wantClip = wantTrack >= 0 ? target.clip : -1
-        if (wantTrack === sessionTrack && wantClip === sessionClip)
+        const wantId = visible && aiActive ? EditorState.masking.clipIdAt(target.track, target.clip) : ""
+        if (wantId === sessionClipId)
             return
-        if (sessionTrack >= 0)
+        if (sessionClipId !== "")
             EditorState.segmentation.endSession()
-        sessionTrack = wantTrack
-        sessionClip = wantClip
-        if (sessionTrack >= 0)
-            EditorState.segmentation.beginSessionAtPlayhead(sessionTrack, sessionClip)
+        sessionClipId = wantId
+        if (sessionClipId !== "")
+            EditorState.segmentation.beginSessionAtPlayhead(target.track, target.clip)
     }
 
     // Scrubbing and playback each pay a multi-second encode per frame, so the session only follows
@@ -63,21 +60,9 @@ Item {
             frameTimer.restart()
     }
 
-    // Index of the prompt point within 8 px of (x, y) in clip-frame pixels, nearest first, or -1.
     function pointAt(x, y) {
-        const pts = EditorState.segmentation.sessionPoints
-        const fw = Math.max(1, clipFrame.width)
-        const fh = Math.max(1, clipFrame.height)
-        let best = -1
-        let bestDistance = 8
-        for (let i = 0; i < pts.length; ++i) {
-            const d = Math.hypot(pts[i].x * fw - x, pts[i].y * fh - y)
-            if (d <= bestDistance) {
-                best = i
-                bestDistance = d
-            }
-        }
-        return best
+        return EditorState.segmentation.pointIndexAt(x / Math.max(1, clipFrame.width), y / Math.max(1, clipFrame.height),
+                                                    8, clipFrame.width, clipFrame.height)
     }
 
     onVisibleChanged: {
@@ -87,10 +72,9 @@ Item {
     }
     Component.onCompleted: refresh()
     Component.onDestruction: {
-        if (sessionTrack >= 0)
+        if (sessionClipId !== "")
             EditorState.segmentation.endSession()
-        sessionTrack = -1
-        sessionClip = -1
+        sessionClipId = ""
     }
 
     Timer {
@@ -98,7 +82,7 @@ Item {
         interval: 250
         repeat: false
         onTriggered: {
-            if (root.sessionTrack >= 0 && !EditorState.playing && !EditorState.scrubbing)
+            if (root.sessionClipId !== "" && !EditorState.playing && !EditorState.scrubbing)
                 EditorState.segmentation.setFrameSeconds(EditorState.playheadSeconds)
         }
     }
@@ -149,6 +133,7 @@ Item {
         readonly property bool is3d: (root.editorState.rotationX || 0) !== 0
                                      || (root.editorState.rotationY || 0) !== 0
                                      || (root.editorState.z || 0) !== 0
+                                     || root.editorState.anchorX !== undefined || root.editorState.anchorY !== undefined
         // Moved by a transform layer: composed through that parent as well, flat or not.
         readonly property bool hasParent: root.editorState.parentActive === true
         rotation: is3d || hasParent ? 0 : (root.editorState.rotation || 0)
@@ -188,14 +173,23 @@ Item {
 
         // Clicks on the frame: left adds an include point; right, Ctrl or Alt adds an exclude point.
         // A click within 8 px of an existing point removes that point instead.
+        ToolCursor {
+            target: pointArea
+            shape: EditorState.segmentation.previewBusy ? "busy" : (pointArea.excludeHeld ? "aiExclude" : "aiInclude")
+        }
+
         MouseArea {
+            id: pointArea
             anchors.fill: parent
-            enabled: root.aiActive && !EditorState.segmentation.running
+            enabled: root.aiActive && !EditorState.segmentation.running && EditorState.segmentation.backendUsesPoints
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            cursorShape: Qt.CrossCursor
+
+            property bool excludeHeld: false
+            onWheel: (wheel) => { wheel.accepted = false }
 
             onPositionChanged: (mouse) => {
+                excludeHeld = (mouse.modifiers & (Qt.ControlModifier | Qt.AltModifier)) !== 0
                 root.hoverIndex = root.pointAt(mouse.x, mouse.y)
             }
             onExited: root.hoverIndex = -1
@@ -319,9 +313,13 @@ Item {
         Text {
             id: hintText
             anchors.centerIn: parent
-            text: EditorState.segmentation.sessionPoints.length === 0
-                  ? qsTr("Click the object to select it · Right-click or Ctrl-click to exclude")
-                  : qsTr("Add points to refine · then propagate in the Masking panel")
+            text: EditorState.segmentation.backendUsesPoints
+                  ? (EditorState.segmentation.sessionPoints.length === 0
+                     ? qsTr("Click the object to select it · Right-click or Ctrl-click to exclude")
+                     : qsTr("Add points to refine · then press “Cut out through whole clip” in the Masking panel"))
+                  : (EditorState.segmentation.backends().length === 0
+                     ? qsTr("Install a cutout model in the Masking panel first")
+                     : qsTr("People are found automatically · press “Cut out people” in the Masking panel"))
             color: Theme.c.maskDrawOverlay.hintForeground
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontSizeXs

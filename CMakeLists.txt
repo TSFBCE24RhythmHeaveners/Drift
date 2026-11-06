@@ -6,7 +6,7 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Oldest macOS release Drift 
 
 # C is enabled for JUCE only: its modules compile a handful of C sources (zlib, flac, oggvorbis)
 # and its CMake refuses to configure without it.
-project(Drift VERSION 0.9.0 LANGUAGES CXX C)
+project(Drift VERSION 0.9.1 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,6 +14,12 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+include(DriftBuildSpeed)
+
+option(DRIFT_PCH "Use a precompiled header for the core, engine and app targets" ON)
+option(DRIFT_QML_CACHEGEN "Compile QML to bytecode/C++ (slow); OFF for fast dev builds" ON)
+option(DRIFT_BUILD_TESTS "Build the test suite" ON)
+option(DRIFT_BUILD_TOOLS "Build the CLI tools" ON)
 
 option(WITH_BGREMOVAL "Enable OpenCV-based background removal" OFF)
 # Skia (Ganesh/GL) draws text, shapes and Lottie/SVG clips on the GPU; see
@@ -29,6 +35,15 @@ else()
     set(_drift_auto_ts ON)
 endif()
 option(DRIFT_AUTO_UPDATE_TRANSLATIONS "Run lupdate as part of the default build" ${_drift_auto_ts})
+
+# drift --preview=Name opens one QML component per window. Fixtures are <Name>_Preview.qml next to
+# the component they wrap; neither they nor the host ship in release builds.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(_drift_qml_previews ON)
+else()
+    set(_drift_qml_previews OFF)
+endif()
+option(DRIFT_QML_PREVIEWS "Build the --preview component windows and *_Preview.qml fixtures" ${_drift_qml_previews})
 
 # Fonts, stickers and the Whisper model used to be fetched or extracted here and shipped inside
 # the build tree — roughly 800 MB of assets every user paid for whether or not they used them.
@@ -66,11 +81,13 @@ option(DRIFT_AUTO_UPDATE_TRANSLATIONS "Run lupdate as part of the default build"
 # benefit. That is also why it is fine in CMakeCache.txt.
 set(DRIFT_ADDON_INDEX_URL "https://drift-addons.cutwire.org/v1/index"
     CACHE STRING "Addon index endpoint; empty disables the addon service")
+set(DRIFT_ADDONS_CATALOG_URL ""
+    CACHE STRING "Addon store catalog endpoint; empty derives it from DRIFT_ADDON_INDEX_URL (…/v1/index -> …/v1/catalog)")
 set(DRIFT_ADDON_CLIENT_TOKEN "79a388bba9301cacc81cc6eb0724c81e948e1b27c69aee1b"
     CACHE STRING "Client token sent to the addon service as X-Drift-Client")
 
 # --- Marketplace -----------------------------------------------------------
-# Stock catalog at market.cutwire.org. Empty URL or key disables the Market tab.
+# Marketplace API at cutwire.studio. Empty URL or key disables the Market tab.
 # The HMAC key is not a user secret — it ships in the binary — and exists so requests can be
 # signed and a stable client id derived. See docs/marketplace/README.md.
 #
@@ -78,7 +95,7 @@ set(DRIFT_ADDON_CLIENT_TOKEN "79a388bba9301cacc81cc6eb0724c81e948e1b27c69aee1b"
 #                  -DDRIFT_MARKET_CLIENT_KEY=...
 #
 #   cmake -B build -DDRIFT_MARKET_API_URL=      # no marketplace
-set(DRIFT_MARKET_API_URL "https://market.cutwire.org/api/v1"
+set(DRIFT_MARKET_API_URL "https://cutwire.studio/api/v1"
     CACHE STRING "Marketplace API base; empty disables the marketplace")
 set(DRIFT_MARKET_CLIENT_KEY "5409a0bebab4446f88e51d06024a5cf9a694ee141a6a1c6be7a49e45b6687438"
     CACHE STRING "HMAC key for marketplace client identity and request signing")
@@ -546,6 +563,7 @@ add_library(driftcore STATIC
     src/core/project/clip/Stabilize.h
     src/core/project/clip/Stabilize.cpp
     src/core/base/Bezier.h
+    src/core/base/CameraEuler.h
     src/core/animation/SpeedCurve.h
     src/core/animation/SpeedCurve.cpp
     src/core/animation/FadeShape.h
@@ -624,6 +642,8 @@ add_library(driftcore STATIC
     src/core/interchange/OtioReader.cpp
     src/core/edit/TimelineOps.h
     src/core/edit/TimelineOps.cpp
+    src/core/edit/MaskSpace.h
+    src/core/edit/MaskSpace.cpp
     src/core/edit/CutOps.h
     src/core/edit/CutOps.cpp
     src/core/edit/commands/ProjectCommands.h
@@ -736,6 +756,13 @@ add_library(driftengine STATIC
     src/engine/media/waveforms/WaveformBlockCache.cpp
     src/engine/audio/analysis/AudioOnsets.h
     src/engine/audio/analysis/AudioOnsets.cpp
+    src/engine/audio/analysis/AudioEvents.h
+    src/engine/audio/analysis/AudioEvents.cpp
+    src/engine/audio/analysis/AudioSync.h
+    src/engine/audio/analysis/AudioSync.cpp
+    src/engine/audio/analysis/AudioAlign.h
+    src/engine/audio/analysis/AudioAlign.cpp
+    src/engine/audio/analysis/RealFft.h
     src/engine/audio/analysis/AudioFrameAnalysis.h
     src/engine/audio/analysis/AudioFrameAnalysis.cpp
     src/engine/ml/vision/detection/SceneDetect.h
@@ -744,6 +771,8 @@ add_library(driftengine STATIC
     src/engine/diagnostics/sheets/FrameSheet.cpp
     src/engine/diagnostics/sheets/WaveformSheet.h
     src/engine/diagnostics/sheets/WaveformSheet.cpp
+    src/engine/diagnostics/sheets/AudioSheet.h
+    src/engine/diagnostics/sheets/AudioSheet.cpp
     src/engine/ml/vision/detection/ObjectDetector.h
     src/engine/ml/vision/detection/ObjectDetector.cpp
     src/engine/encode/export/Exporter.h
@@ -802,10 +831,10 @@ add_library(driftengine STATIC
     src/engine/color/CubeLut.cpp
     src/engine/color/ScopeAnalysis.h
     src/engine/color/ScopeAnalysis.cpp
-    src/engine/compositor/effects/CompositorFrameHistory.h
-    src/engine/compositor/effects/CompositorFrameHistory.cpp
     src/engine/compositor/FrameCompositor.h
     src/engine/compositor/FrameCompositor.cpp
+    src/engine/compositor/SourceFrameCrop.h
+    src/engine/compositor/SourceFrameCrop.cpp
     src/engine/compositor/layers/MaskApplier.h
     src/engine/compositor/layers/MaskApplier.cpp
     src/engine/packages/audio/AudioEffectCatalog.h
@@ -897,6 +926,12 @@ add_library(driftengine STATIC
     src/engine/face/props/FacePropImport.cpp
     src/engine/ml/speech/DeepFilterDenoiser.h
     src/engine/ml/speech/DeepFilterDenoiser.cpp
+    src/engine/ml/audio/AstClassifier.h
+    src/engine/ml/audio/AstClassifier.cpp
+    src/engine/ml/audio/AudioTagging.h
+    src/engine/ml/audio/AudioTagging.cpp
+    src/engine/ml/audio/ClapTagger.h
+    src/engine/ml/audio/ClapTagger.cpp
     src/engine/ml/speech/DenoiseAudio.h
     src/engine/ml/speech/DenoiseAudio.cpp
     src/engine/encode/writers/MatteWriter.h
@@ -999,26 +1034,108 @@ if(DRIFT_WITH_SKIA)
 endif()
 
 # --- application ------------------------------------------------------------
+# The app sources tst_editorstate also needs, compiled once. Files that read the endpoint/version
+# defines drift sets (or that carry QML_ELEMENT) stay in drift and are compiled separately by the
+# test with its own defines.
+add_library(driftapp STATIC)
+target_include_directories(driftapp PUBLIC src)
+target_link_libraries(driftapp PUBLIC
+    Qt6::Quick
+    Qt6::Multimedia
+    Qt6::Gui
+    Qt6::Concurrent
+    Qt6::Network
+    driftcore
+    driftengine
+)
+if(ANDROID)
+    find_package(Qt6 REQUIRED COMPONENTS CorePrivate)
+    target_link_libraries(driftapp PUBLIC Qt6::CorePrivate)
+endif()
+
 qt_add_executable(drift
     src/app/main.cpp
     src/ui/imageproviders/DriftImageProvider.h
     src/ui/imageproviders/DriftImageProvider.cpp
     src/ui/imageproviders/segment/SegmentImageProvider.h
     src/ui/imageproviders/segment/SegmentImageProvider.cpp
-    src/ui/imageproviders/segment/SegmentImageStore.h
-    src/ui/imageproviders/segment/SegmentImageStore.cpp
     src/ui/imageproviders/clippreview/ClipPreviewImageProvider.h
     src/ui/imageproviders/clippreview/ClipPreviewImageProvider.cpp
+    src/ui/imageproviders/TextStylePreviewImageProvider.h
+    src/ui/imageproviders/TextStylePreviewImageProvider.cpp
+    src/ui/imageproviders/ShapePreviewImageProvider.h
+    src/ui/imageproviders/ShapePreviewImageProvider.cpp
+    src/app/online/addons/AddonEndpoint.h
+    src/app/online/addons/AddonManager.h
+    src/app/online/addons/AddonManager.cpp
+    src/app/online/market/MarketEndpoint.h
+    src/app/online/market/MarketIdentity.h
+    src/app/online/market/MarketIdentity.cpp
+    src/app/online/marketplace/MarketTransport.h
+    src/app/online/marketplace/MarketTransport.cpp
+    src/app/online/marketplace/MarketServices.h
+    src/app/online/marketplace/MarketServices.cpp
+    src/app/online/downloads/DownloadBridges.h
+    src/app/online/downloads/DownloadBridges.cpp
+    src/core/base/VersionCompare.h
+    src/app/online/updates/UpdateChecker.h
+    src/app/online/updates/UpdateChecker.cpp
+    src/app/online/updates/UpdateAsset.h
+    src/app/online/updates/UpdateAsset.cpp
+    src/app/StartupSplash.h
+    src/app/StartupSplash.cpp
+    src/app/editor/sessions/PolylineDraft.h
+    src/app/editor/sessions/PolylineDraft.cpp
+    src/app/jobs/vision/SegmentationPlan.h
+    src/app/mcp/McpDetail.h
+    src/app/editor/AppControllerDetail.h
+    src/app/editor/EditorState.h
+    src/app/editor/LayoutStore.h
+    src/app/editor/LayoutStore.cpp
+    src/app/editor/WorkspaceStore.h
+    src/app/editor/WorkspaceStore.cpp
+    src/app/editor/SearchIndex.h
+    src/app/editor/SearchIndex.cpp
+    src/app/platform/FileDialogs.h
+    src/app/platform/FileDialogs.cpp
+    src/app/platform/Haptics.h
+    src/app/platform/Haptics.cpp
+    src/app/platform/PointerDevices.h
+    src/app/platform/PointerDevices.cpp
+    src/ui/preview/PreviewItem.h
+    src/ui/preview/PreviewItem.cpp
+    src/ui/preview/BrushStrokeItem.h
+    src/ui/preview/BrushStrokeItem.cpp
+    src/ui/preview/ToolCursor.h
+    src/ui/preview/ToolCursor.cpp
+    src/ui/color/ColorWheelMath.h
+    src/ui/color/ColorWheelPad.h
+    src/ui/color/ColorWheelPad.cpp
+    src/ui/color/CurveEdit.h
+    src/ui/color/CurveEdit.cpp
+    src/ui/keyframes/KeyframeDot.h
+    src/ui/keyframes/KeyframeDot.cpp
+    src/ui/keyframes/KeyframeLanesItem.h
+    src/ui/keyframes/KeyframeLanesItem.cpp
+    src/ui/keyframes/KeyframeCurvesItem.h
+    src/ui/keyframes/KeyframeCurvesItem.cpp
+    src/ui/color/CurvePlot.h
+    src/ui/color/CurvePlot.cpp
+    src/ui/preview/TrackerOverlayItem.h
+    src/ui/preview/TrackerOverlayItem.cpp
+    src/ui/preview/TrackerOverlayMath.h
+    src/ui/preview/ConfidenceStripItem.h
+    src/ui/preview/ConfidenceStripItem.cpp
+)
+target_sources(driftapp PRIVATE
+    src/ui/imageproviders/segment/SegmentImageStore.h
+    src/ui/imageproviders/segment/SegmentImageStore.cpp
     src/playback/preview/ClipPreviewImageStore.h
     src/playback/preview/ClipPreviewImageStore.cpp
     src/ui/imageproviders/multicam/MulticamImageProvider.h
     src/ui/imageproviders/multicam/MulticamImageProvider.cpp
     src/ui/imageproviders/multicam/MulticamImageStore.h
     src/ui/imageproviders/multicam/MulticamImageStore.cpp
-    src/ui/imageproviders/TextStylePreviewImageProvider.h
-    src/ui/imageproviders/TextStylePreviewImageProvider.cpp
-    src/ui/imageproviders/ShapePreviewImageProvider.h
-    src/ui/imageproviders/ShapePreviewImageProvider.cpp
     src/ui/imageproviders/color/ColorImageProvider.h
     src/ui/imageproviders/color/ColorImageProvider.cpp
     src/app/color/LookThumbnailService.h
@@ -1027,33 +1144,51 @@ qt_add_executable(drift
     src/app/color/ScopesController.h
     src/app/color/ScopesController.cpp
     src/app/color/LookThumbnailService.cpp
-    src/app/online/addons/AddonEndpoint.h
-    src/app/online/addons/AddonManager.h
-    src/app/online/addons/AddonManager.cpp
+    src/app/online/addons/AddonCatalog.cpp
     src/app/jobs/JobRegistry.h
     src/app/jobs/JobRegistry.cpp
     src/app/online/CloudProviders.h
     src/app/online/CloudProviders.cpp
-    src/app/online/market/MarketEndpoint.h
-    src/app/online/market/MarketIdentity.h
-    src/app/online/market/MarketIdentity.cpp
-    src/app/online/market/MarketClient.h
-    src/app/online/market/MarketClient.cpp
+    src/app/online/marketplace/MarketplaceManifest.h
+    src/app/online/marketplace/MarketplaceManifest.cpp
+    src/app/online/marketplace/MarketInstall.h
+    src/app/online/marketplace/MarketInstall.cpp
+    src/app/online/marketplace/StockInstaller.h
+    src/app/online/marketplace/StockInstaller.cpp
+    src/app/online/marketplace/CommunityInstaller.h
+    src/app/online/marketplace/CommunityInstaller.cpp
+    src/app/online/marketplace/MarketInstallRouter.h
+    src/app/online/marketplace/MarketInstallRouter.cpp
+    src/app/online/downloads/DownloadCenter.h
+    src/app/online/downloads/DownloadCenter.cpp
     src/app/online/assets/DriftAssetStore.h
     src/app/online/assets/DriftAssetStore.cpp
     src/app/online/assets/SfxLibrary.h
     src/app/online/assets/SfxLibrary.cpp
-    src/core/base/VersionCompare.h
-    src/app/online/updates/UpdateChecker.h
-    src/app/online/updates/UpdateChecker.cpp
-    src/app/online/updates/UpdateAsset.h
-    src/app/online/updates/UpdateAsset.cpp
     src/app/editor/AppController.h
     src/app/editor/AppController.cpp
+    src/app/editor/appcontroller/AppControllerInternal.h
+    src/app/editor/appcontroller/AppControllerClipModel.cpp
+    src/app/editor/appcontroller/AppControllerInternal.cpp
+    src/app/editor/appcontroller/AppControllerTimeline.cpp
+    src/app/editor/appcontroller/AppControllerSubtitleMulticam.cpp
+    src/app/editor/appcontroller/AppControllerAdjustments.cpp
+    src/app/editor/appcontroller/AppControllerClipProps.cpp
+    src/app/editor/appcontroller/AppControllerComposite.cpp
+    src/app/editor/appcontroller/AppControllerVector.cpp
+    src/app/editor/appcontroller/AppControllerKeyframes.cpp
+    src/app/editor/appcontroller/AppControllerEffects.cpp
+    src/app/editor/appcontroller/AppControllerTracks.cpp
+    src/app/editor/appcontroller/AppControllerProject.cpp
+    src/app/editor/appcontroller/AppControllerTextLayers.cpp
+    src/app/mcp/AgentImageLog.h
+    src/app/mcp/AgentImageLog.cpp
     src/app/mcp/McpController.h
     src/app/mcp/McpController.cpp
     src/app/editor/PreferencesController.h
     src/app/editor/PreferencesController.cpp
+    src/app/GraphicsApiChoice.h
+    src/app/GraphicsApiChoice.cpp
     src/app/editor/ProjectFileController.h
     src/app/editor/ProjectFileController.cpp
     src/app/bin/AssetPreviewController.h
@@ -1064,6 +1199,22 @@ qt_add_executable(drift
     src/app/editor/sessions/CurveEditorController.cpp
     src/app/editor/sessions/KeyframeController.h
     src/app/editor/sessions/KeyframeController.cpp
+    src/app/editor/sessions/KeyframeRows.h
+    src/app/editor/sessions/KeyframeRows.cpp
+    src/app/editor/sessions/KeyframeRowsModel.h
+    src/app/editor/sessions/KeyframeRowsModel.cpp
+    src/app/editor/sessions/KeyframeCurves.h
+    src/app/editor/sessions/KeyframeCurves.cpp
+    src/app/editor/sessions/KeyframeCurvesModel.h
+    src/app/editor/sessions/KeyframeCurvesModel.cpp
+    src/app/editor/sessions/KeyframeSelection.h
+    src/app/editor/sessions/KeyframeSelection.cpp
+    src/app/editor/sessions/KeyframeTimeView.h
+    src/app/editor/sessions/KeyframeTimeView.cpp
+    src/app/editor/sessions/MaskEditSession.h
+    src/app/editor/sessions/MaskEditSession.cpp
+    src/app/editor/sessions/MaskStackModel.h
+    src/app/editor/sessions/MaskStackModel.cpp
     src/app/editor/sessions/MaskingController.h
     src/app/editor/sessions/MaskingController.cpp
     src/app/editor/sessions/SubtitleController.h
@@ -1074,13 +1225,14 @@ qt_add_executable(drift
     src/app/editor/sessions/SubtitleCueFilterModel.cpp
     src/app/jobs/vision/SegmentationController.h
     src/app/jobs/vision/SegmentationController.cpp
-    src/app/jobs/vision/SegmentationPlan.h
     src/app/jobs/vision/SceneDetectController.h
     src/app/jobs/vision/SceneDetectController.cpp
     src/app/jobs/vision/DepthController.h
     src/app/jobs/vision/DepthController.cpp
     src/app/jobs/audio/DenoiseController.h
     src/app/jobs/audio/DenoiseController.cpp
+    src/app/jobs/audio/AudioAlignController.h
+    src/app/jobs/audio/AudioAlignController.cpp
     src/app/jobs/vision/RestoreController.h
     src/app/jobs/vision/RestoreController.cpp
     src/app/jobs/vision/FaceTrackingController.h
@@ -1089,6 +1241,8 @@ qt_add_executable(drift
     src/app/jobs/vision/StabilizeController.cpp
     src/app/jobs/vision/TrackingController.h
     src/app/jobs/vision/TrackingController.cpp
+    src/app/jobs/vision/TrackerListModel.h
+    src/app/jobs/vision/TrackerListModel.cpp
     src/app/bin/MediaBinController.h
     src/app/bin/MediaBinController.cpp
     src/app/bin/SourceLabController.h
@@ -1097,19 +1251,6 @@ qt_add_executable(drift
     src/app/jobs/audio/TtsController.cpp
     src/app/jobs/audio/VoiceLibrary.h
     src/app/jobs/audio/VoiceLibrary.cpp
-    src/app/mcp/McpDetail.h
-    src/app/editor/AppControllerDetail.h
-    src/app/editor/EditorState.h
-    src/app/editor/LayoutStore.h
-    src/app/editor/LayoutStore.cpp
-    src/app/editor/WorkspaceStore.h
-    src/app/editor/WorkspaceStore.cpp
-    src/app/platform/FileDialogs.h
-    src/app/platform/FileDialogs.cpp
-    src/app/platform/Haptics.h
-    src/app/platform/Haptics.cpp
-    src/app/platform/PointerDevices.h
-    src/app/platform/PointerDevices.cpp
     src/app/bin/AssetLibrary.h
     src/app/bin/AssetLibrary.cpp
     src/app/bin/BinFolderListModel.h
@@ -1132,8 +1273,8 @@ qt_add_executable(drift
     src/playback/stats/PlaybackDiagnostics.cpp
     src/playback/stats/PerfLog.h
     src/playback/stats/PerfLog.cpp
-    src/ui/preview/PreviewItem.h
-    src/ui/preview/PreviewItem.cpp
+    src/ui/preview/Outliner3dModel.h
+    src/ui/preview/Outliner3dModel.cpp
     src/ui/preview/PreviewController.h
     src/ui/preview/PreviewController.cpp
     src/ui/timeline/ClipThumbnailStore.h
@@ -1150,14 +1291,17 @@ qt_add_executable(drift
 # desktop, and an agent reaches it through `adb forward` — which is what makes the phone build
 # drivable by tooling instead of by blind coordinate taps.
 target_sources(drift PRIVATE
+    src/app/mcp/protocol/McpProtocol.h
+    src/app/mcp/protocol/McpProtocol.cpp
+    src/app/mcp/protocol/McpJson.h
+)
+target_sources(driftapp PRIVATE
     src/app/mcp/protocol/McpSession.h
     src/app/mcp/protocol/McpSession.cpp
     src/app/platform/RunningInstances.h
     src/app/platform/RunningInstances.cpp
     src/app/mcp/tools/McpCatalog.h
     src/app/mcp/tools/McpCatalog.cpp
-    src/app/mcp/protocol/McpProtocol.h
-    src/app/mcp/protocol/McpProtocol.cpp
     src/app/mcp/tools/McpDispatcher.h
     src/app/mcp/tools/McpDispatcher.cpp
     src/app/mcp/tools/McpDispatcherExtended.cpp
@@ -1166,13 +1310,14 @@ target_sources(drift PRIVATE
     src/app/mcp/protocol/McpValidate.h
     src/app/mcp/protocol/McpValidate.cpp
     src/app/mcp/tools/McpMarket.cpp
-    src/app/mcp/protocol/McpJson.h
 )
 
 # The HTTP listener needs QTcpServer, which a browser has no sockets for; McpController does not
 # construct a McpServer under Q_OS_WASM.
 if(NOT EMSCRIPTEN)
     target_sources(drift PRIVATE
+    )
+    target_sources(driftapp PRIVATE
         src/app/mcp/transport/McpHttp.h
         src/app/mcp/transport/McpHttp.cpp
         src/app/mcp/transport/McpServer.h
@@ -1184,14 +1329,16 @@ endif()
 # points driven from a terminal, which an APK has no equivalent of.
 if(NOT ANDROID AND NOT EMSCRIPTEN)
     target_sources(drift PRIVATE
+        src/app/HeadlessApp.h
+        src/app/HeadlessApp.cpp
+    )
+    target_sources(driftapp PRIVATE
         src/app/mcp/transport/McpStdio.h
         src/app/mcp/transport/McpStdio.cpp
         src/app/mcp/transport/McpBridge.h
         src/app/mcp/transport/McpBridge.cpp
         src/app/mcp/transport/McpStdioServer.h
         src/app/mcp/transport/McpStdioServer.cpp
-        src/app/HeadlessApp.h
-        src/app/HeadlessApp.cpp
     )
 endif()
 
@@ -1202,7 +1349,8 @@ if(WIN32)
     # console subsystem and Windows opens a console window before the GUI comes up. Qt6::EntryPoint
     # (linked in by Qt6::Core) supplies the WinMain that forwards to main().
     set_target_properties(drift PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_sources(drift PRIVATE resources/windows/drift.rc)
+    target_sources(drift PRIVATE resources/windows/drift.rc src/app/platform/PrimaryDisplay_win.cpp)
+    target_link_libraries(drift PRIVATE shcore)
     set_source_files_properties(resources/windows/drift.rc PROPERTIES
         OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/resources/windows/drift.ico")
 endif()
@@ -1354,14 +1502,34 @@ qt_add_resources(drift "drift_workspaces"
         resources/workspaces/color.json
         resources/workspaces/keyframes.json
         resources/workspaces/masking-tracking.json
+        resources/workspaces/3d.json
+)
+
+qt_add_resources(drift "drift_marketplace"
+    PREFIX "/"
+    BASE resources
+    FILES resources/marketplace/default-manifest.json
+)
+
+qt_add_resources(drift "drift_addon_catalog"
+    PREFIX "/"
+    BASE resources
+    FILES resources/addons/default-catalog.json
+)
+
+# Global search index written by scripts/gen-search-index.py; loaded at :/search-index.json.
+qt_add_resources(drift "drift_search_index"
+    PREFIX "/"
+    BASE resources
+    FILES resources/search-index.json
 )
 
 set_source_files_properties(src/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
 # Canvas preset catalog + the (template, quality) -> pixels arithmetic, shared by the desktop
 # layout dialog and the phone layout sheet so the two cannot drift apart again.
 set_source_files_properties(src/qml/LayoutPresets.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
-# How a download job renders as words, shared by the desktop DownloadsWindow and the phone
-# AndroidDownloadsSheet so the two hosts of the same jobs cannot word them differently.
+# How a download job renders as words, shared by the desktop Marketplace and the phone
+# download rows so the two hosts of the same jobs cannot word them differently.
 set_source_files_properties(src/qml/DownloadFormat.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
 # Import + reporting policy, needed by surfaces that have no AssetsPanel to borrow it from.
 set_source_files_properties(src/qml/MediaImport.qml PROPERTIES QT_QML_SINGLETON_TYPE true)
@@ -1378,8 +1546,8 @@ set_source_files_properties(src/qml/ShellBridge.qml PROPERTIES QT_QML_SINGLETON_
 file(GLOB DRIFT_LUCIDE_ICONS RELATIVE "${CMAKE_SOURCE_DIR}" CONFIGURE_DEPENDS
      "resources/icons/*.svg")
 
-# Native window backdrops. Linux blur is optional: KF6WindowSystem when the
-# package is present, otherwise the X11 _KDE_NET_WM_BLUR_BEHIND_REGION atom.
+# Native window backdrops. Linux only makes the window translucent; blur is
+# left to the compositor.
 set(DRIFT_BACKDROP_PLATFORM_SOURCES)
 set(DRIFT_BACKDROP_PLATFORM_LIBS)
 set(DRIFT_BACKDROP_PLATFORM_DEFS)
@@ -1394,38 +1562,31 @@ elseif(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     enable_language(OBJCXX)
     list(APPEND DRIFT_BACKDROP_PLATFORM_SOURCES src/ui/theme/backdrop/WindowBackdrop_mac.mm)
     list(APPEND DRIFT_BACKDROP_PLATFORM_LIBS "-framework Cocoa")
-elseif(UNIX AND NOT ANDROID AND NOT EMSCRIPTEN AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-    list(APPEND DRIFT_BACKDROP_PLATFORM_SOURCES src/ui/theme/backdrop/WindowBackdrop_linux.cpp)
-    find_package(KF6WindowSystem QUIET)
-    if(KF6WindowSystem_FOUND)
-        list(APPEND DRIFT_BACKDROP_PLATFORM_LIBS KF6::WindowSystem)
-        list(APPEND DRIFT_BACKDROP_PLATFORM_DEFS DRIFT_HAS_KF6_WINDOW_SYSTEM)
-        message(STATUS "Window backdrop: KF6WindowSystem blur")
-    else()
-        message(STATUS "Window backdrop: KF6WindowSystem not found; KDE blur disabled")
-    endif()
-    if(PkgConfig_FOUND)
-        pkg_check_modules(XCB QUIET IMPORTED_TARGET xcb)
-        if(XCB_FOUND)
-            list(APPEND DRIFT_BACKDROP_PLATFORM_LIBS PkgConfig::XCB)
-            list(APPEND DRIFT_BACKDROP_PLATFORM_DEFS DRIFT_HAS_XCB)
-            message(STATUS "Window backdrop: X11 blur atom via xcb")
-        endif()
-    endif()
+endif()
+
+if(DRIFT_QML_CACHEGEN)
+    set(_drift_qml_cachegen_args DISCARD_QML_CONTENTS)
+else()
+    set(_drift_qml_cachegen_args NO_CACHEGEN)
 endif()
 
 qt_add_qml_module(drift
     URI Drift
     VERSION 1.0
-    DISCARD_QML_CONTENTS
+    ${_drift_qml_cachegen_args}
     SOURCES
         src/ui/theme/ThemeManager.h
         src/ui/theme/ThemeManager.cpp
         src/ui/theme/backdrop/WindowBackdrop.h
         src/ui/theme/backdrop/WindowBackdrop.cpp
+        src/app/online/marketplace/MarketSourceBrowser.h
+        src/app/online/marketplace/MarketSourceBrowser.cpp
+        src/app/online/marketplace/MarketItemLoader.h
+        src/app/online/marketplace/MarketItemLoader.cpp
         ${DRIFT_BACKDROP_PLATFORM_SOURCES}
     QML_FILES
         src/qml/Shell.qml
+        src/qml/QuickSetup.qml
         src/qml/LayoutPresets.qml
         src/qml/MediaImport.qml
         src/qml/Main.qml
@@ -1433,7 +1594,6 @@ qt_add_qml_module(drift
         src/qml/AndroidShareTargetSheet.qml
         src/qml/AndroidLinkImport.qml
         src/qml/DownloadFormat.qml
-        src/qml/AndroidDownloadsSheet.qml
         src/qml/AndroidNotificationsSheet.qml
         src/qml/components/shell/NavRailButton.qml
         # Touch entry point, loaded instead of Main.qml on Android (see src/app/main.cpp).
@@ -1463,20 +1623,15 @@ qt_add_qml_module(drift
         src/qml/AssetsPanel.qml
         src/qml/PreviewPanel.qml
         src/qml/components/preview/ViewAxisWidget.qml
-        src/qml/components/preview/ViewNavPad.qml
         src/qml/components/preview/PreviewViewport.qml
         src/qml/components/preview/PreviewStatusLayer.qml
         src/qml/components/preview/PreviewToolHost.qml
         src/qml/components/preview/InlineTextEditor.qml
         src/qml/components/preview/PreviewOsd.qml
-        src/qml/components/preview/PreviewModeSwitch.qml
-        src/qml/components/preview/Preview3DTools.qml
         src/qml/components/preview/PreviewOptionsMenu.qml
         src/qml/components/preview/PreviewTransportBar.qml
         src/qml/components/preview/modes/Preview2DMode.qml
         src/qml/components/preview/modes/Preview3DMode.qml
-        src/qml/components/preview/modes/PreviewModeSwitchSegment.qml
-        src/qml/components/preview/modes/PreviewModeSwitchPill.qml
         src/qml/components/preview/modes/Preview3DFlyHint.qml
         src/qml/components/preview/modes/Preview3DFlyDeadZone.qml
         src/qml/components/preview/TransformGizmo.qml
@@ -1495,12 +1650,14 @@ qt_add_qml_module(drift
         src/qml/components/preview/DepthLight3dOverlay.qml
         src/qml/components/preview/Checkerboard.qml
         src/qml/components/android/AndroidTransformOverlay.qml
+        src/qml/components/android/AndroidClipCropOverlay.qml
         src/qml/components/android/AndroidCropOverlay.qml
         src/qml/SegmentationWindow.qml
         src/qml/MulticamWindow.qml
         src/qml/DenoiseWindow.qml
         src/qml/RestoreWindow.qml
-        src/qml/DownloadsWindow.qml
+        src/qml/MarketplaceWindow.qml
+        src/qml/ExtrasWindow.qml
         src/qml/SpeedCurveWindow.qml
         src/qml/FadeCurveWindow.qml
         src/qml/MediaPreviewWindow.qml
@@ -1516,6 +1673,7 @@ qt_add_qml_module(drift
         src/qml/components/properties/TransformInspector.qml
         src/qml/components/properties/CameraInspector.qml
         src/qml/components/properties/TransformLayerCard.qml
+        src/qml/components/properties/ShapeCropSection.qml
         src/qml/components/properties/StabilizeInspector.qml
         src/qml/components/properties/AudioInspector.qml
         src/qml/components/properties/AudioEffectsInspector.qml
@@ -1527,6 +1685,8 @@ qt_add_qml_module(drift
         src/qml/components/properties/VoiceoverDialog.qml
         src/qml/components/properties/VectorInspector.qml
         src/qml/components/properties/Model3DInspector.qml
+        src/qml/components/properties/Model3DLighting.qml
+        src/qml/components/properties/Transform3dInspector.qml
         src/qml/components/properties/PdfInspector.qml
         src/qml/components/properties/MasksInspector.qml
         src/qml/components/properties/EffectsInspector.qml
@@ -1579,7 +1739,6 @@ qt_add_qml_module(drift
         src/qml/components/properties/KeyframeGraphHeaderBar.qml
         src/qml/components/properties/KeyframeGraphGutterRule.qml
         src/qml/components/properties/KeyframeGraphFrame.qml
-        src/qml/components/properties/KeyframeGraphCurveCanvas.qml
         src/qml/components/properties/KeyframeGraphClipSpan.qml
         src/qml/components/properties/KeyframeGraphBeatCanvas.qml
         src/qml/components/properties/GradientStopChip.qml
@@ -1632,16 +1791,23 @@ qt_add_qml_module(drift
         src/qml/components/assets/SoundsTab.qml
         src/qml/components/assets/TransitionsTab.qml
         src/qml/components/assets/MediaAssetsTab.qml
-        src/qml/components/assets/MarketConsentPanel.qml
-        src/qml/components/assets/MarketTab.qml
+        src/qml/components/marketplace/MarketplaceView.qml
+        src/qml/components/marketplace/MarketplacePage.qml
+        src/qml/components/marketplace/MarketItemCard.qml
+        src/qml/components/marketplace/MarketItemDetail.qml
+        src/qml/components/marketplace/MarketTimelineAdd.qml
+        src/qml/components/marketplace/sections/MarketHeroSection.qml
+        src/qml/components/marketplace/sections/MarketNoticeSection.qml
+        src/qml/components/marketplace/sections/MarketShelfSection.qml
+        src/qml/components/marketplace/sections/MarketGridSection.qml
+        src/qml/components/marketplace/sections/MarketChipsSection.qml
+        src/qml/components/marketplace/sections/MarketStockBrowserSection.qml
+        src/qml/components/marketplace/sections/MarketSfxSection.qml
+        src/qml/components/marketplace/sections/MarketCustomEffectsSection.qml
+        src/qml/components/marketplace/sections/MarketDownloadsSection.qml
         src/qml/components/assets/MarketSearchField.qml
-        src/qml/components/assets/DriftAssetsHome.qml
         src/qml/components/assets/DriftAssetCard.qml
-        src/qml/components/assets/DriftAssetDetail.qml
-        src/qml/components/assets/StockBrowser.qml
-        src/qml/components/assets/SfxBrowser.qml
         src/qml/components/assets/StockThumb.qml
-        src/qml/components/assets/StockItemDetail.qml
         src/qml/components/assets/BinBreadcrumb.qml
         src/qml/components/assets/AssetCategoryChips.qml
         src/qml/components/assets/EffectStacksSection.qml
@@ -1705,6 +1871,11 @@ qt_add_qml_module(drift
         src/qml/components/panels/KeyframesPanel.qml
         src/qml/components/panels/MaskingPanel.qml
         src/qml/components/panels/TrackingPanel.qml
+        src/qml/components/panels/Viewport3dPanel.qml
+        src/qml/components/panels/Outliner3dPanel.qml
+        src/qml/components/panels/Transform3dPanel.qml
+        src/qml/components/panels/Camera3dPanel.qml
+        src/qml/components/panels/View3dPanel.qml
         src/qml/components/panels/SubtitleLanePanel.qml
         src/qml/components/panels/SubtitleTextPanel.qml
         src/qml/components/subtitles/SubtitleLaneToolbar.qml
@@ -1717,28 +1888,22 @@ qt_add_qml_module(drift
         src/qml/components/subtitles/SubtitleCueGridRow.qml
         src/qml/components/subtitles/SubtitleTime.js
         src/qml/components/panels/SubtitleTimingPanel.qml
-        src/qml/components/keyframes/KeyframesModel.js
         src/qml/components/keyframes/KeyframesContextMenu.qml
         src/qml/components/keyframes/KeyframesCurvesInteraction.qml
         src/qml/components/keyframes/KeyframesCurvesView.qml
         src/qml/components/keyframes/KeyframesInteractionSurface.qml
-        src/qml/components/keyframes/KeyframesKeyDot.qml
+        src/qml/components/keyframes/KeyframesDragReadout.qml
         src/qml/components/keyframes/KeyframesLanesView.qml
         src/qml/components/keyframes/KeyframesMarquee.qml
         src/qml/components/keyframes/KeyframesPlayheadLine.qml
         src/qml/components/keyframes/KeyframesRuler.qml
         src/qml/components/keyframes/KeyframesStretchBox.qml
-        src/qml/components/keyframes/KeyframesTimeView.qml
-        src/qml/components/keyframes/KeyframesSelection.qml
         src/qml/components/keyframes/KeyframesToolbar.qml
         src/qml/components/keyframes/KeyframesTreeRow.qml
         src/qml/components/keyframes/KeyframesValueScrubber.qml
-        src/qml/components/keyframes/ScaleMath.js
-        src/qml/components/keyframes/EasingCache.js
         src/qml/components/color/GradeSlider.qml
         src/qml/components/color/ColorWheel.qml
         src/qml/components/color/CurveEditor.qml
-        src/qml/components/color/CurveMath.js
         src/qml/components/panels/HistoryPanel.qml
         src/qml/components/panels/SourceViewerPanel.qml
         src/qml/components/panels/sourcelab/SourceLabViewerPanel.qml
@@ -1773,6 +1938,10 @@ qt_add_qml_module(drift
         src/qml/components/panels/sourcelab/SourceLabProgressCard.qml
         src/qml/components/panels/sourcelab/SourceLabExportOptions.qml
         src/qml/components/panels/AgentLogPanel.qml
+        src/qml/components/panels/AgentViewsPanel.qml
+        src/qml/components/panels/AudioSheetPanel.qml
+        src/qml/components/ImageViewer.qml
+        src/qml/components/dialogs/ImageViewerDialog.qml
         src/qml/components/timeline/TimelineClipItem.qml
         src/qml/components/timeline/PlayheadInterpolator.qml
         src/qml/components/timeline/TimelineTrackArea.qml
@@ -1795,6 +1964,7 @@ qt_add_qml_module(drift
         src/qml/components/timeline/TrackHeaderResizeHandle.qml
         src/qml/components/timeline/TrackHeaderRenameDialog.qml
         src/qml/components/timeline/TrackHeaderMuteButton.qml
+        src/qml/components/timeline/TrackHeaderOverflowButton.qml
         src/qml/components/timeline/TrackHeaderMicButton.qml
         src/qml/components/timeline/TrackHeaderLaneEye.qml
         src/qml/components/timeline/TrackHeaderInsertLine.qml
@@ -1825,9 +1995,7 @@ qt_add_qml_module(drift
         src/qml/components/timeline/TimelineToolbarToolButton.qml
         src/qml/components/timeline/TimelineToolbarTimecode.qml
         src/qml/components/timeline/TimelineToolbarSeparator.qml
-        src/qml/components/timeline/TimelineToolbarSceneMenuItem.qml
-        src/qml/components/timeline/TimelineToolbarSceneEmptyItem.qml
-        src/qml/components/timeline/TimelineToolbarSceneBadge.qml
+        src/qml/components/timeline/TimelineSequenceTabs.qml
         src/qml/components/timeline/TimelineToolbarOverflowMenuItem.qml
         src/qml/components/timeline/TimelineToolbarOverflowButton.qml
         src/qml/components/timeline/TimelineToolbarHairline.qml
@@ -1871,6 +2039,7 @@ qt_add_qml_module(drift
         src/qml/components/timeline/TimelineCutDoomGradient.qml
         src/qml/components/timeline/TimelineCutDash.qml
         src/qml/components/timeline/TimelineClipContextMenu.qml
+        src/qml/components/timeline/TimelineReplaceClipDialog.qml
         src/qml/components/timeline/TimelineBookmarkMarker.qml
         src/qml/components/timeline/TimelineBookmarkLaneHighlight.qml
         src/qml/components/timeline/TimelineBookmarkContextMenu.qml
@@ -1908,6 +2077,7 @@ qt_add_qml_module(drift
         src/qml/components/ChannelKeyButton.qml
         src/qml/components/Vec2Param.qml
         src/qml/components/PropertyKeyframeRow.qml
+        src/qml/components/CurveField.qml
         src/qml/components/EasingPicker.qml
         src/qml/components/EasingPickerPopup.qml
         src/qml/components/EasingThumb.qml
@@ -1919,6 +2089,7 @@ qt_add_qml_module(drift
         src/qml/components/controls/ThemedColorDialog.qml
         src/qml/components/ColorEyedropper.qml
         src/qml/components/EffectBrowser.qml
+        src/qml/components/UserPackageImporter.qml
         src/qml/components/AudioEffectBrowser.qml
         src/qml/components/EffectTemplateBrowser.qml
         src/qml/components/controls/ThemedSlider.qml
@@ -1936,6 +2107,7 @@ qt_add_qml_module(drift
         src/qml/components/EmojiPicker.qml
         src/qml/components/controls/ThemedButton.qml
         src/qml/components/controls/ThemedChip.qml
+        src/qml/components/controls/ScrollStrip.qml
         src/qml/components/controls/ThemedProgressBar.qml
         src/qml/components/MediaPill.qml
         src/qml/components/shell/VfrWarning.qml
@@ -1944,10 +2116,10 @@ qt_add_qml_module(drift
         src/qml/components/shell/ToolWindow.qml
         src/qml/components/shell/LazyLoader.qml
         src/qml/components/android/AndroidLifecycle.qml
-        src/qml/components/dialogs/AddonManagerDialog.qml
-        src/qml/components/dialogs/AddonStartupDialog.qml
+        src/qml/components/dialogs/AccelerationFailedDialog.qml
         src/qml/components/dialogs/MissingAddonsDialog.qml
         src/qml/components/dialogs/AboutDialog.qml
+        src/qml/components/dialogs/HelpDialog.qml
         src/qml/components/dialogs/UpdateDialog.qml
         src/qml/components/dialogs/DebugInfoDialog.qml
         src/qml/components/dialogs/ThemeTrustDialog.qml
@@ -1970,6 +2142,7 @@ qt_add_qml_module(drift
         src/qml/components/preview/transform/TransformOverlayParentChip.qml
         src/qml/components/preview/transform/TransformOverlayLayerChip.qml
         src/qml/components/preview/transform/TransformOverlayBoxBorder.qml
+        src/qml/components/preview/transform/TransformOverlayGroupBox.qml
         src/qml/components/preview/text/InlineTextSelectionHandle.qml
         src/qml/components/preview/status/PreviewVoiceoverBadge.qml
         src/qml/components/preview/status/PreviewGapCaption.qml
@@ -2052,7 +2225,6 @@ qt_add_qml_module(drift
         src/qml/components/preview/PreviewFullscreenTransportScrim.qml
         src/qml/components/preview/PreviewDropClipFrame.qml
         src/qml/components/preview/PreviewDropCanvasFrame.qml
-        src/qml/components/preview/Preview3DToolsDivider.qml
         src/qml/components/preview/GuideLayerMark.qml
         src/qml/components/dialogs/ProjectSetupDialog.qml
         src/qml/components/dialogs/LayoutChooserDialog.qml
@@ -2116,11 +2288,44 @@ qt_add_qml_module(drift
         src/qml/components/android/AndroidLayoutTemplateCard.qml
         src/qml/components/android/AndroidLayoutSummarySwatch.qml
         src/qml/components/android/AndroidLayoutSectionLabel.qml
-        src/qml/components/android/AndroidHomeWordmark.qml
-        src/qml/components/android/AndroidHomeStartTile.qml
         src/qml/components/android/AndroidHomeRecentCard.qml
         src/qml/components/android/AndroidFadeSliderRow.qml
         src/qml/components/android/AndroidDownloadJobRow.qml
+        src/qml/components/android/AndroidToolPage.qml
+        src/qml/components/android/AndroidClipRangeBar.qml
+        src/qml/components/android/AndroidSubPage.qml
+        src/qml/components/android/AndroidHomeTab.qml
+        src/qml/components/android/AndroidMyVideosTab.qml
+        src/qml/components/android/pages/AndroidAddPage.qml
+        src/qml/components/android/pages/AndroidMarketplacePage.qml
+        src/qml/components/android/pages/AndroidExtrasPage.qml
+        src/qml/components/android/pages/AndroidStickerPage.qml
+        src/qml/components/android/pages/AndroidTransformPage.qml
+        src/qml/components/android/pages/AndroidTextStylePage.qml
+        src/qml/components/android/pages/AndroidTextSettingsPage.qml
+        src/qml/components/android/pages/AndroidTextAnimationPage.qml
+        src/qml/components/android/pages/AndroidAnimationPage.qml
+        src/qml/components/android/pages/AndroidBlendingPage.qml
+        src/qml/components/android/pages/AndroidDetailsPage.qml
+        src/qml/components/android/pages/AndroidSubtitlesPage.qml
+        src/qml/components/android/pages/AndroidShapeStylePage.qml
+        src/qml/components/android/pages/AndroidStabilizePage.qml
+        src/qml/components/android/pages/AndroidMotionPage.qml
+        src/qml/components/android/pages/AndroidModel3dPage.qml
+        src/qml/components/android/pages/AndroidPdfPage.qml
+        src/qml/components/android/pages/AndroidCameraPage.qml
+        src/qml/components/android/pages/AndroidMaskEditPage.qml
+        src/qml/components/android/pages/AndroidTransitionPage.qml
+        src/qml/components/android/pages/AndroidAudioEffectsPage.qml
+        src/qml/components/android/pages/AndroidVolumePage.qml
+        src/qml/components/android/pages/AndroidSpeedPage.qml
+        src/qml/components/android/pages/AndroidFiltersPage.qml
+        src/qml/components/android/pages/AndroidAdjustPage.qml
+        src/qml/components/android/pages/AndroidShapePage.qml
+        src/qml/components/android/pages/AndroidTextPage.qml
+        src/qml/components/android/pages/AndroidMaskPage.qml
+        src/qml/components/android/pages/AndroidCropPage.qml
+        src/qml/components/android/pages/AndroidBackgroundPage.qml
         src/qml/components/android/AndroidCropHint.qml
         src/qml/components/android/AndroidCropGrip.qml
         src/qml/components/android/AndroidCropFrame.qml
@@ -2157,14 +2362,11 @@ qt_add_qml_module(drift
         src/qml/components/dialogs/DebugInfoSystemTab.qml
         src/qml/components/dialogs/DebugInfoPlaybackTab.qml
         src/qml/components/dialogs/DebugInfoBenchRow.qml
-        src/qml/components/dialogs/AddonStartupPackRow.qml
-        src/qml/components/dialogs/AddonManagerRow.qml
         src/qml/components/UpscaleModelCard.qml
         src/qml/components/shell/RecentProjectsPopup.qml
         src/qml/components/shell/StartScreen.qml
         src/qml/components/NewTrackMenu.qml
         src/qml/components/shell/GlobalSearchPopup.qml
-        src/qml/components/shell/GlobalSearchControls.qml
         src/qml/components/shell/ToastHost.qml
         src/qml/components/shell/NotificationList.qml
         src/qml/components/shell/NotificationsPopup.qml
@@ -2197,12 +2399,30 @@ qt_add_qml_module(drift
         src/qml/components/shell/SettingsGeneralPage.qml
         src/qml/components/shell/SettingsGroupHeader.qml
         src/qml/components/shell/SettingsKeymapPage.qml
-        src/qml/components/shell/SettingsMarketplacePage.qml
         src/qml/components/shell/SettingsNetworkPage.qml
         src/qml/components/shell/SettingsPage.qml
         src/qml/components/shell/SettingsPerformancePage.qml
         src/qml/components/shell/SettingsPreviewPage.qml
         src/qml/components/shell/SettingsRow.qml
+        src/qml/components/shell/SearchAnchor.qml
+        src/qml/components/quicksetup/QuickSetupStepIndicator.qml
+        src/qml/components/quicksetup/QuickSetupCard.qml
+        src/qml/components/quicksetup/QuickSetupPage.qml
+        src/qml/components/quicksetup/QuickSetupWelcomePage.qml
+        src/qml/components/quicksetup/QuickSetupThemePage.qml
+        src/qml/components/quicksetup/QuickSetupScalePage.qml
+        src/qml/components/quicksetup/QuickSetupAddonsPage.qml
+        src/qml/components/quicksetup/QuickSetupAddonRow.qml
+        src/qml/components/quicksetup/QuickSetupTipsPage.qml
+        src/qml/components/quicksetup/QuickSetupCommunityPage.qml
+        src/qml/components/quicksetup/QuickSetupMockEditor.qml
+        src/qml/components/quicksetup/QuickSetupTipArt.qml
+        src/qml/components/extras/ExtrasIcon.qml
+        src/qml/components/extras/ExtrasIconTile.qml
+        src/qml/components/extras/ExtrasCard.qml
+        src/qml/components/extras/ExtrasDetail.qml
+        src/qml/components/extras/ExtrasInstallBar.qml
+        src/qml/components/extras/ExtrasStore.qml
         src/qml/components/shell/SettingsThemeEntry.qml
         src/qml/components/shell/SettingsThemeList.qml
         src/qml/components/shell/SettingsTimelinePage.qml
@@ -2222,6 +2442,7 @@ qt_add_qml_module(drift
         src/qml/components/shell/GlobalSearchResultRow.qml
         src/qml/components/shell/EditorWorkspace.qml
         src/qml/components/shell/workspaces/PanelPool.qml
+        src/qml/components/shell/workspaces/FloatingPanelWindow.qml
         src/qml/components/shell/workspaces/WorkspaceCell.qml
         src/qml/components/shell/workspaces/WorkspaceHost.qml
         src/qml/components/shell/workspaces/WorkspacePlaceholderPanel.qml
@@ -2236,7 +2457,6 @@ qt_add_qml_module(drift
         src/qml/components/shell/workspaces/designer/WorkspaceDesigner.qml
         src/qml/components/shell/SettingsWorkspacesPage.qml
         src/qml/components/shell/EditorHeaderSettingsButton.qml
-        src/qml/components/shell/EditorHeaderWorkspaceButton.qml
         src/qml/components/shell/AppSettingsMenu.qml
         src/qml/components/shell/EditorHeaderSeparator.qml
         src/qml/components/shell/EditorHeaderSearchField.qml
@@ -2264,6 +2484,19 @@ qt_add_qml_module(drift
         ${DRIFT_LUCIDE_ICONS}
 )
 
+if(DRIFT_QML_PREVIEWS AND NOT ANDROID AND NOT EMSCRIPTEN)
+    file(GLOB_RECURSE DRIFT_QML_PREVIEW_FIXTURES CONFIGURE_DEPENDS
+        RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" src/qml/*_Preview.qml)
+    qt_target_qml_sources(drift QML_FILES
+        src/qml/PreviewHost.qml
+        src/qml/PreviewMockData.qml
+        ${DRIFT_QML_PREVIEW_FIXTURES}
+    )
+    target_compile_definitions(drift PRIVATE DRIFT_QML_PREVIEWS)
+    target_compile_definitions(drift PRIVATE
+        "DRIFT_PREVIEW_MEDIA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/data/preview-media\"")
+endif()
+
 target_link_libraries(drift PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
@@ -2274,12 +2507,13 @@ target_link_libraries(drift PRIVATE
     Qt6::Widgets
     Qt6::Concurrent
     Qt6::Network
+    driftapp
     driftcore
     driftengine
 )
 target_include_directories(drift PRIVATE src)
 # qmltyperegistrar emits bare-basename includes (<ThemeManager.h>) for the qml module's headers.
-target_include_directories(drift PRIVATE src/ui/theme src/ui/theme/backdrop)
+target_include_directories(drift PRIVATE src/ui/theme src/ui/theme/backdrop src/app/online/marketplace)
 if(DRIFT_BACKDROP_PLATFORM_LIBS)
     target_link_libraries(drift PRIVATE ${DRIFT_BACKDROP_PLATFORM_LIBS})
 endif()
@@ -2293,6 +2527,8 @@ if(ANDROID)
     # CorePrivate is not pulled in by the plain Qt6 Core package, hence the extra find_package.
     find_package(Qt6 REQUIRED COMPONENTS CorePrivate)
     target_link_libraries(drift PRIVATE Qt6::CorePrivate)
+    # AudioOutputChannel opens the system-default output through AAudio directly (#391).
+    target_link_libraries(drift PRIVATE aaudio)
 
     # Qt Network's OpenSSL TLS plugin dlopens libcrypto_3.so / libssl_3.so at runtime.
     # androiddeployqt files each extra .so under lib/<abi>/ from its ELF architecture, so a
@@ -2525,6 +2761,7 @@ endif()
 # Defined here rather than in the header so there is exactly one place to change them.
 target_compile_definitions(drift PRIVATE
     DRIFT_ADDON_INDEX_URL="${DRIFT_ADDON_INDEX_URL}"
+    DRIFT_ADDON_CATALOG_URL="${DRIFT_ADDONS_CATALOG_URL}"
     DRIFT_ADDON_CLIENT_TOKEN="${DRIFT_ADDON_CLIENT_TOKEN}"
     DRIFT_MARKET_API_URL="${DRIFT_MARKET_API_URL}"
     DRIFT_MARKET_CLIENT_KEY="${DRIFT_MARKET_CLIENT_KEY}"
@@ -2532,6 +2769,16 @@ target_compile_definitions(drift PRIVATE
     DRIFT_VERSION="${DRIFT_VERSION_STRING}"
     DRIFT_DISTRIBUTION="${DRIFT_DISTRIBUTION}"
 )
+
+if(DRIFT_PCH)
+    foreach(_t driftcore driftengine driftapp drift)
+        target_precompile_headers(${_t} PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_SOURCE_DIR}/src/pch/DriftPch.h>")
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            target_compile_options(${_t} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-Xclang -fno-pch-timestamp>")
+        endif()
+    endforeach()
+endif()
 
 # Ship a file-based package directory next to the binaries that load the catalog.
 #
@@ -2571,7 +2818,7 @@ function(drift_stage_packages target assetdir)
     endif()
     file(RELATIVE_PATH _key "${CMAKE_BINARY_DIR}" "${_outdir}/${assetdir}")
     string(MAKE_C_IDENTIFIER "drift_stage_${_key}" _stage)
-    # Multi-config generators (the Windows job uses Visual Studio) put binaries in <dir>/<config>,
+    # Multi-config generators (Visual Studio, Xcode) put binaries in <dir>/<config>,
     # which is where the packaging step expects the staged packages as well.
     get_property(_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
     if(_multi_config)
@@ -2729,9 +2976,13 @@ else()
 endif()
 
 # --- CLI tools (headless engine testing, no GUI) ----------------------------
-add_subdirectory(tools)
+if(DRIFT_BUILD_TOOLS)
+    add_subdirectory(tools)
+endif()
 
 # --- tests -------------------------------------------------------------------
 enable_testing()
-add_subdirectory(tests)
+if(DRIFT_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
 endif() # NOT ANDROID AND NOT EMSCRIPTEN

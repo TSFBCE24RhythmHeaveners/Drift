@@ -1,15 +1,22 @@
 #pragma once
 
+#include "app/online/addons/AddonCatalog.h"
+
 #include <QHash>
 #include <QJsonObject>
+#include <QMutex>
 #include <QObject>
 #include <QUrl>
 #include <QPointer>
 #include <QVariantList>
+#include <QWaitCondition>
 
 #include <memory>
+#include <optional>
 
 class QNetworkAccessManager;
+
+using drift::addon::AddonCatalog;
 
 // Downloads and installs addons. Lives in the app layer, not driftengine, so tools/ and tests/
 // keep working with no network stack — they read the registry (drift::addon::AddonRegistry) and
@@ -21,6 +28,12 @@ class AddonManager : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QVariantList catalog READ catalog NOTIFY catalogChanged)
+    // Store metadata. `categories` is the catalog's list in order, plus {id:"other", title:"Other"}
+    // when some row has no catalog entry; `collections` keeps only addon ids that have a row.
+    Q_PROPERTY(QVariantList categories READ categories NOTIFY catalogChanged)
+    Q_PROPERTY(QVariantList collections READ collections NOTIFY catalogChanged)
+    // {ids, count, downloadSize, active}: everything pending or running, in install order.
+    Q_PROPERTY(QVariantMap queue READ queue NOTIFY queueChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(bool refreshing READ refreshing NOTIFY refreshingChanged)
     // Header attention nudge: offer the core video / transitions / audio packs when they are not
@@ -37,9 +50,16 @@ public:
 
     // One row per known addon: id, name, description, details, author, license, kind, version,
     // installedVersion, downloadSize, installedSize, items, state.
-    // state is one of: available, downloading, installing, installed, update-available, failed,
-    // needs-newer-app (minAppVersion is above this build; also sets minAppVersion on the row).
+    // state is one of: available, queued, downloading, installing, installed, update-available,
+    // failed, needs-newer-app (minAppVersion is above this build; also sets minAppVersion on the
+    // row). Store fields from the catalog: categories, tagline, summary, useCases, howTo, unlocks,
+    // requires [{id, name, installed, reason, kind?}], recommends [{id, name, reason, installed}],
+    // images [{src, caption, width, height}] with absolute URLs, icon, accent, keywords, links,
+    // family, order. Entries marked hidden produce no row.
     QVariantList catalog() const;
+    QVariantList categories() const;
+    QVariantList collections() const;
+    QVariantMap queue() const;
     QString status() const;
     bool refreshing() const;
 
@@ -52,7 +72,15 @@ public:
     // launching offline is quiet rather than an error.
     Q_INVOKABLE void refresh(bool force = false);
 
+    // install() is installMany({id}). Dependencies the catalog names are queued ahead of the
+    // addon; installed and already-running ids are skipped, update-available ones are queued.
     Q_INVOKABLE void install(const QString &id);
+    Q_INVOKABLE void installMany(const QStringList &ids);
+    // What installMany(ids) would do: {ids (install order), added [{id, name, reason, forName}],
+    // missing [{forId, forName, requirement}], downloadSize, count}.
+    Q_INVOKABLE QVariantMap planInstall(const QStringList &ids) const;
+    // The catalog() row for this id, or an empty map.
+    Q_INVOKABLE QVariantMap entry(const QString &id) const;
     Q_INVOKABLE void cancel(const QString &id);
     Q_INVOKABLE void uninstall(const QString &id);
 
@@ -64,6 +92,10 @@ public:
     // Essential packs (effects / transitions / audio) that exist on the store but are not in
     // installed.json. Empty when the index has not been loaded or every essential is present.
     Q_INVOKABLE QVariantList missingEssentialAddons() const;
+    // First-run Quick Setup list, in display order: {id, name, description, sizeBytes, state,
+    // error, installed, required}. Ids missing from the loaded catalog still appear, with the
+    // installed state read from the registry. state/error are the catalog() values.
+    Q_INVOKABLE QVariantList quickSetupAddons() const;
     // Installed packs with a newer version on the store.
     Q_INVOKABLE QVariantList updatableAddons() const;
 
@@ -76,11 +108,17 @@ public:
     // Sniffs the magic, since a content:// URI from "Open with" rarely carries the file name.
     Q_INVOKABLE bool isUserPackage(const QUrl &url) const;
     Q_INVOKABLE void installUserPackage();
+    // Installs a .driftfx already on disk without asking, for packages the marketplace verified.
+    // Blocking, and independent of inspectUserPackage(), so concurrent installs cannot race on
+    // "the last inspected file". Returns an error message, empty on success.
+    QString installUserPackageFile(const QString &path);
     // --- Addons from a file (.driftpkg, .zip, or a .driftfx routed to the above) ------------
     // Reads what the file claims to be and refuses it if this build cannot use it. Returns type
     // ("driftpkg" | "zip" | "driftfx"), name, version, author, description, nativeCode and
     // replaces (the name of an installed addon or store pack with the same id), or only `error`.
-    // A "driftfx" result has gone through inspectUserPackage() and follows that flow instead.
+    // A "driftfx" result has gone through inspectUserPackage() and follows that flow instead; so
+    // does a zip from Drift Forge (one folder with effect.json, transition.json or
+    // audio-effect.json and no manifest.json).
     Q_INVOKABLE QVariantMap inspectAddonFile(const QUrl &url);
     // Installs the file inspected last. An officially signed .driftpkg installs straight away;
     // anything else emits addonFileNeedsConfirmation() until called again with acceptUnverified.
@@ -89,6 +127,15 @@ public:
     Q_INVOKABLE void discardAddonFile();
     // customAddonsDir(), created if missing so the file manager has something to open.
     Q_INVOKABLE QUrl customAddonsFolderUrl() const;
+    // --- Custom effects: package folders under <AppData>/effects, transitions, audio-effects ---
+    // One map per folder holding its manifest: kind, folder, name, description, category and
+    // thumbnail (a file url, or "").
+    Q_INVOKABLE QVariantList customEffects() const;
+    // Deletes <AppData>/<kind>/<folder> and reloads that catalog.
+    Q_INVOKABLE bool removeCustomEffect(const QString &kind, const QString &folder);
+    Q_INVOKABLE QUrl customEffectsFolderUrl(const QString &kind) const;
+    // Rescans all three, for folders the user changed by hand.
+    Q_INVOKABLE void reloadCustomEffects();
     // Picks up folders added to or removed from the custom directory since the last look.
     Q_INVOKABLE void rescanCustomAddons();
 
@@ -105,14 +152,23 @@ public:
     Q_INVOKABLE QVariantList accelerationOptions() const;
     Q_INVOKABLE QString acceleration() const;
     Q_INVOKABLE void setAcceleration(const QString &variant);
+    // What stops the engine that would run AI right now from using the graphics card, when that
+    // is something the user has to install or change (ROCm for AMD), or empty.
+    Q_INVOKABLE QString accelerationProblem() const;
 
     // True once a runtime addon has been installed or removed in a session that had already
     // loaded one. The library is loaded once per process, so the change only takes effect on the
     // next launch and the dialog has to say so.
     Q_INVOKABLE bool runtimeRestartRequired() const;
+    // accelerationOptions() narrowed to what works without a restart, minus `failed`: the
+    // choices offered when an engine the user picked could not run a model.
+    Q_INVOKABLE QVariantList fallbackAccelerationOptions(const QString &failed) const;
+    // The answer to accelerationFailed: the variant to switch to, or empty to give up.
+    Q_INVOKABLE void answerAccelerationFailure(const QString &variant);
 
 signals:
     void catalogChanged();
+    void queueChanged();
     void statusChanged();
     void refreshingChanged();
     void remindEssentialChanged();
@@ -132,6 +188,9 @@ signals:
     // The file from inspectAddonFile() is not signed by the Drift team; the UI asks before
     // calling installAddonFile(true) or discardAddonFile().
     void addonFileNeedsConfirmation();
+    // An explicitly chosen AI engine could not load a model. When `waiting`, the load is paused
+    // on its own thread until answerAccelerationFailure() and is retried with the answer.
+    void accelerationFailed(const QString &variant, const QString &error, bool waiting);
 
 private:
     struct Transfer;
@@ -143,11 +202,34 @@ private:
     void finishDownload(const QString &id);
     void beginExtract(const QString &id, const QString &packagePath);
     void failTransfer(const QString &id, const QString &message);
+    enum class Outcome { Succeeded, Failed, Cancelled };
+    // Frees the id's place in the queue: dependents still waiting for a failed or cancelled id are
+    // dropped, then the next item starts.
+    void settle(const QString &id, Outcome outcome);
+    void pump();
+    void queueExtract(const QString &id);
+    void startNextExtract();
+    void loadCatalog();
+    void fetchCatalog(bool force);
+    bool applyCatalog(const QByteArray &json);
+    AddonCatalog::Plan planFor(const QStringList &ids) const;
+    QString addonName(const QString &id) const;
+    QList<AddonCatalog::IndexRow> indexRows() const;
+    bool pendingId(const QString &id) const;
     void sweepDownloadCache();
+    QString askForOtherAcceleration(const QString &failed, const QString &error);
 
     QString m_status;
     bool m_refreshing = false;
     QList<QJsonObject> m_remote;
+    AddonCatalog m_catalog;
+    bool m_catalogFetching = false;
+    // Ids waiting for a download slot, in install order, and what each must wait for.
+    QStringList m_queue;
+    QHash<QString, QStringList> m_needs;
+    // Downloaded and waiting for the one extraction at a time.
+    QStringList m_extractWaiting;
+    QString m_extractingId;
     QHash<QString, std::shared_ptr<Transfer>> m_transfers;
     QHash<QString, QString> m_failures;
     // Download links expire after an hour, so an install started from a stale cached index gets
@@ -156,7 +238,16 @@ private:
     QStringList m_awaitingFreshIndex;
     QSet<QString> m_retried;
     bool m_runtimeRestartRequired = false;
+    QMutex m_askMutex;
+    QWaitCondition m_askAnswered;
+    std::optional<QString> m_askAnswer;
+    bool m_quitting = false;
     QString m_userPackagePath;
+    // Set when m_userPackagePath is a zip exported by Drift Forge rather than a .driftfx:
+    // the top folder holding the manifest, its catalog kind and display name.
+    QString m_userPackageZipFolder;
+    QString m_userPackageZipKind;
+    QString m_userPackageZipName;
     QString m_addonFilePath;
     QString m_addonFileType; // "driftpkg" | "zip"
     // Inside the zip: "" or "<top folder>/", whichever holds manifest.json.

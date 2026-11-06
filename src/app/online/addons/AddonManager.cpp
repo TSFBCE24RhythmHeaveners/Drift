@@ -7,6 +7,7 @@
 #include "engine/platform/AndroidUri.h"
 #include "engine/packages/audio/AudioEffectCatalog.h"
 #include "engine/packages/effects/EffectCatalog.h"
+#include "engine/packages/effects/EffectPackageLoader.h"
 #include "engine/packages/effects/EffectTemplateCatalog.h"
 #include "engine/packages/looks/LookCatalog.h"
 #include "engine/packages/assets/EmojiCatalog.h"
@@ -17,6 +18,7 @@
 #include "engine/render2d/pdf/PdfiumRuntime.h"
 #include "engine/packages/assets/StickerCatalog.h"
 #include "engine/packages/transitions/TransitionCatalog.h"
+#include "engine/packages/transitions/TransitionPackageLoader.h"
 #include "core/base/ZipArchive.h"
 
 #include <QDateTime>
@@ -24,7 +26,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
+#include <QCoreApplication>
+#include <QMetaMethod>
+#include <QThread>
 #include <QJsonArray>
+#include <QLocale>
 #include <QJsonDocument>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -34,6 +40,7 @@
 #include <QStandardPaths>
 #include <QtConcurrent>
 
+#include <algorithm>
 #include <atomic>
 #include <tuple>
 #include <utility>
@@ -43,6 +50,8 @@ using namespace drift::addon;
 namespace {
 
 constexpr qint64 kIndexMaxAgeSeconds = 6 * 60 * 60;
+// Large models make parallel downloads slow each other down, so one at a time.
+constexpr int kMaxConcurrentDownloads = 1;
 
 // The packs every install is nudged to keep as addons so shader/audio fixes can ship without an
 // app release. Order matches the Extras category order (video → transitions → audio).
@@ -52,9 +61,27 @@ const QStringList kEssentialAddonIds = {
     QStringLiteral("audioeffects.core"),
 };
 
+// First-run Quick Setup list: the essentials plus the content packs it offers on top.
+const QStringList kQuickSetupRequiredIds = {
+    QStringLiteral("effects.core"),
+    QStringLiteral("transitions.core"),
+    QStringLiteral("audioeffects.core"),
+    QStringLiteral("effects.trending"),
+    QStringLiteral("fonts.essentials"),
+    QStringLiteral("looks.essentials"),
+};
+const QStringList kQuickSetupOptionalIds = {
+    QStringLiteral("stickers.harmonyos"),
+};
+
 QString cachedIndexPath()
 {
     return QDir(addonsDir()).filePath(QStringLiteral("index.json"));
+}
+
+QString cachedCatalogPath()
+{
+    return QDir(addonsDir()).filePath(QStringLiteral("catalog.json"));
 }
 
 QString settingsKey(const char *name)
@@ -96,6 +123,9 @@ AddonManager::AddonManager(QObject *parent)
     QDir().mkpath(addonDownloadCacheDir());
     sweepDownloadCache();
 
+    connect(this, &AddonManager::catalogChanged, this, &AddonManager::queueChanged);
+    loadCatalog();
+
     // Serve whatever we already know immediately, then go and check.
     QFile cached(cachedIndexPath());
     if (cached.open(QIODevice::ReadOnly)) {
@@ -106,9 +136,22 @@ AddonManager::AddonManager(QObject *parent)
     }
 
     refresh();
+
+    drift::ort::setProviderFailureHandler([this](const QString &failed, const QString &error) {
+        return askForOtherAcceleration(failed, error);
+    });
+    // A load paused on the question must not outlive the window that would answer it.
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
+        QMutexLocker lock(&m_askMutex);
+        m_quitting = true;
+        m_askAnswered.wakeAll();
+    });
 }
 
-AddonManager::~AddonManager() = default;
+AddonManager::~AddonManager()
+{
+    drift::ort::setProviderFailureHandler({});
+}
 
 QString AddonManager::status() const
 {
@@ -165,8 +208,97 @@ void AddonManager::setRefreshing(bool refreshing)
 QVariantList AddonManager::catalog() const
 {
     QVariantList rows;
+    const QList<AddonCatalog::IndexRow> index = indexRows();
+    const QString platformKey = currentPlatform();
+    const QString mediaBase = mediaBaseUrl();
+    const QList<InstalledAddon> &installedList = installedAddons();
+
+    const auto requirementRows = [&](const QJsonObject &entry) {
+        QVariantList out;
+        for (const QJsonValue &value : entry.value(QStringLiteral("requires")).toArray()) {
+            const QJsonObject requirement = value.toObject();
+            const QString kind = requirement.value(QStringLiteral("kind")).toString();
+            QString provider = requirement.value(QStringLiteral("id")).toString();
+            bool installed = !provider.isEmpty() && installedAddon(provider);
+            if (provider.isEmpty()) {
+                for (const InstalledAddon &candidate : installedList) {
+                    const bool provides = std::any_of(candidate.provides.cbegin(), candidate.provides.cend(),
+                                                      [&](const InstalledProvide &p) { return p.kind == kind; });
+                    if (provides) {
+                        provider = candidate.id;
+                        installed = true;
+                        break;
+                    }
+                }
+            }
+            if (provider.isEmpty())
+                provider = AddonCatalog::pickProvider(requirement, index, platformKey).value_or(QString());
+            out.append(QVariantMap{
+                {QStringLiteral("id"), provider},
+                {QStringLiteral("name"), provider.isEmpty() ? kind : addonName(provider)},
+                {QStringLiteral("kind"), kind},
+                {QStringLiteral("installed"), installed},
+                {QStringLiteral("reason"), requirement.value(QStringLiteral("reason")).toString()},
+            });
+        }
+        return out;
+    };
+    const auto recommendRows = [&](const QJsonObject &entry) {
+        QVariantList out;
+        for (const QJsonValue &value : entry.value(QStringLiteral("recommends")).toArray()) {
+            const QJsonObject recommendation = value.toObject();
+            const QString target = recommendation.value(QStringLiteral("id")).toString();
+            out.append(QVariantMap{
+                {QStringLiteral("id"), target},
+                {QStringLiteral("name"), addonName(target)},
+                {QStringLiteral("reason"), recommendation.value(QStringLiteral("reason")).toString()},
+                {QStringLiteral("installed"), installedAddon(target) != nullptr},
+            });
+        }
+        return out;
+    };
+    const auto imageRows = [&](const QJsonObject &entry) {
+        QVariantList out;
+        for (const QJsonValue &value : entry.value(QStringLiteral("images")).toArray()) {
+            const QJsonObject image = value.toObject();
+            out.append(QVariantMap{
+                {QStringLiteral("src"), mediaBase + image.value(QStringLiteral("src")).toString()},
+                {QStringLiteral("caption"), image.value(QStringLiteral("caption")).toString()},
+                {QStringLiteral("width"), image.value(QStringLiteral("width")).toInt()},
+                {QStringLiteral("height"), image.value(QStringLiteral("height")).toInt()},
+            });
+        }
+        return out;
+    };
+    const auto storeFields = [&](QVariantMap &row, const QJsonObject &entry, const QString &id) {
+        const QString description = row.value(QStringLiteral("description")).toString();
+        const QString tagline = entry.value(QStringLiteral("tagline")).toString();
+        const QJsonArray categories = entry.value(QStringLiteral("categories")).toArray();
+        row.insert(QStringLiteral("categories"),
+                   entry.isEmpty() ? QVariant(QStringList{QStringLiteral("other")})
+                                   : QVariant(categories.toVariantList()));
+        row.insert(QStringLiteral("tagline"), tagline.isEmpty() ? description : tagline);
+        row.insert(QStringLiteral("summary"), entry.value(QStringLiteral("summary")).toString());
+        row.insert(QStringLiteral("useCases"), entry.value(QStringLiteral("useCases")).toArray().toVariantList());
+        row.insert(QStringLiteral("howTo"), entry.value(QStringLiteral("howTo")).toArray().toVariantList());
+        row.insert(QStringLiteral("unlocks"), entry.value(QStringLiteral("unlocks")).toArray().toVariantList());
+        row.insert(QStringLiteral("requires"), requirementRows(entry));
+        row.insert(QStringLiteral("recommends"), recommendRows(entry));
+        row.insert(QStringLiteral("images"), imageRows(entry));
+        row.insert(QStringLiteral("icon"), entry.value(QStringLiteral("icon")).toString());
+        row.insert(QStringLiteral("accent"), entry.value(QStringLiteral("accent")).toString());
+        row.insert(QStringLiteral("keywords"), entry.value(QStringLiteral("keywords")).toArray().toVariantList());
+        row.insert(QStringLiteral("links"), entry.value(QStringLiteral("links")).toArray().toVariantList());
+        const QString match = entry.value(QStringLiteral("match")).toString();
+        row.insert(QStringLiteral("family"), match.isEmpty() ? id : match);
+        row.insert(QStringLiteral("order"), entry.value(QStringLiteral("order")).toInt(1000));
+    };
+
     for (const QJsonObject &addon : m_remote) {
         const QString id = addon.value(QStringLiteral("id")).toString();
+        const QJsonObject storeEntry = m_catalog.entryFor(id);
+        if (storeEntry.value(QStringLiteral("hidden")).toBool())
+            continue;
         const QString version = addon.value(QStringLiteral("version")).toString();
         const InstalledAddon *installed = installedAddon(id);
         const QString minAppVersion = addon.value(QStringLiteral("minAppVersion")).toString();
@@ -176,6 +308,8 @@ QVariantList AddonManager::catalog() const
         QString state = QStringLiteral("available");
         if (const auto transfer = m_transfers.value(id))
             state = transfer->extracting ? QStringLiteral("installing") : QStringLiteral("downloading");
+        else if (m_queue.contains(id) || m_awaitingFreshIndex.contains(id))
+            state = QStringLiteral("queued");
         else if (m_failures.contains(id))
             state = QStringLiteral("failed");
         else if (installed)
@@ -192,7 +326,7 @@ QVariantList AddonManager::catalog() const
         const QJsonArray platforms = addon.value(QStringLiteral("platforms")).toArray();
         const QString platform = platforms.isEmpty() ? QString() : platforms.at(0).toString();
 
-        rows.append(QVariantMap{
+        QVariantMap row{
             {QStringLiteral("id"), id},
             {QStringLiteral("unofficial"), installed && installed->unofficial},
             {QStringLiteral("name"), addon.value(QStringLiteral("name")).toString()},
@@ -213,7 +347,9 @@ QVariantList AddonManager::catalog() const
             {QStringLiteral("error"), m_failures.value(id)},
             {QStringLiteral("platform"), platform},
             {QStringLiteral("minAppVersion"), minAppVersion},
-        });
+        };
+        storeFields(row, storeEntry, id);
+        rows.append(row);
     }
 
     // Installed from a file or the custom folder, and unknown to the store.
@@ -226,7 +362,7 @@ QVariantList AddonManager::catalog() const
         QStringList kinds;
         for (const InstalledProvide &provide : installed.provides)
             kinds.append(provide.kind);
-        rows.append(QVariantMap{
+        QVariantMap row{
             {QStringLiteral("id"), installed.id},
             {QStringLiteral("custom"), true},
             {QStringLiteral("unofficial"), installed.unofficial},
@@ -246,9 +382,176 @@ QVariantList AddonManager::catalog() const
             {QStringLiteral("error"), QString()},
             {QStringLiteral("platform"), QString()},
             {QStringLiteral("minAppVersion"), QString()},
-        });
+        };
+        storeFields(row, QJsonObject(), installed.id);
+        row.insert(QStringLiteral("categories"), QStringList());
+        rows.append(row);
     }
     return rows;
+}
+
+QVariantList AddonManager::categories() const
+{
+    QList<QJsonObject> sorted;
+    for (const QJsonValue &value : m_catalog.categories())
+        sorted.append(value.toObject());
+    std::stable_sort(sorted.begin(), sorted.end(), [](const QJsonObject &a, const QJsonObject &b) {
+        return a.value(QStringLiteral("order")).toInt() < b.value(QStringLiteral("order")).toInt();
+    });
+    QVariantList out;
+    for (const QJsonObject &category : sorted)
+        out.append(category.toVariantMap());
+
+    const QVariantList rows = catalog();
+    const bool usesOther = std::any_of(rows.cbegin(), rows.cend(), [](const QVariant &row) {
+        return row.toMap().value(QStringLiteral("categories")).toStringList().contains(QStringLiteral("other"));
+    });
+    if (usesOther)
+        out.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("other")},
+                               {QStringLiteral("title"), QStringLiteral("Other")}});
+    return out;
+}
+
+QVariantList AddonManager::collections() const
+{
+    QSet<QString> present;
+    for (const QVariant &row : catalog())
+        present.insert(row.toMap().value(QStringLiteral("id")).toString());
+    QVariantList out;
+    for (const QJsonValue &value : m_catalog.collections()) {
+        QJsonObject collection = value.toObject();
+        QJsonArray kept;
+        for (const QJsonValue &id : collection.value(QStringLiteral("addons")).toArray()) {
+            if (present.contains(id.toString()))
+                kept.append(id);
+        }
+        if (kept.isEmpty())
+            continue;
+        collection.insert(QStringLiteral("addons"), kept);
+        out.append(collection.toVariantMap());
+    }
+    return out;
+}
+
+QVariantMap AddonManager::queue() const
+{
+    QStringList ids;
+    if (!m_extractingId.isEmpty())
+        ids.append(m_extractingId);
+    QStringList running = m_transfers.keys();
+    running.sort();
+    for (const QString &id : running) {
+        if (!ids.contains(id))
+            ids.append(id);
+    }
+    ids += m_awaitingFreshIndex;
+    ids += m_queue;
+
+    double size = 0;
+    for (const QJsonObject &addon : m_remote) {
+        if (ids.contains(addon.value(QStringLiteral("id")).toString()))
+            size += addon.value(QStringLiteral("downloadSize")).toDouble();
+    }
+    return {
+        {QStringLiteral("ids"), ids},
+        {QStringLiteral("count"), int(ids.size())},
+        {QStringLiteral("downloadSize"), size},
+        {QStringLiteral("active"), !m_transfers.isEmpty() || !m_awaitingFreshIndex.isEmpty()},
+    };
+}
+
+QVariantMap AddonManager::entry(const QString &id) const
+{
+    for (const QVariant &row : catalog()) {
+        if (row.toMap().value(QStringLiteral("id")).toString() == id)
+            return row.toMap();
+    }
+    return {};
+}
+
+QString AddonManager::addonName(const QString &id) const
+{
+    for (const QJsonObject &addon : m_remote) {
+        if (addon.value(QStringLiteral("id")).toString() == id)
+            return addon.value(QStringLiteral("name")).toString();
+    }
+    if (const InstalledAddon *installed = installedAddon(id))
+        return installed->name;
+    return id;
+}
+
+QList<AddonCatalog::IndexRow> AddonManager::indexRows() const
+{
+    QList<AddonCatalog::IndexRow> rows;
+    for (const QJsonObject &addon : m_remote)
+        rows.append({addon.value(QStringLiteral("id")).toString(), kindsOf(addon)});
+    return rows;
+}
+
+bool AddonManager::pendingId(const QString &id) const
+{
+    return m_transfers.contains(id) || m_queue.contains(id) || m_awaitingFreshIndex.contains(id);
+}
+
+void AddonManager::loadCatalog()
+{
+    for (const QString &path : {cachedCatalogPath(), QStringLiteral(":/addons/default-catalog.json")}) {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly) && applyCatalog(file.readAll()))
+            return;
+    }
+}
+
+bool AddonManager::applyCatalog(const QByteArray &json)
+{
+    const AddonCatalog parsed = AddonCatalog::parse(QJsonDocument::fromJson(json).object());
+    if (!parsed.valid())
+        return false;
+    m_catalog = parsed;
+    emit catalogChanged();
+    return true;
+}
+
+void AddonManager::fetchCatalog(bool force)
+{
+    const QString url = catalogUrl();
+    if (m_catalogFetching || url.isEmpty())
+        return;
+    const QFileInfo cached(cachedCatalogPath());
+    if (!force && cached.exists()
+        && cached.lastModified().secsTo(QDateTime::currentDateTime()) < kIndexMaxAgeSeconds)
+        return;
+
+    m_catalogFetching = true;
+    QNetworkRequest request{QUrl(url)};
+    request.setRawHeader("Accept-Language", QLocale().bcp47Name().toUtf8());
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    const QString etag = QSettings().value(settingsKey("catalogEtag")).toString();
+    if (cached.exists() && !etag.isEmpty())
+        request.setRawHeader("If-None-Match", etag.toUtf8());
+
+    QNetworkReply *reply = m_network->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        reply->deleteLater();
+        m_catalogFetching = false;
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status == 304) {
+            QFile(cachedCatalogPath()).setFileTime(QDateTime::currentDateTime(), QFileDevice::FileModificationTime);
+            return;
+        }
+        if (reply->error() != QNetworkReply::NoError)
+            return;
+        const QByteArray body = reply->readAll();
+        if (!applyCatalog(body))
+            return;
+        QSaveFile cache(cachedCatalogPath());
+        if (cache.open(QIODevice::WriteOnly)) {
+            cache.write(body);
+            cache.commit();
+        }
+        QSettings().setValue(settingsKey("catalogEtag"), QString::fromUtf8(reply->rawHeader("ETag")));
+    });
 }
 
 bool AddonManager::hasKind(const QString &kind) const
@@ -285,6 +588,44 @@ QVariantList AddonManager::missingEssentialAddons() const
         }
     }
     return rows;
+}
+
+QVariantList AddonManager::quickSetupAddons() const
+{
+    const QVariantList rows = catalog();
+    QVariantList entries;
+    const auto append = [&](const QString &id, bool required) {
+        QVariantMap entry{
+            {QStringLiteral("id"), id},
+            {QStringLiteral("name"), id},
+            {QStringLiteral("description"), QString()},
+            {QStringLiteral("sizeBytes"), 0.0},
+            {QStringLiteral("state"), installedAddon(id) ? QStringLiteral("installed") : QStringLiteral("available")},
+            {QStringLiteral("error"), QString()},
+            {QStringLiteral("installed"), installedAddon(id) != nullptr},
+            {QStringLiteral("required"), required},
+        };
+        for (const QVariant &row : rows) {
+            const QVariantMap map = row.toMap();
+            if (map.value(QStringLiteral("id")).toString() != id)
+                continue;
+            const QString state = map.value(QStringLiteral("state")).toString();
+            entry[QStringLiteral("name")] = map.value(QStringLiteral("name"));
+            entry[QStringLiteral("description")] = map.value(QStringLiteral("description"));
+            entry[QStringLiteral("sizeBytes")] = map.value(QStringLiteral("downloadSize"));
+            entry[QStringLiteral("state")] = state;
+            entry[QStringLiteral("error")] = map.value(QStringLiteral("error"));
+            entry[QStringLiteral("installed")] = state == QLatin1String("installed")
+                                                 || state == QLatin1String("update-available");
+            break;
+        }
+        entries.append(entry);
+    };
+    for (const QString &id : kQuickSetupRequiredIds)
+        append(id, true);
+    for (const QString &id : kQuickSetupOptionalIds)
+        append(id, false);
+    return entries;
 }
 
 QVariantList AddonManager::updatableAddons() const
@@ -329,6 +670,8 @@ QVariantList AddonManager::accelerationOptions() const
             continue;
         if (variant == QLatin1String("cuda"))
             rows.append(row(variant, tr("NVIDIA graphics (faster)")));
+        else if (variant == QLatin1String("migraphx"))
+            rows.append(row(variant, tr("AMD graphics (faster)")));
         else if (variant == QLatin1String("webgpu"))
             rows.append(row(variant, tr("Graphics card (faster)")));
         else
@@ -363,9 +706,77 @@ void AddonManager::setAcceleration(const QString &variant)
     emit kindChanged(QString::fromLatin1(drift::ort::kRuntimeKind));
 }
 
+QString AddonManager::accelerationProblem() const
+{
+    const QString wanted = drift::ort::preferredVariant();
+    if (wanted == QLatin1String("cpu"))
+        return {};
+    QString core = drift::ort::activeVariant();
+    if (core.isEmpty()) {
+        const QList<drift::ort::RuntimeInfo> runtimes = drift::ort::installedRuntimes();
+        if (runtimes.isEmpty())
+            return {};
+        core = runtimes.first().variant;
+    }
+    const QString variant = drift::ort::variantExplicit() ? wanted : core;
+    return drift::ort::providerSetupProblem(variant);
+}
+
 bool AddonManager::runtimeRestartRequired() const
 {
     return m_runtimeRestartRequired;
+}
+
+QVariantList AddonManager::fallbackAccelerationOptions(const QString &failed) const
+{
+    const QString active = drift::ort::activeVariant();
+    QVariantList rows;
+    for (const QVariant &option : accelerationOptions()) {
+        const QVariantMap row = option.toMap();
+        const QString value = row.value(QStringLiteral("value")).toString();
+        if (value == failed || !row.value(QStringLiteral("available")).toBool())
+            continue;
+        // A different core only loads on the next launch, which is no use to the job waiting.
+        const bool usableNow = value == QLatin1String("auto") || value == QLatin1String("cpu")
+            || value == active || !drift::ort::pluginEpNameForVariant(value).isEmpty();
+        if (usableNow)
+            rows.append(row);
+    }
+    return rows;
+}
+
+QString AddonManager::askForOtherAcceleration(const QString &failed, const QString &error)
+{
+    // Blocking here would freeze the dialog that answers, so loads on the GUI thread just report.
+    if (QThread::currentThread() == thread()) {
+        QMetaObject::invokeMethod(this, [this, failed, error] {
+            emit accelerationFailed(failed, error, false);
+        }, Qt::QueuedConnection);
+        return {};
+    }
+    // Headless runs have nobody to ask.
+    if (!isSignalConnected(QMetaMethod::fromSignal(&AddonManager::accelerationFailed)))
+        return {};
+
+    QMutexLocker lock(&m_askMutex);
+    if (m_quitting)
+        return {};
+    m_askAnswer.reset();
+    QMetaObject::invokeMethod(this, [this, failed, error] {
+        emit accelerationFailed(failed, error, true);
+    }, Qt::QueuedConnection);
+    while (!m_askAnswer && !m_quitting)
+        m_askAnswered.wait(&m_askMutex);
+    return m_quitting ? QString() : *m_askAnswer;
+}
+
+void AddonManager::answerAccelerationFailure(const QString &variant)
+{
+    if (!variant.isEmpty())
+        setAcceleration(variant);
+    QMutexLocker lock(&m_askMutex);
+    m_askAnswer = variant;
+    m_askAnswered.wakeAll();
 }
 
 void AddonManager::refresh(bool force)
@@ -377,6 +788,8 @@ void AddonManager::refresh(bool force)
         setStatus(QStringLiteral("Downloads aren’t available in this version."));
         return;
     }
+
+    fetchCatalog(force);
 
     if (!force) {
         const QFileInfo cached(cachedIndexPath());
@@ -410,6 +823,7 @@ void AddonManager::refresh(bool force)
             for (const QString &id : waiting) {
                 m_failures.insert(id, error);
                 emit transferFailed(id, error);
+                settle(id, Outcome::Failed);
             }
             if (!waiting.isEmpty())
                 emit catalogChanged();
@@ -425,6 +839,7 @@ void AddonManager::refresh(bool force)
             for (const QString &id : waiting) {
                 m_failures.insert(id, error);
                 emit transferFailed(id, error);
+                settle(id, Outcome::Failed);
             }
             if (!waiting.isEmpty())
                 emit catalogChanged();
@@ -440,6 +855,7 @@ void AddonManager::refresh(bool force)
         const QStringList waiting = std::exchange(m_awaitingFreshIndex, {});
         for (const QString &id : waiting)
             startDownload(id);
+        pump();
     });
 }
 
@@ -472,20 +888,177 @@ bool AddonManager::applyIndex(const QByteArray &json, bool fromCache)
 
 void AddonManager::install(const QString &id)
 {
-    if (m_transfers.contains(id) || !addonServiceConfigured())
+    installMany({id});
+}
+
+AddonCatalog::Plan AddonManager::planFor(const QStringList &ids) const
+{
+    QSet<QString> installedIds;
+    QSet<QString> installedKinds;
+    for (const InstalledAddon &installed : installedAddons()) {
+        installedIds.insert(installed.id);
+        for (const InstalledProvide &provide : installed.provides)
+            installedKinds.insert(provide.kind);
+    }
+
+    QStringList wanted;
+    for (const QString &id : ids) {
+        if (wanted.contains(id) || pendingId(id))
+            continue;
+        const auto remote = std::find_if(m_remote.cbegin(), m_remote.cend(), [&](const QJsonObject &addon) {
+            return addon.value(QStringLiteral("id")).toString() == id;
+        });
+        if (remote == m_remote.cend())
+            continue;
+        const QString minAppVersion = remote->value(QStringLiteral("minAppVersion")).toString();
+        if (!minAppVersion.isEmpty() && drift::compareVersions(QStringLiteral(DRIFT_VERSION), minAppVersion) < 0)
+            continue;
+        const InstalledAddon *installed = installedAddon(id);
+        if (installed
+            && drift::compareVersions(installed->version, remote->value(QStringLiteral("version")).toString()) >= 0)
+            continue;
+        wanted.append(id);
+    }
+
+    AddonCatalog::Plan plan =
+        m_catalog.resolve(wanted, indexRows(), installedIds, installedKinds, currentPlatform());
+    // Dependencies already on their way stay in `needs`, so the dependent still waits for them.
+    plan.ids.erase(std::remove_if(plan.ids.begin(), plan.ids.end(),
+                                  [&](const QString &id) { return pendingId(id); }),
+                   plan.ids.end());
+    plan.added.erase(std::remove_if(plan.added.begin(), plan.added.end(),
+                                    [&](const AddonCatalog::Added &a) { return pendingId(a.id); }),
+                     plan.added.end());
+    return plan;
+}
+
+QVariantMap AddonManager::planInstall(const QStringList &ids) const
+{
+    const AddonCatalog::Plan plan = planFor(ids);
+    QVariantList added;
+    for (const AddonCatalog::Added &a : plan.added) {
+        added.append(QVariantMap{{QStringLiteral("id"), a.id},
+                                 {QStringLiteral("name"), addonName(a.id)},
+                                 {QStringLiteral("reason"), a.reason},
+                                 {QStringLiteral("forName"), addonName(a.forId)}});
+    }
+    QVariantList missing;
+    for (const AddonCatalog::Missing &m : plan.missing) {
+        missing.append(QVariantMap{{QStringLiteral("forId"), m.forId},
+                                   {QStringLiteral("forName"), addonName(m.forId)},
+                                   {QStringLiteral("requirement"), m.requirement}});
+    }
+    double size = 0;
+    for (const QJsonObject &addon : m_remote) {
+        if (plan.ids.contains(addon.value(QStringLiteral("id")).toString()))
+            size += addon.value(QStringLiteral("downloadSize")).toDouble();
+    }
+    return {
+        {QStringLiteral("ids"), plan.ids},
+        {QStringLiteral("added"), added},
+        {QStringLiteral("missing"), missing},
+        {QStringLiteral("downloadSize"), size},
+        {QStringLiteral("count"), int(plan.ids.size())},
+    };
+}
+
+void AddonManager::installMany(const QStringList &ids)
+{
+    if (!addonServiceConfigured())
         return;
 
-    m_failures.remove(id);
-    // A failed refresh never consumes the 403 retry, so a fresh attempt must re-arm it.
-    m_retried.remove(id);
-    // The in-flight refresh may replace an expired download URL; wait for it instead of racing.
-    if (m_refreshing) {
-        if (!m_awaitingFreshIndex.contains(id))
+    const AddonCatalog::Plan plan = planFor(ids);
+    if (plan.ids.isEmpty())
+        return;
+    for (const QString &id : plan.ids) {
+        m_failures.remove(id);
+        // A failed refresh never consumes the 403 retry, so a fresh attempt must re-arm it.
+        m_retried.remove(id);
+        m_needs.insert(id, plan.needs.value(id));
+        m_queue.append(id);
+        emit progressChanged(id, 0.0, QStringLiteral("queued"));
+    }
+    emit catalogChanged();
+    pump();
+}
+
+void AddonManager::pump()
+{
+    while (true) {
+        int used = int(m_awaitingFreshIndex.size());
+        for (const auto &transfer : std::as_const(m_transfers)) {
+            if (!transfer->extracting)
+                ++used;
+        }
+        if (used >= kMaxConcurrentDownloads)
+            return;
+
+        int pick = -1;
+        for (int i = 0; i < m_queue.size() && pick < 0; ++i) {
+            const QStringList needs = m_needs.value(m_queue.at(i));
+            const bool blocked = std::any_of(needs.cbegin(), needs.cend(), [&](const QString &need) {
+                return need != m_queue.at(i) && pendingId(need);
+            });
+            if (!blocked)
+                pick = i;
+        }
+        if (pick < 0)
+            return;
+
+        const QString id = m_queue.takeAt(pick);
+        // The in-flight refresh may replace an expired download URL; wait for it instead of racing.
+        if (m_refreshing) {
             m_awaitingFreshIndex.append(id);
-        emit catalogChanged();
+            emit catalogChanged();
+        } else {
+            startDownload(id);
+        }
+    }
+}
+
+void AddonManager::settle(const QString &id, Outcome outcome)
+{
+    m_needs.remove(id);
+    if (outcome != Outcome::Succeeded) {
+        QStringList dead{id};
+        while (!dead.isEmpty()) {
+            const QString gone = dead.takeFirst();
+            const QStringList waiting = m_queue;
+            for (const QString &queued : waiting) {
+                if (!m_needs.value(queued).contains(gone))
+                    continue;
+                m_queue.removeAll(queued);
+                m_needs.remove(queued);
+                QString reason = QStringLiteral("Cancelled");
+                if (outcome == Outcome::Failed) {
+                    reason = QStringLiteral("Needs %1").arg(addonName(gone));
+                    m_failures.insert(queued, reason);
+                }
+                emit transferFailed(queued, reason);
+                dead.append(queued);
+            }
+        }
+    }
+    emit catalogChanged();
+    pump();
+}
+
+void AddonManager::queueExtract(const QString &id)
+{
+    if (m_extractingId.isEmpty()) {
+        beginExtract(id, m_transfers.value(id)->packagePath);
         return;
     }
-    startDownload(id);
+    m_extractWaiting.append(id);
+    emit catalogChanged();
+}
+
+void AddonManager::startNextExtract()
+{
+    if (!m_extractingId.isEmpty() || m_extractWaiting.isEmpty())
+        return;
+    const QString id = m_extractWaiting.takeFirst();
+    beginExtract(id, m_transfers.value(id)->packagePath);
 }
 
 void AddonManager::startDownload(const QString &id)
@@ -517,8 +1090,7 @@ void AddonManager::startDownload(const QString &id)
     const qint64 have = QFileInfo(partial).size();
     transfer->file.setFileName(partial);
     if (!transfer->file.open(QIODevice::WriteOnly | QIODevice::Append)) {
-        m_failures.insert(id, QStringLiteral("Cannot write to the download cache"));
-        emit catalogChanged();
+        failTransfer(id, QStringLiteral("Cannot write to the download cache"));
         return;
     }
 
@@ -575,7 +1147,8 @@ void AddonManager::finishDownload(const QString &id)
 
     if (transfer->cancelled) {
         m_transfers.remove(id);
-        emit catalogChanged();
+        emit transferFailed(id, QStringLiteral("Cancelled"));
+        settle(id, Outcome::Cancelled);
         return;
     }
 
@@ -606,7 +1179,7 @@ void AddonManager::finishDownload(const QString &id)
         return;
     }
 
-    beginExtract(id, transfer->packagePath);
+    queueExtract(id);
 }
 
 void AddonManager::beginExtract(const QString &id, const QString &packagePath)
@@ -616,6 +1189,7 @@ void AddonManager::beginExtract(const QString &id, const QString &packagePath)
         return;
 
     transfer->extracting = true;
+    m_extractingId = id;
     emit catalogChanged();
     emit progressChanged(id, 0.0, QStringLiteral("Installing"));
 
@@ -630,18 +1204,20 @@ void AddonManager::beginExtract(const QString &id, const QString &packagePath)
                 const auto [ok, message] = watcher->result();
                 const auto finished = m_transfers.value(id);
                 m_transfers.remove(id);
+                m_extractingId.clear();
                 QFile::remove(packagePath);
 
                 if (!ok) {
                     if (finished && finished->cancelled) {
-                        emit catalogChanged();
                         emit transferFailed(id, QStringLiteral("Cancelled"));
-                        return;
+                        settle(id, Outcome::Cancelled);
+                    } else {
+                        m_failures.insert(id, message);
+                        setStatus(message);
+                        emit transferFailed(id, message);
+                        settle(id, Outcome::Failed);
                     }
-                    m_failures.insert(id, message);
-                    setStatus(message);
-                    emit catalogChanged();
-                    emit transferFailed(id, message);
+                    startNextExtract();
                     return;
                 }
 
@@ -655,6 +1231,8 @@ void AddonManager::beginExtract(const QString &id, const QString &packagePath)
                 reloadForKinds(kinds);
                 emit catalogChanged();
                 emit transferSucceeded(id);
+                settle(id, Outcome::Succeeded);
+                startNextExtract();
             });
 
     watcher->setFuture(QtConcurrent::run([transfer, packagePath, destination]() -> QPair<bool, QString> {
@@ -678,13 +1256,27 @@ void AddonManager::failTransfer(const QString &id, const QString &message)
     setStatus(message);
     emit catalogChanged();
     emit transferFailed(id, message);
+    settle(id, Outcome::Failed);
 }
 
 void AddonManager::cancel(const QString &id)
 {
+    if (m_queue.removeAll(id) > 0 || m_awaitingFreshIndex.removeAll(id) > 0) {
+        emit transferFailed(id, QStringLiteral("Cancelled"));
+        settle(id, Outcome::Cancelled);
+        return;
+    }
+
     const auto transfer = m_transfers.value(id);
     if (!transfer)
         return;
+    if (m_extractWaiting.removeAll(id) > 0) {
+        m_transfers.remove(id);
+        QFile::remove(transfer->packagePath);
+        emit transferFailed(id, QStringLiteral("Cancelled"));
+        settle(id, Outcome::Cancelled);
+        return;
+    }
 
     transfer->cancelled = true;
     if (transfer->reply)
@@ -759,6 +1351,7 @@ QVariantMap AddonManager::inspectUserPackage(const QUrl &url)
 {
     QFile::remove(m_userPackagePath);
     m_userPackagePath.clear();
+    m_userPackageZipFolder.clear();
 
     // Staged locally first: the installer seeks and checks the file size, which a content:// URI
     // does not reliably support.
@@ -796,16 +1389,114 @@ bool AddonManager::isUserPackage(const QUrl &url) const
     return file && file->read(8) == QByteArrayLiteral("DRIFTFX\0");
 }
 
+namespace {
+
+// name, kind, error
+using UserPackageResult = std::tuple<QString, QString, QString>;
+
+// The catalogs skip a package they cannot parse without a word, so one that would install and
+// then never show up is refused instead. Shaders are not compiled here: that needs the GL thread.
+QString validateCustomEffect(const QString &kind, const QString &dir)
+{
+    QString error;
+    if (kind == QLatin1String("effects"))
+        EffectPackageLoader::loadPackage(dir, &error);
+    else if (kind == QLatin1String("transitions"))
+        TransitionPackageLoader::loadPackage(dir, &error);
+    else
+        loadAudioEffectPackage(dir, &error);
+    return error.isEmpty() ? QString() : QStringLiteral("Drift cannot read it: %1").arg(error);
+}
+
+UserPackageResult extractUserPackage(const QString &packagePath, const QString &appData)
+{
+    QString error;
+    const auto manifest = readManifest(packagePath, &error, Container::User);
+    if (!manifest)
+        return {QString(), QString(), error};
+    const PackageProvide provide = manifest->provides.first();
+    const QString folder = manifest->files.first().path.mid(provide.root.size() + 1).section(QLatin1Char('/'), 0, 0);
+
+    // Extracted next to its final home so the last step is a rename on the same filesystem.
+    // The user folders (<AppData>/effects, <AppData>/transitions) are the same roots the
+    // catalogs already scan for unsigned packages.
+    const QDir kindDir(QDir(appData).filePath(provide.kind));
+    const QString staging = kindDir.filePath(QStringLiteral(".import-") + folder);
+    PackageInfo info;
+    if (!drift::addon::install(packagePath, staging, {}, &info, &error, Container::User))
+        return {manifest->name, provide.kind, error};
+
+    const QString extracted = QDir(staging).filePath(provide.root + QLatin1Char('/') + folder);
+    if (const QString invalid = validateCustomEffect(provide.kind, extracted); !invalid.isEmpty()) {
+        QDir(staging).removeRecursively();
+        return {info.name, provide.kind, invalid};
+    }
+    const QString destination = kindDir.filePath(folder);
+    QDir(destination).removeRecursively();
+    const bool moved = QDir().rename(extracted, destination);
+    QDir(staging).removeRecursively();
+    if (!moved)
+        return {info.name, provide.kind, QStringLiteral("cannot move %1 into place").arg(folder)};
+    return {info.name, provide.kind, QString()};
+}
+
+// A zip from Drift Forge: <folder>/ holds the files that go into <AppData>/<kind>/<folder>.
+UserPackageResult extractForgeZip(const QString &zipPath, const QString &folder, const QString &kind,
+                                  const QString &name, const QString &appData)
+{
+    QString error;
+    QFile zip(zipPath);
+    if (!zip.open(QIODevice::ReadOnly))
+        return {name, kind, zip.errorString()};
+    const QList<drift::zip::Entry> entries = drift::zip::readEntries(zip, &error);
+    if (entries.isEmpty())
+        return {name, kind, error.isEmpty() ? QStringLiteral("the zip is empty") : error};
+
+    const QDir kindDir(QDir(appData).filePath(kind));
+    const QString staging = kindDir.filePath(QStringLiteral(".import-") + folder);
+    QDir(staging).removeRecursively();
+    const auto fail = [&](const QString &message) -> UserPackageResult {
+        QDir(staging).removeRecursively();
+        return {name, kind, message};
+    };
+    const QString prefix = folder + QLatin1Char('/');
+    for (const drift::zip::Entry &entry : entries) {
+        if (entry.isDir || !entry.path.startsWith(prefix))
+            continue;
+        QByteArray bytes;
+        if (!drift::zip::extractEntry(zip, entry, bytes))
+            return fail(QStringLiteral("cannot extract %1").arg(entry.path));
+        const QString target = QDir(staging).filePath(entry.path.mid(prefix.size()));
+        if (!QDir().mkpath(QFileInfo(target).absolutePath()))
+            return fail(QStringLiteral("cannot create %1").arg(QFileInfo(target).absolutePath()));
+        QFile out(target);
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate) || out.write(bytes) != bytes.size())
+            return fail(QStringLiteral("cannot write %1").arg(target));
+    }
+
+    if (const QString invalid = validateCustomEffect(kind, staging); !invalid.isEmpty())
+        return fail(invalid);
+    const QString destination = kindDir.filePath(folder);
+    QDir(destination).removeRecursively();
+    if (!QDir().rename(staging, destination))
+        return fail(QStringLiteral("cannot move %1 into place").arg(folder));
+    return {name, kind, QString()};
+}
+
+} // namespace
+
 void AddonManager::installUserPackage()
 {
     if (m_userPackagePath.isEmpty())
         return;
     const QString packagePath = std::exchange(m_userPackagePath, QString());
+    const QString zipFolder = std::exchange(m_userPackageZipFolder, QString());
+    const QString zipKind = m_userPackageZipKind;
+    const QString zipName = m_userPackageZipName;
     const QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 
-    using Result = std::tuple<QString, QString, QString>; // name, kind, error
-    auto *watcher = new QFutureWatcher<Result>(this);
-    connect(watcher, &QFutureWatcher<Result>::finished, this, [this, watcher, packagePath] {
+    auto *watcher = new QFutureWatcher<UserPackageResult>(this);
+    connect(watcher, &QFutureWatcher<UserPackageResult>::finished, this, [this, watcher, packagePath] {
         watcher->deleteLater();
         QFile::remove(packagePath);
         const auto [name, kind, error] = watcher->result();
@@ -814,31 +1505,19 @@ void AddonManager::installUserPackage()
         emit userPackageInstalled(name, error);
     });
 
-    watcher->setFuture(QtConcurrent::run([packagePath, appData]() -> Result {
-        QString error;
-        const auto manifest = readManifest(packagePath, &error, Container::User);
-        if (!manifest)
-            return {QString(), QString(), error};
-        const PackageProvide provide = manifest->provides.first();
-        const QString folder = manifest->files.first().path.mid(provide.root.size() + 1).section(QLatin1Char('/'), 0, 0);
-
-        // Extracted next to its final home so the last step is a rename on the same filesystem.
-        // The user folders (<AppData>/effects, <AppData>/transitions) are the same roots the
-        // catalogs already scan for unsigned packages.
-        const QDir kindDir(QDir(appData).filePath(provide.kind));
-        const QString staging = kindDir.filePath(QStringLiteral(".import-") + folder);
-        PackageInfo info;
-        if (!drift::addon::install(packagePath, staging, {}, &info, &error, Container::User))
-            return {manifest->name, provide.kind, error};
-
-        const QString destination = kindDir.filePath(folder);
-        QDir(destination).removeRecursively();
-        const bool moved = QDir().rename(QDir(staging).filePath(provide.root + QLatin1Char('/') + folder), destination);
-        QDir(staging).removeRecursively();
-        if (!moved)
-            return {info.name, provide.kind, QStringLiteral("cannot move %1 into place").arg(folder)};
-        return {info.name, provide.kind, QString()};
+    watcher->setFuture(QtConcurrent::run([=] {
+        return zipFolder.isEmpty() ? extractUserPackage(packagePath, appData)
+                                   : extractForgeZip(packagePath, zipFolder, zipKind, zipName, appData);
     }));
+}
+
+QString AddonManager::installUserPackageFile(const QString &path)
+{
+    const auto [name, kind, error] =
+        extractUserPackage(path, QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+    if (error.isEmpty())
+        reloadForKinds({kind});
+    return error;
 }
 
 QVariantMap AddonManager::inspectAddonFile(const QUrl &url)
@@ -863,7 +1542,7 @@ QVariantMap AddonManager::inspectAddonFile(const QUrl &url)
         else if (drift::zip::looksLikeZip(head))
             m_addonFileType = QStringLiteral("zip");
         else
-            return {{QStringLiteral("error"), tr("This is not a Drift addon file.")}};
+            return {{QStringLiteral("error"), tr("This is not a Drift addon, a .driftfx or a Drift Forge zip.")}};
 
         if (url.isLocalFile()) {
             path = url.toLocalFile();
@@ -916,13 +1595,88 @@ QVariantMap AddonManager::inspectAddonFile(const QUrl &url)
             else
                 error = QStringLiteral("cannot read manifest.json");
         } else if (error.isEmpty()) {
-            error = QStringLiteral("no manifest.json");
+            // No manifest.json: maybe a zip from Drift Forge, one folder holding a single
+            // effect.json, transition.json or audio-effect.json. It installs like a .driftfx.
+            static const std::pair<QLatin1String, QLatin1String> kForgeManifests[] = {
+                {QLatin1String("effect.json"), QLatin1String("effects")},
+                {QLatin1String("transition.json"), QLatin1String("transitions")},
+                {QLatin1String("audio-effect.json"), QLatin1String("audio-effects")},
+            };
+            const drift::zip::Entry *forge = nullptr;
+            QString kind;
+            int found = 0;
+            for (const drift::zip::Entry &entry : entries) {
+                if (entry.isDir || entry.path.count(QLatin1Char('/')) != 1)
+                    continue;
+                const QString folder = entry.path.section(QLatin1Char('/'), 0, 0);
+                if (folder.isEmpty() || folder == QLatin1String(".") || folder == QLatin1String(".."))
+                    continue;
+                const QString file = entry.path.section(QLatin1Char('/'), 1);
+                for (const auto &[manifestName, manifestKind] : kForgeManifests) {
+                    if (file == manifestName) {
+                        forge = &entry;
+                        kind = manifestKind;
+                        ++found;
+                    }
+                }
+            }
+            if (found == 1) {
+                const QString folder = forge->path.section(QLatin1Char('/'), 0, 0);
+                QByteArray json;
+                const QJsonObject effect = drift::zip::extractEntry(zip, *forge, json)
+                    ? QJsonDocument::fromJson(json).object() : QJsonObject();
+                QJsonObject meta;
+                for (const drift::zip::Entry &entry : entries) {
+                    QByteArray forgeJson;
+                    if (entry.path == folder + QLatin1String("/forge.json")
+                        && drift::zip::extractEntry(zip, entry, forgeJson))
+                        meta = QJsonDocument::fromJson(forgeJson).object().value(QStringLiteral("meta")).toObject();
+                }
+                zip.close();
+                const QString minAppVersion = effect.value(QStringLiteral("minAppVersion")).toString();
+                if (effect.isEmpty()) {
+                    error = QStringLiteral("cannot read %1").arg(forge->path);
+                } else if (!minAppVersion.isEmpty()
+                           && drift::compareVersions(QStringLiteral(DRIFT_VERSION), minAppVersion) < 0) {
+                    error = QStringLiteral("it requires Drift %1 or newer, but this is %2")
+                                .arg(minAppVersion, QStringLiteral(DRIFT_VERSION));
+                } else {
+                    // Copied, since installUserPackage() deletes its file when done.
+                    QFile::remove(m_userPackagePath);
+                    const QString staged = QDir(addonDownloadCacheDir()).filePath(QStringLiteral("user-import.zip"));
+                    QFile::remove(staged);
+                    const bool copied = QFile::copy(path, staged);
+                    discardAddonFile();
+                    if (!copied)
+                        return {{QStringLiteral("error"), tr("Could not read that file.")}};
+                    const QString id = effect.value(QStringLiteral("id")).toString(folder);
+                    m_userPackagePath = staged;
+                    m_userPackageZipFolder = folder;
+                    m_userPackageZipKind = kind;
+                    m_userPackageZipName = effect.value(QStringLiteral("displayName")).toString(id);
+                    return {
+                        {QStringLiteral("type"), QStringLiteral("driftfx")},
+                        {QStringLiteral("id"), id},
+                        {QStringLiteral("folder"), folder},
+                        {QStringLiteral("name"), m_userPackageZipName},
+                        {QStringLiteral("kind"), kind},
+                        {QStringLiteral("version"), meta.value(QStringLiteral("version")).toString()},
+                        {QStringLiteral("author"), meta.value(QStringLiteral("author")).toString()},
+                        {QStringLiteral("description"), effect.value(QStringLiteral("description")).toString()},
+                    };
+                }
+            } else if (found > 1) {
+                error = QStringLiteral("it holds more than one effect; install them one at a time");
+            } else {
+                error = QStringLiteral("it is neither an addon (no manifest.json) nor a Drift Forge export "
+                                       "(no folder with effect.json, transition.json or audio-effect.json)");
+            }
         }
     }
 
     if (!info || !checkCompatible(*info, &error)) {
         discardAddonFile();
-        return {{QStringLiteral("error"), tr("Could not use this addon (%1).").arg(error)}};
+        return {{QStringLiteral("error"), tr("Drift cannot use this file: %1.").arg(error)}};
     }
 
     m_addonFileId = info->id;
@@ -1096,6 +1850,85 @@ QUrl AddonManager::customAddonsFolderUrl() const
     return QUrl::fromLocalFile(customAddonsDir());
 }
 
+namespace {
+
+const std::pair<QLatin1String, QLatin1String> kCustomEffectKinds[] = {
+    {QLatin1String("effects"), QLatin1String("effect.json")},
+    {QLatin1String("transitions"), QLatin1String("transition.json")},
+    {QLatin1String("audio-effects"), QLatin1String("audio-effect.json")},
+};
+
+QString customEffectsDir(const QString &kind)
+{
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath(kind);
+}
+
+bool isCustomEffectKind(const QString &kind)
+{
+    return std::any_of(std::begin(kCustomEffectKinds), std::end(kCustomEffectKinds),
+                       [&](const auto &entry) { return entry.first == kind; });
+}
+
+} // namespace
+
+QVariantList AddonManager::customEffects() const
+{
+    QVariantList out;
+    for (const auto &[kind, manifestName] : kCustomEffectKinds) {
+        const QDir root(customEffectsDir(kind));
+        // Dot folders are staging for an import in progress.
+        const QStringList folders = root.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
+        for (const QString &folder : folders) {
+            const QDir dir(root.filePath(folder));
+            QFile manifest(dir.filePath(manifestName));
+            if (!manifest.open(QIODevice::ReadOnly))
+                continue;
+            const QJsonObject json = QJsonDocument::fromJson(manifest.readAll()).object();
+            QString thumbnail;
+            for (const QString &candidate : {json.value(QStringLiteral("thumbnail")).toString(),
+                                             QStringLiteral("thumbnail.webp"), QStringLiteral("thumbnail.png")}) {
+                if (!candidate.isEmpty() && QFileInfo::exists(dir.filePath(candidate))) {
+                    thumbnail = QUrl::fromLocalFile(dir.filePath(candidate)).toString();
+                    break;
+                }
+            }
+            out.append(QVariantMap{
+                {QStringLiteral("kind"), QString(kind)},
+                {QStringLiteral("folder"), folder},
+                {QStringLiteral("name"), json.value(QStringLiteral("displayName")).toString(folder)},
+                {QStringLiteral("description"), json.value(QStringLiteral("description")).toString()},
+                {QStringLiteral("category"), json.value(QStringLiteral("category")).toString()},
+                {QStringLiteral("thumbnail"), thumbnail},
+            });
+        }
+    }
+    return out;
+}
+
+bool AddonManager::removeCustomEffect(const QString &kind, const QString &folder)
+{
+    if (!isCustomEffectKind(kind) || folder.isEmpty() || folder.startsWith(QLatin1Char('.'))
+        || folder.contains(QLatin1Char('/')) || folder.contains(QLatin1Char('\\')))
+        return false;
+    if (!QDir(QDir(customEffectsDir(kind)).filePath(folder)).removeRecursively())
+        return false;
+    reloadForKinds({kind});
+    return true;
+}
+
+QUrl AddonManager::customEffectsFolderUrl(const QString &kind) const
+{
+    if (!isCustomEffectKind(kind))
+        return {};
+    QDir().mkpath(customEffectsDir(kind));
+    return QUrl::fromLocalFile(customEffectsDir(kind));
+}
+
+void AddonManager::reloadCustomEffects()
+{
+    reloadForKinds({QStringLiteral("effects"), QStringLiteral("transitions"), QStringLiteral("audio-effects")});
+}
+
 void AddonManager::rescanCustomAddons()
 {
     const auto snapshot = [] {
@@ -1134,3 +1967,5 @@ void AddonManager::sweepDownloadCache()
     for (const QString &name : stale)
         QFile::remove(cache.filePath(name));
 }
+
+#include "moc_AddonManager.cpp"

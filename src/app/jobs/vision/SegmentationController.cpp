@@ -1,6 +1,7 @@
 #include "app/jobs/vision/SegmentationController.h"
 
 #include "app/editor/AppController.h"
+#include "app/mcp/McpDetail.h"
 #include "ui/imageproviders/segment/SegmentImageStore.h"
 #include "engine/packages/effects/EffectTemplateCatalog.h"
 #include "engine/encode/writers/MatteWriter.h"
@@ -14,6 +15,7 @@
 #include <QTemporaryDir>
 #include <QtConcurrent>
 
+#include <cmath>
 #include <functional>
 
 namespace {
@@ -143,6 +145,7 @@ void SegmentationController::beginSession(int trackIndex, int clipIndex, double 
 
     m_segTrack = trackIndex;
     m_segClip = clipIndex;
+    m_segClipId = track.clips.at(clipIndex).id;
     m_segPoints.clear();
     m_segForTemplate = forTemplate;
     m_segSessionActive = true;
@@ -174,6 +177,7 @@ void SegmentationController::endSession()
     m_segEncoding = false;
     m_segTrack = -1;
     m_segClip = -1;
+    m_segClipId.clear();
     m_segPoints.clear();
     m_segFrame = QImage();
     m_segEmbedding = drift::Sam2Embedding{};
@@ -200,7 +204,7 @@ void SegmentationController::setFrame(double seconds)
         m_segFramePending = seconds;
         return;
     }
-    if (m_segTrack < 0 || m_segTrack >= m_app->m_project.tracks().size())
+    if (!resolveSessionClip())
         return;
     const drift::Track &track = m_app->m_project.tracks().at(m_segTrack);
     if (m_segClip < 0 || m_segClip >= track.clips.size())
@@ -310,7 +314,7 @@ void SegmentationController::scrubFrame(double seconds)
         m_segScrubPending = seconds;
         return;
     }
-    if (m_segTrack < 0 || m_segTrack >= m_app->m_project.tracks().size())
+    if (!resolveSessionClip())
         return;
     const drift::Track &track = m_app->m_project.tracks().at(m_segTrack);
     if (m_segClip < 0 || m_segClip >= track.clips.size())
@@ -460,11 +464,29 @@ void SegmentationController::runSeed(int generation)
     });
 }
 
+bool SegmentationController::resolveSessionClip()
+{
+    return !m_segClipId.isEmpty() && drift::mcpdetail::findClipById(m_app->m_project, m_segClipId, &m_segTrack, &m_segClip);
+}
+
+int SegmentationController::pointIndexAt(double nx, double ny, double tolPx, double frameW, double frameH) const
+{
+    QList<QPointF> points;
+    points.reserve(m_segPoints.size());
+    for (const QVariant &v : m_segPoints) {
+        const QVariantMap p = v.toMap();
+        points.append(QPointF(p.value(QStringLiteral("x")).toDouble(), p.value(QStringLiteral("y")).toDouble()));
+    }
+    return drift::segplan::nearestPointIndex(points, nx, ny, tolPx, frameW, frameH);
+}
+
 void SegmentationController::runSession(const QString &outputMode)
 {
     if (!m_segSessionActive)
         return;
     if (backendUsesPoints() && m_segPoints.isEmpty())
+        return;
+    if (!resolveSessionClip())
         return;
     QString mode = outputMode;
     if (m_segForTemplate && m_app->m_pendingEffectTemplate && m_app->m_pendingEffectTemplate->valid())
@@ -1069,11 +1091,17 @@ void SegmentationController::finalizeRefine(const QString &clipId, const QString
                 return;
             }
             const drift::Project before = m_app->m_project;
+            // Frame fixes are keyed by media time, which moves with the offset; the host frame each fixes stays put.
+            const bool keepsFixes = !adjustment.mask.mediaPatches.isEmpty();
+            QMap<drift::TimeUs, QString> rebased;
+            for (auto it = adjustment.mask.mediaPatches.constBegin(); it != adjustment.mask.mediaPatches.constEnd(); ++it)
+                rebased.insert(it.key() + adjustment.mask.mediaSrcOffsetUs - newOffsetUs, it.value());
             adjustment.mask.mediaPath = newMattePath;
             adjustment.mask.mediaSrcOffsetUs = newOffsetUs;
             adjustment.mask.mediaFgrPath.clear();
+            adjustment.mask.mediaPatches = rebased;
             m_app->pushProjectEdit(before, tr("Refine object mask"));
-            m_app->finishEdit(tr("Refine object mask"));
+            m_app->finishEdit(keepsFixes ? tr("Object mask refined. Frame fixes were kept") : tr("Refine object mask"));
             return;
         }
     }
@@ -1139,3 +1167,5 @@ void SegmentationController::finalizeSegmentation(const QString &clipId, const Q
         }
     }
 }
+
+#include "moc_SegmentationController.cpp"
