@@ -8,6 +8,10 @@ class AppController;
 
 namespace drift::mcp {
 
+// An effect catalog id reduced for matching: lower case, '.' and '_' interchangeable, the
+// builtin.effects. prefix dropped — the same leniency add_effect applies to ids.
+QString effectCatalogKey(const QString &id);
+
 class McpDispatcher
 {
 public:
@@ -55,7 +59,8 @@ private:
     void moveClipToRequested(const ClipRef &ref, double at);
 
     QJsonObject opImportMedia(const QJsonObject &args);
-    QJsonObject opListAssets() const;
+    QJsonObject opListAssets(const QJsonObject &args) const;
+    QJsonObject opRemoveUnusedAssets(const QJsonObject &args);
     QJsonObject opRenameAsset(const QJsonObject &args);
     QJsonObject opAddTrack(const QJsonObject &args);
     QJsonObject opMakeTransformLayer(const QJsonObject &args);
@@ -92,6 +97,8 @@ private:
     QJsonObject opListTransitions(const QJsonObject &args) const;
     QJsonObject opAddEffect(const QJsonObject &args);
     QJsonObject opRemoveEffect(const QJsonObject &args);
+    QJsonObject opCopyEffects(const QJsonObject &args);
+    QJsonObject opRemoveAllEffects(const QJsonObject &args);
     QJsonObject opSetEffectParam(const QJsonObject &args);
     QJsonObject opAddAudioEffect(const QJsonObject &args);
     QJsonObject opRemoveAudioEffect(const QJsonObject &args);

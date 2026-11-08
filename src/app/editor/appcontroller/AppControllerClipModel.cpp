@@ -1261,6 +1261,31 @@ int AppController::clipCountForAsset(int assetIndex) const
     return count;
 }
 
+QHash<QString, int> AppController::clipCountsByAsset() const
+{
+    QHash<QString, int> counts;
+    m_project.forEachTrackList([&](const QList<drift::Track> &tracks) {
+        for (const drift::Track &track : tracks) {
+            for (const drift::Clip &clip : track.clips) {
+                if (!clip.assetId.isEmpty())
+                    ++counts[clip.assetId];
+            }
+        }
+    });
+    return counts;
+}
+
+QHash<QString, int> AppController::derivedAssetCounts() const
+{
+    QHash<QString, int> counts;
+    for (const drift::MediaAsset &asset : m_project.assets()) {
+        const QString source = asset.generator.value(QStringLiteral("sourceAssetId")).toString();
+        if (!source.isEmpty() && source != asset.id)
+            ++counts[source];
+    }
+    return counts;
+}
+
 bool AppController::removeAsset(int assetIndex)
 {
     // Clips keep their own copy of the source path, so an orphaned assetId
@@ -1637,6 +1662,7 @@ QVariantList AppController::actions() const
         action(QStringLiteral("saveAs"), tr("Save project as…")),
         action(QStringLiteral("playPause"), tr("Play/Pause")),
         action(QStringLiteral("delete"), tr("Delete selection")),
+        action(QStringLiteral("deleteWithEffects"), tr("Delete selection with its effects")),
         action(QStringLiteral("undo"), tr("Undo")),
         action(QStringLiteral("redo"), tr("Redo")),
         action(QStringLiteral("copy"), tr("Copy selection")),
@@ -1956,6 +1982,24 @@ void AppController::dropKeyframeGraphPropertiesForEffect(int removedIndex, bool 
         if (effectIndex == removedIndex)
             continue;
         next.append(effectIndex > removedIndex ? format.arg(effectIndex - 1).arg(paramKey) : prop);
+    }
+    if (next == m_keyframeGraphHiddenProperties)
+        return;
+    m_keyframeGraphHiddenProperties = next;
+    emit keyframeGraphVisibilityChanged();
+}
+
+void AppController::dropKeyframeGraphEffectProperties(bool video, bool audio)
+{
+    QStringList next;
+    for (const QString &prop : std::as_const(m_keyframeGraphHiddenProperties)) {
+        int effectIndex = -1;
+        QString paramKey;
+        if ((video && parseEffectProp(prop, &effectIndex, &paramKey))
+            || (audio && parseAudioEffectProp(prop, &effectIndex, &paramKey))) {
+            continue;
+        }
+        next.append(prop);
     }
     if (next == m_keyframeGraphHiddenProperties)
         return;
