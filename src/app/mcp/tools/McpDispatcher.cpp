@@ -653,6 +653,8 @@ QJsonObject McpDispatcher::clipFeedback(const ClipRef &ref, const QJsonObject &e
         out.insert(QStringLiteral("h"), clip.value(QStringLiteral("h")).toDouble());
     if (clip.value(QStringLiteral("layer3d")).toBool())
         out.insert(QStringLiteral("layer3d"), true);
+    if (clip.value(QStringLiteral("depthOcclude")).toBool())
+        out.insert(QStringLiteral("depth_occlude"), true);
     copyNum("rotationX", "rotationX");
     copyNum("rotationY", "rotationY");
     copyNum("z", "z");
@@ -1464,9 +1466,12 @@ QJsonObject McpDispatcher::opSetTrack(const QJsonObject &args)
         m_controller->setTrackMuted(track, jsonBool(args.value(QStringLiteral("muted"))));
     if (args.contains(QStringLiteral("hidden")))
         m_controller->setTrackHidden(track, jsonBool(args.value(QStringLiteral("hidden"))));
+    if (args.contains(QStringLiteral("locked")))
+        m_controller->setTrackLocked(track, jsonBool(args.value(QStringLiteral("locked"))));
     return ok({{QStringLiteral("track"), track},
                {QStringLiteral("muted"), m_controller->trackMuted(track)},
-               {QStringLiteral("hidden"), m_controller->trackHidden(track)}});
+               {QStringLiteral("hidden"), m_controller->trackHidden(track)},
+               {QStringLiteral("locked"), m_controller->trackLocked(track)}});
 }
 
 QJsonObject McpDispatcher::opPlaceClip(const QJsonObject &args)
@@ -1685,6 +1690,8 @@ QJsonObject McpDispatcher::opSetTransform(const QJsonObject &args)
     }
     if (args.contains(QStringLiteral("layer3d")))
         patch.insert(QStringLiteral("layer3d"), args.value(QStringLiteral("layer3d")).toBool());
+    if (args.contains(QStringLiteral("depth_occlude")))
+        patch.insert(QStringLiteral("depthOcclude"), jsonBool(args.value(QStringLiteral("depth_occlude"))));
     if (patch.isEmpty())
         return err("bad_args", QStringLiteral("No transform fields"));
     const double at = args.contains(QStringLiteral("at")) ? jsonNumber(args.value(QStringLiteral("at")), -1.0) : -1.0;
