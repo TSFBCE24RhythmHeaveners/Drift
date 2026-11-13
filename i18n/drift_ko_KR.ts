@@ -58,15 +58,27 @@
         <translation>자동(권장)</translation>
     </message>
     <message>
-        <source>NVIDIA graphics (faster)</source>
-        <translation>NVIDIA 그래픽(더 빠름)</translation>
-    </message>
-    <message>
-        <source>AMD graphics (faster)</source>
+        <source>Processor (CPU)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>CPU</source>
+        <source>NVIDIA CUDA</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>AMD MIGraphX (Windows ML)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>AMD ROCm (MIGraphX)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Windows ML (DirectX 12)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebGPU (any graphics card)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1073,6 +1085,10 @@
     <message>
         <source>Custom</source>
         <translation>사용자 지정</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">즐겨찾기</translation>
     </message>
     <message>
         <source>Template</source>
@@ -2559,6 +2575,10 @@
         <translation>현재 시점에서 분할</translation>
     </message>
     <message>
+        <source>Split selected clip at current time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add transition at playhead</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2733,6 +2753,14 @@
     <message>
         <source>Clip moved</source>
         <translation>클립이 이동됨</translation>
+    </message>
+    <message>
+        <source>Select a clip to split first</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The playhead isn&apos;t over a selected clip</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing to split here — move to a clip first</source>
@@ -3209,6 +3237,38 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>The gap stays open: a linked track is locked</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: a clip is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: &quot;%1&quot; is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip inserted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Ripple trim</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Gaps closed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips swapped</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Set sequence</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Replace clip</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3295,6 +3355,22 @@
     <message>
         <source>Adjustment unlinked</source>
         <translation>보정 연결이 해제됨</translation>
+    </message>
+    <message>
+        <source>Hide effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer hidden</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer shown</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Link adjustment to clip</source>
@@ -3537,6 +3613,26 @@
         <translation>클립 앞으로 이동</translation>
     </message>
     <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop on</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop off</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip not looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>A clip is already being reversed</source>
         <translation>클립이 이미 반전 중입니다</translation>
     </message>
@@ -3611,6 +3707,14 @@
     <message>
         <source>Composite</source>
         <translation>컴포지트</translation>
+    </message>
+    <message>
+        <source>Timeline %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Timeline created</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Flattening composite…</source>
@@ -3801,6 +3905,10 @@
         <translation>막대</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">분할</translation>
+    </message>
+    <message>
         <source>Freeform</source>
         <translation>자유형</translation>
     </message>
@@ -3851,10 +3959,6 @@
     <message>
         <source>No cut between two clips to add a transition to</source>
         <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Change look</source>
-        <translation>룩 변경</translation>
     </message>
     <message>
         <source>Edit curve</source>
@@ -4213,6 +4317,14 @@
         <translation>키프레임 보간</translation>
     </message>
     <message>
+        <source>Add keyframes</source>
+        <translation type="unfinished">키프레임 추가</translation>
+    </message>
+    <message>
+        <source>Keyframes set</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Reset camera</source>
         <translation>카메라 초기화</translation>
     </message>
@@ -4227,6 +4339,10 @@
     <message>
         <source>Transform reset</source>
         <translation>변환이 초기화됨</translation>
+    </message>
+    <message>
+        <source>Motion blur follows one clip&apos;s movement, so it goes on a clip, not on an adjustment layer.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Depth effects read one clip&apos;s depth, so they go on a clip, not on an adjustment layer.</source>
@@ -4303,6 +4419,10 @@
     <message>
         <source>Effect updated</source>
         <translation>효과가 업데이트됨</translation>
+    </message>
+    <message>
+        <source>Change LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Could not read the selected file</source>
@@ -4533,6 +4653,18 @@
     <message>
         <source>Track shown</source>
         <translation>트랙 표시</translation>
+    </message>
+    <message>
+        <source>Exclude from export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track left out of export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track included in export</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Track lock</source>
@@ -4856,6 +4988,22 @@
         <source>Video size cropped to %1×%2</source>
         <translation>동영상 크기가 %1×%2로 크롭됨</translation>
     </message>
+    <message>
+        <source>Clear clip label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Label clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip label cleared</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip labelled</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>AppSettingsMenu</name>
@@ -4905,6 +5053,10 @@
         <translation>미디어 파일(%1)</translation>
     </message>
     <message>
+        <source>The proxy could not be made</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1 s</source>
         <translation>%1초</translation>
     </message>
@@ -4926,6 +5078,17 @@
     <message>
         <source>Add to timeline</source>
         <translation>타임라인에 추가</translation>
+    </message>
+</context>
+<context>
+    <name>AssetSearchBar</name>
+    <message>
+        <source>Clear search</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove from history</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -5233,6 +5396,14 @@
     <message>
         <source>Create a new folder here</source>
         <translation>여기에 새 폴더 만들기</translation>
+    </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Create an empty timeline and open it</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -6504,16 +6675,8 @@
         <translation>없음</translation>
     </message>
     <message>
-        <source>Missing look</source>
-        <translation type="unfinished">누락된 룩</translation>
-    </message>
-    <message>
         <source>Adjust color</source>
         <translation>색상 조정</translation>
-    </message>
-    <message>
-        <source>Set look</source>
-        <translation>룩 설정</translation>
     </message>
     <message>
         <source>Reset %1</source>
@@ -6523,37 +6686,45 @@
         <source>Reset grade</source>
         <translation>색보정 초기화</translation>
     </message>
-    <message numerus="yes">
-        <source>Imported %n look(s)</source>
-        <translation>
-            <numerusform>룩 %n개를 가져왔습니다</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>Imported %n look(s), %1 failed</source>
-        <translation>
-            <numerusform>룩 %n개를 가져왔으며, %1개 실패했습니다</numerusform>
-        </translation>
-    </message>
     <message>
-        <source>Could not import that look</source>
+        <source>Missing LUT</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Could not remove the look</source>
-        <translation>룩을 제거할 수 없습니다</translation>
+        <source>Set LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Imported %n LUT(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Imported %n LUT(s), %1 failed</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+        </translation>
     </message>
     <message>
-        <source>Look removed</source>
-        <translation>룩 제거됨</translation>
+        <source>Could not import that LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Could not rename the look</source>
-        <translation>룩 이름을 변경할 수 없습니다</translation>
+        <source>Could not remove the LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Look renamed</source>
-        <translation>룩 이름 변경됨</translation>
+        <source>LUT removed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not rename the LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT renamed</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Grade this clip before applying it to others</source>
@@ -6820,18 +6991,6 @@
         <translation>색상</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation>룩</translation>
-    </message>
-    <message>
-        <source>None. Choose a look in the Looks panel.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>룩 강도</translation>
-    </message>
-    <message>
         <source>Color wheels</source>
         <translation type="unfinished">색상 휠</translation>
     </message>
@@ -6870,6 +7029,18 @@
     <message>
         <source>Apply to all clips</source>
         <translation>모든 클립에 적용</translation>
+    </message>
+    <message>
+        <source>LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>None. Choose one in the Color Grading LUTs panel.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Apply</source>
@@ -8754,16 +8925,16 @@
         <translation>가져오기…</translation>
     </message>
     <message>
-        <source>Import looks</source>
-        <translation>룩 가져오기</translation>
+        <source>Import LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>LUT files (*.cube)</source>
         <translation>LUT 파일 (*.cube)</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>누락된 룩</translation>
     </message>
 </context>
 <context>
@@ -9109,6 +9280,10 @@
         <translation>동영상 내보내기</translation>
     </message>
     <message>
+        <source>Exporting audio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Export</source>
         <translation>내보내기</translation>
     </message>
@@ -9123,6 +9298,10 @@
     <message>
         <source>Rendering your video. Close to keep editing, or cancel to stop.</source>
         <translation>동영상을 렌더링하는 중입니다. 계속 편집하려면 이 창을 닫고, 중지하려면 취소하세요.</translation>
+    </message>
+    <message>
+        <source>Rendering your audio. Close to keep editing, or cancel to stop.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Export finished.</source>
@@ -9963,6 +10142,18 @@
         <translation>끝</translation>
     </message>
     <message>
+        <source>Loop</source>
+        <translation type="unfinished">반복</translation>
+    </message>
+    <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Repeat the trimmed part for as long as the clip runs. Drag the clip&apos;s edges past the end to add repeats. Turn it off to change the trim.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rename</source>
         <translation>이름 변경</translation>
     </message>
@@ -10001,6 +10192,26 @@
     <message>
         <source>File</source>
         <translation>파일</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation type="unfinished">레이블</translation>
+    </message>
+    <message>
+        <source>Clip label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>e.g. intro (empty clears it)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -10097,6 +10308,10 @@
     <message>
         <source>Presets</source>
         <translation>프리셋</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">즐겨찾기</translation>
     </message>
     <message>
         <source>Type</source>
@@ -10646,6 +10861,10 @@
     <message>
         <source>Feather</source>
         <translation>페더</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -11235,6 +11454,10 @@
         <translation>카테고리를 선택한 다음 템플릿과 화질을 선택하세요. 설정 → 레이아웃 선택에서 언제든지 변경할 수 있습니다.</translation>
     </message>
     <message>
+        <source>Favorites</source>
+        <translation type="unfinished">즐겨찾기</translation>
+    </message>
+    <message>
         <source>Template</source>
         <translation>템플릿</translation>
     </message>
@@ -11365,60 +11588,56 @@
 <context>
     <name>LooksPanel</name>
     <message>
-        <source>Looks</source>
-        <translation>룩</translation>
-    </message>
-    <message>
-        <source>My Looks</source>
-        <translation>내 룩</translation>
-    </message>
-    <message>
-        <source>Import looks</source>
-        <translation>룩 가져오기</translation>
-    </message>
-    <message>
         <source>LUT files (*.cube)</source>
         <translation>LUT 파일 (*.cube)</translation>
-    </message>
-    <message>
-        <source>Search looks</source>
-        <translation>룩 검색</translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>룩 강도</translation>
     </message>
     <message>
         <source>Adjust %1</source>
         <translation>%1 조정</translation>
     </message>
     <message>
-        <source>Get free looks</source>
-        <translation>무료 룩 다운로드</translation>
-    </message>
-    <message>
         <source>Rename…</source>
         <translation>이름 변경…</translation>
-    </message>
-    <message>
-        <source>Import .cube looks</source>
-        <translation>.cube 룩 가져오기</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>누락된 룩</translation>
     </message>
     <message>
         <source>Remove</source>
         <translation>제거</translation>
     </message>
     <message>
-        <source>No looks match “%1”.</source>
-        <translation>“%1”과(와) 일치하는 룩이 없습니다.</translation>
+        <source>Color Grading LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>No favorites yet. Star looks to save them here.</source>
-        <translation>아직 즐겨찾기가 없습니다. 룩에 별표를 표시하여 여기에 저장하세요.</translation>
+        <source>Import LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Import .cube LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>My LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No LUTs match “%1”.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No favorites yet. Star LUTs to save them here.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing in this category.</source>
@@ -11437,30 +11656,34 @@
         <translation>가져오기</translation>
     </message>
     <message>
-        <source>No looks</source>
-        <translation>룩 없음</translation>
+        <source>No LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Download a free pack of ready-made looks, or import your own .cube files.</source>
-        <translation>사전 제작된 무료 룩 팩을 다운로드하거나 직접 .cube 파일을 가져오세요.</translation>
+        <source>Download a free pack of ready-made color grading LUTs, or import your own .cube files.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Select a clip to try looks on it</source>
-        <translation>룩을 적용해 볼 클립을 선택하세요</translation>
+        <source>Get free LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Remove this look?</source>
-        <translation>이 룩을 제거하시겠습니까?</translation>
+        <source>Select a clip to try LUTs on it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove this LUT?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message numerus="yes">
         <source>“%1” is used by %n clip(s). They will show it as missing until it is imported again.</source>
         <translation>
             <numerusform>“%1”은(는) %n개의 클립에서 사용 중입니다. 다시 가져올 때까지 누락된 것으로 표시됩니다.</numerusform>
         </translation>
-    </message>
-    <message>
-        <source>Rename look</source>
-        <translation>룩 이름 바꾸기</translation>
     </message>
     <message>
         <source>Rename</source>
@@ -11927,8 +12150,8 @@
         <translation type="unfinished">테마</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation type="unfinished">룩</translation>
+        <source>LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Effect template</source>
@@ -12384,6 +12607,14 @@
 <context>
     <name>MaskOverlay</name>
     <message>
+        <source>Unlock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Drag points to reshape · Tap ○ on an edge to add a point · Hold a point to delete</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12405,6 +12636,28 @@
     <message>
         <source>Select a clip at the playhead to edit its masks</source>
         <translation>재생 헤드 위치의 클립을 선택하여 마스크를 편집하세요</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayFeatherHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">%1 편집</translation>
+    </message>
+    <message>
+        <source>Feather</source>
+        <translation type="unfinished">페더</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayRoundnessHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">%1 편집</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -12459,6 +12712,18 @@
     <message>
         <source>Clip converted to mask</source>
         <translation>클립이 마스크로 변환됨</translation>
+    </message>
+    <message>
+        <source>Clip</source>
+        <translation type="unfinished">클립</translation>
+    </message>
+    <message>
+        <source>%1 mask</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips used as mask</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Cutouts can&apos;t be moved yet</source>
@@ -12601,8 +12866,16 @@
         <translation>막대</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">분할</translation>
+    </message>
+    <message>
         <source>Matte</source>
         <translation>매트</translation>
+    </message>
+    <message>
+        <source>Sequence matte</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -13069,6 +13342,10 @@
             <numerusform>모양 키 %n개</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>MasksInspector</name>
@@ -13101,6 +13378,10 @@
         <translation>막대</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">분할</translation>
+    </message>
+    <message>
         <source>Combine</source>
         <translation>합집합</translation>
     </message>
@@ -13123,6 +13404,10 @@
     <message>
         <source>Remove mask</source>
         <translation>마스크 제거</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Center X</source>
@@ -13151,6 +13436,38 @@
     <message>
         <source>Polygon</source>
         <translation type="unfinished">다각형</translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Matte channel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Alpha (transparency)</source>
+        <translation type="unfinished">알파 (투명도)</translation>
+    </message>
+    <message>
+        <source>Luma (brightness)</source>
+        <translation type="unfinished">루마 (밝기)</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation type="unfinished">맞춤</translation>
+    </message>
+    <message>
+        <source>Stretch</source>
+        <translation type="unfinished">늘이기</translation>
+    </message>
+    <message>
+        <source>Fill</source>
+        <translation type="unfinished">채우기</translation>
+    </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Invert</source>
@@ -13214,6 +13531,13 @@
     <message>
         <source>All files (*)</source>
         <translation>모든 파일(*)</translation>
+    </message>
+</context>
+<context>
+    <name>McpController</name>
+    <message>
+        <source>Relink media</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -13676,6 +14000,14 @@
         <translation>%1(%2)</translation>
     </message>
     <message>
+        <source>The project was closed before the replace landed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The project was closed before the edit landed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Relink media</source>
         <translation type="unfinished"></translation>
     </message>
@@ -13684,6 +14016,10 @@
         <translation type="unfinished">
             <numerusform></numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Track is locked</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Sub-clip added</source>
@@ -16551,7 +16887,7 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and looks come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
+        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and color grading LUTs come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -16733,8 +17069,8 @@ If playback stutters, try another.</source>
         <translation type="unfinished">전환</translation>
     </message>
     <message>
-        <source>Looks</source>
-        <translation type="unfinished">룩</translation>
+        <source>LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Fonts</source>
@@ -16816,11 +17152,11 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the header.</source>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the header.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -22979,6 +23315,10 @@ If playback stutters, try another.</source>
 <context>
     <name>TextInspectorAnimCategoryStrip</name>
     <message>
+        <source>Favorites</source>
+        <translation type="unfinished">즐겨찾기</translation>
+    </message>
+    <message>
         <source>All</source>
         <translation>모두</translation>
     </message>
@@ -23862,6 +24202,14 @@ If playback stutters, try another.</source>
         <translation>모든 오디오 트랙 분리</translation>
     </message>
     <message>
+        <source>Stop looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop</source>
+        <translation type="unfinished">반복</translation>
+    </message>
+    <message>
         <source>Remove silence</source>
         <translation type="unfinished">무음 구간 제거</translation>
     </message>
@@ -23876,6 +24224,14 @@ If playback stutters, try another.</source>
     <message>
         <source>Convert to mask</source>
         <translation>마스크로 변환</translation>
+    </message>
+    <message>
+        <source>Use as mask (nested timeline)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Convert to edit-friendly format</source>
@@ -24121,6 +24477,54 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Paste here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add bookmark here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips after here on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select all clips</source>
+        <translation type="unfinished">모든 클립 선택</translation>
+    </message>
+    <message>
+        <source>Unmute track</source>
+        <translation type="unfinished">트랙 음소거 해제</translation>
+    </message>
+    <message>
+        <source>Mute track</source>
+        <translation type="unfinished">트랙 음소거</translation>
+    </message>
+    <message>
+        <source>Show track</source>
+        <translation type="unfinished">트랙 표시</translation>
+    </message>
+    <message>
+        <source>Hide track</source>
+        <translation type="unfinished">트랙 숨기기</translation>
+    </message>
+    <message>
+        <source>Unlock track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lock track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove empty tracks</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rename bookmark</source>
         <translation>책갈피 이름 변경</translation>
     </message>
@@ -24204,6 +24608,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Main</source>
         <translation type="unfinished">메인</translation>
+    </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -24516,12 +24924,24 @@ If playback stutters, try another.</source>
         <translation>자막</translation>
     </message>
     <message>
+        <source>Hide the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1, track %2</source>
         <translation>%1, 트랙 %2</translation>
     </message>
 </context>
 <context>
     <name>TimelineTrimHandle</name>
+    <message>
+        <source>Drag to repeat the clip</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <source>Drag to trim the start</source>
         <translation>드래그하여 시작 부분 자르기</translation>
@@ -24743,6 +25163,14 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Include in export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exclude from export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add camera clip at playhead</source>
         <translation>재생 헤드 위치에 카메라 클립 추가</translation>
     </message>
@@ -24910,6 +25338,17 @@ If playback stutters, try another.</source>
     <message>
         <source>Mute track</source>
         <translation>트랙 음소거</translation>
+    </message>
+</context>
+<context>
+    <name>TrackHeaderName</name>
+    <message>
+        <source>not exported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shown while editing, left out of every export</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -25768,6 +26207,14 @@ If playback stutters, try another.</source>
         <translation type="unfinished">위치</translation>
     </message>
     <message>
+        <source>Reset position</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset size</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Edit width and height separately</source>
         <translation>너비와 높이를 별도로 편집</translation>
     </message>
@@ -25808,6 +26255,14 @@ If playback stutters, try another.</source>
         <translation>불투명도 및 회전</translation>
     </message>
     <message>
+        <source>Reset opacity</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset rotation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rotate the whole group as one flat card</source>
         <translation type="unfinished"></translation>
     </message>
@@ -25822,6 +26277,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Position, rotation, anchor point and depth occlusion are in the 3D workspace&apos;s 3D Transform panel</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset all</source>
+        <translation type="unfinished">모두 초기화</translation>
     </message>
     <message>
         <source>Rotation</source>
@@ -25846,10 +26305,6 @@ If playback stutters, try another.</source>
     <message>
         <source>Flip V</source>
         <translation>세로 뒤집기</translation>
-    </message>
-    <message>
-        <source>Reset position &amp; size</source>
-        <translation>위치 및 크기 초기화</translation>
     </message>
     <message>
         <source>Fix orientation</source>
@@ -27439,10 +27894,6 @@ If playback stutters, try another.</source>
         <translation>색상</translation>
     </message>
     <message>
-        <source>Looks</source>
-        <translation>룩</translation>
-    </message>
-    <message>
         <source>Scopes</source>
         <translation>스코프</translation>
     </message>
@@ -27557,6 +28008,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Camera</source>
         <translation>카메라</translation>
+    </message>
+    <message>
+        <source>Color Grading LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Stabilization</source>

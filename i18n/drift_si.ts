@@ -58,15 +58,27 @@
         <translation>ස්වයංක්‍රීය (නිර්දේශිත)</translation>
     </message>
     <message>
-        <source>NVIDIA graphics (faster)</source>
-        <translation>NVIDIA ග්‍රැෆික්ස් (වේගවත්)</translation>
-    </message>
-    <message>
-        <source>AMD graphics (faster)</source>
+        <source>Processor (CPU)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>CPU</source>
+        <source>NVIDIA CUDA</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>AMD MIGraphX (Windows ML)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>AMD ROCm (MIGraphX)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Windows ML (DirectX 12)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebGPU (any graphics card)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1074,6 +1086,10 @@
     <message>
         <source>Custom</source>
         <translation>අභිරුචි</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">ප්‍රියතමයන්</translation>
     </message>
     <message>
         <source>Template</source>
@@ -2562,6 +2578,10 @@
         <translation>වත්මන් වේලාවේදී වෙන් කරන්න</translation>
     </message>
     <message>
+        <source>Split selected clip at current time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add transition at playhead</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2736,6 +2756,14 @@
     <message>
         <source>Clip moved</source>
         <translation>ක්ලිපය ගෙනයන ලදී</translation>
+    </message>
+    <message>
+        <source>Select a clip to split first</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The playhead isn&apos;t over a selected clip</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing to split here — move to a clip first</source>
@@ -3215,6 +3243,38 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>The gap stays open: a linked track is locked</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: a clip is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: &quot;%1&quot; is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip inserted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Ripple trim</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Gaps closed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips swapped</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Set sequence</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Replace clip</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3301,6 +3361,22 @@
     <message>
         <source>Adjustment unlinked</source>
         <translation>ගැලපුම අසම්බන්ධ කරන ලදී</translation>
+    </message>
+    <message>
+        <source>Hide effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer hidden</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer shown</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Link adjustment to clip</source>
@@ -3543,6 +3619,26 @@
         <translation>ක්ලිපය සාමාන්‍ය ධාවනයට සැකසිණි</translation>
     </message>
     <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop on</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop off</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip not looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>A clip is already being reversed</source>
         <translation>ක්ලිපයක් දැනටමත් ප්‍රතිලෝම වෙමින් පවතී</translation>
     </message>
@@ -3617,6 +3713,14 @@
     <message>
         <source>Composite</source>
         <translation>සංයුක්තය (Composite)</translation>
+    </message>
+    <message>
+        <source>Timeline %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Timeline created</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Flattening composite…</source>
@@ -3807,6 +3911,10 @@
         <translation>තීරු (Bars)</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">බෙදන්න</translation>
+    </message>
+    <message>
         <source>Freeform</source>
         <translation>නිදහස් හැඩය (Freeform)</translation>
     </message>
@@ -3857,10 +3965,6 @@
     <message>
         <source>No cut between two clips to add a transition to</source>
         <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Change look</source>
-        <translation>පෙනුම වෙනස් කරන්න</translation>
     </message>
     <message>
         <source>Edit curve</source>
@@ -4221,6 +4325,14 @@
         <translation>කීෆ්‍රේමය අන්තර්නිවේශනය වේ (Interpolates)</translation>
     </message>
     <message>
+        <source>Add keyframes</source>
+        <translation type="unfinished">කීෆ්‍රේම එක් කරන්න</translation>
+    </message>
+    <message>
+        <source>Keyframes set</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Reset camera</source>
         <translation>කැමරාව යළි සකසන්න</translation>
     </message>
@@ -4235,6 +4347,10 @@
     <message>
         <source>Transform reset</source>
         <translation>පරිණාමනය යළි සකසන ලදී</translation>
+    </message>
+    <message>
+        <source>Motion blur follows one clip&apos;s movement, so it goes on a clip, not on an adjustment layer.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Depth effects read one clip&apos;s depth, so they go on a clip, not on an adjustment layer.</source>
@@ -4311,6 +4427,10 @@
     <message>
         <source>Effect updated</source>
         <translation>ප්‍රයෝගය යාවත්කාලීන විය</translation>
+    </message>
+    <message>
+        <source>Change LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Could not read the selected file</source>
@@ -4544,6 +4664,18 @@
     <message>
         <source>Track shown</source>
         <translation>ට්‍රැකය පෙන්වන ලදී</translation>
+    </message>
+    <message>
+        <source>Exclude from export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track left out of export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track included in export</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Track lock</source>
@@ -4870,6 +5002,22 @@
         <source>Video size cropped to %1×%2</source>
         <translation>වීඩියෝ ප්‍රමාණය %1×%2 ට කප්පාදු කරන ලදී</translation>
     </message>
+    <message>
+        <source>Clear clip label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Label clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip label cleared</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip labelled</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>AppSettingsMenu</name>
@@ -4919,6 +5067,10 @@
         <translation>මාධ්‍ය ගොනු (%1)</translation>
     </message>
     <message>
+        <source>The proxy could not be made</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1 s</source>
         <translation>තත් %1</translation>
     </message>
@@ -4940,6 +5092,17 @@
     <message>
         <source>Add to timeline</source>
         <translation>කාලරේඛාවට එක් කරන්න</translation>
+    </message>
+</context>
+<context>
+    <name>AssetSearchBar</name>
+    <message>
+        <source>Clear search</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove from history</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -5256,6 +5419,14 @@
     <message>
         <source>Create a new folder here</source>
         <translation>මෙහි නව ෆෝල්ඩරයක් සාදන්න</translation>
+    </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Create an empty timeline and open it</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -6528,16 +6699,8 @@
         <translation>කිසිවක් නැත</translation>
     </message>
     <message>
-        <source>Missing look</source>
-        <translation type="unfinished">නැතිවූ පෙනුම</translation>
-    </message>
-    <message>
         <source>Adjust color</source>
         <translation>වර්ණ ගළපන්න</translation>
-    </message>
-    <message>
-        <source>Set look</source>
-        <translation>පෙනුම සකසන්න</translation>
     </message>
     <message>
         <source>Reset %1</source>
@@ -6547,39 +6710,47 @@
         <source>Reset grade</source>
         <translation>වර්ණ සංශෝධනය යළි සකසන්න</translation>
     </message>
-    <message numerus="yes">
-        <source>Imported %n look(s)</source>
-        <translation>
-            <numerusform>පෙනුම %nක් ආයාත කරන ලදී</numerusform>
-            <numerusform>පෙනුම %nක් ආයාත කරන ලදී</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>Imported %n look(s), %1 failed</source>
-        <translation>
-            <numerusform>පෙනුම %nක් ආයාත කරන ලදී, %1ක් අසාර්ථක විය</numerusform>
-            <numerusform>පෙනුම %nක් ආයාත කරන ලදී, %1ක් අසාර්ථක විය</numerusform>
-        </translation>
-    </message>
     <message>
-        <source>Could not import that look</source>
+        <source>Missing LUT</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Could not remove the look</source>
-        <translation>පෙනුම ඉවත් කිරීමට නොහැකි විය</translation>
+        <source>Set LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Imported %n LUT(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Imported %n LUT(s), %1 failed</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
     </message>
     <message>
-        <source>Look removed</source>
-        <translation>පෙනුම ඉවත් කරන ලදී</translation>
+        <source>Could not import that LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Could not rename the look</source>
-        <translation>පෙනුමේ නම වෙනස් කිරීමට නොහැකි විය</translation>
+        <source>Could not remove the LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Look renamed</source>
-        <translation>පෙනුමේ නම වෙනස් කරන ලදී</translation>
+        <source>LUT removed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not rename the LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT renamed</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Grade this clip before applying it to others</source>
@@ -6847,18 +7018,6 @@
         <translation>වර්ණ</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation>පෙනුම (Look)</translation>
-    </message>
-    <message>
-        <source>None. Choose a look in the Looks panel.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>පෙනුමේ තීව්‍රතාව</translation>
-    </message>
-    <message>
         <source>Color wheels</source>
         <translation type="unfinished">වර්ණ රෝද</translation>
     </message>
@@ -6897,6 +7056,18 @@
     <message>
         <source>Apply to all clips</source>
         <translation>සියලුම ක්ලිප් වලට යොදන්න</translation>
+    </message>
+    <message>
+        <source>LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>None. Choose one in the Color Grading LUTs panel.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Apply</source>
@@ -8788,16 +8959,16 @@
         <translation>ආයාත කරන්න…</translation>
     </message>
     <message>
-        <source>Import looks</source>
-        <translation>පෙනුම ආයාත කරන්න</translation>
+        <source>Import LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>LUT files (*.cube)</source>
         <translation>LUT ගොනු (*.cube)</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>නැතිවූ පෙනුම</translation>
     </message>
 </context>
 <context>
@@ -9144,6 +9315,10 @@
         <translation>වීඩියෝව නිර්යාත කරමින්</translation>
     </message>
     <message>
+        <source>Exporting audio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Export</source>
         <translation>නිර්යාත කරන්න</translation>
     </message>
@@ -9158,6 +9333,10 @@
     <message>
         <source>Rendering your video. Close to keep editing, or cancel to stop.</source>
         <translation>ඔබේ වීඩියෝව රෙන්ඩර් කරමින්. දිගටම සංස්කරණය කිරීමට වසන්න, නැතහොත් නැවැත්වීමට අවලංගු කරන්න.</translation>
+    </message>
+    <message>
+        <source>Rendering your audio. Close to keep editing, or cancel to stop.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Export finished.</source>
@@ -9999,6 +10178,18 @@
         <translation>දක්වා</translation>
     </message>
     <message>
+        <source>Loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Repeat the trimmed part for as long as the clip runs. Drag the clip&apos;s edges past the end to add repeats. Turn it off to change the trim.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rename</source>
         <translation>නම වෙනස් කරන්න</translation>
     </message>
@@ -10037,6 +10228,26 @@
     <message>
         <source>File</source>
         <translation>ගොනුව</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation type="unfinished">ලේබලය</translation>
+    </message>
+    <message>
+        <source>Clip label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>e.g. intro (empty clears it)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -10133,6 +10344,10 @@
     <message>
         <source>Presets</source>
         <translation>පෙරසැකසුම්</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">ප්‍රියතමයන්</translation>
     </message>
     <message>
         <source>Type</source>
@@ -10685,6 +10900,10 @@
     <message>
         <source>Feather</source>
         <translation>Feather (මෘදු දාර)</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -11277,6 +11496,10 @@
         <translation>ප්‍රවර්ගයක් තෝරා, පසුව ආකෘතියක් සහ ගුණාත්මකභාවයක් තෝරන්න. ඔබට ඕනෑම වේලාවක සැකසීම් → පිරිසැලසුම තෝරන්න වෙතින් මෙය වෙනස් කළ හැක.</translation>
     </message>
     <message>
+        <source>Favorites</source>
+        <translation type="unfinished">ප්‍රියතමයන්</translation>
+    </message>
+    <message>
         <source>Template</source>
         <translation>ආකෘතිය</translation>
     </message>
@@ -11407,60 +11630,56 @@
 <context>
     <name>LooksPanel</name>
     <message>
-        <source>Looks</source>
-        <translation>පෙනුම (Looks)</translation>
-    </message>
-    <message>
-        <source>My Looks</source>
-        <translation>මගේ පෙනුම</translation>
-    </message>
-    <message>
-        <source>Import looks</source>
-        <translation>පෙනුම ආයාත කරන්න</translation>
-    </message>
-    <message>
         <source>LUT files (*.cube)</source>
         <translation>LUT ගොනු (*.cube)</translation>
-    </message>
-    <message>
-        <source>Search looks</source>
-        <translation>පෙනුම සොයන්න</translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>පෙනුමේ තීව්‍රතාව</translation>
     </message>
     <message>
         <source>Adjust %1</source>
         <translation>%1 ගළපන්න</translation>
     </message>
     <message>
-        <source>Get free looks</source>
-        <translation>නොමිලේ Looks ලබාගන්න</translation>
-    </message>
-    <message>
         <source>Rename…</source>
         <translation>නම වෙනස් කරන්න…</translation>
-    </message>
-    <message>
-        <source>Import .cube looks</source>
-        <translation>.cube looks ආයාත කරන්න</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>නැතිවූ පෙනුම</translation>
     </message>
     <message>
         <source>Remove</source>
         <translation>ඉවත් කරන්න</translation>
     </message>
     <message>
-        <source>No looks match “%1”.</source>
-        <translation>“%1” හා ගැලපෙන looks කිසිවක් නැත.</translation>
+        <source>Color Grading LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>No favorites yet. Star looks to save them here.</source>
-        <translation>මෙතෙක් ප්‍රියතමයන් නැත. Looks මෙහි සුරැකීමට තරුවක් එක් කරන්න.</translation>
+        <source>Import LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Import .cube LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>My LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No LUTs match “%1”.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No favorites yet. Star LUTs to save them here.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing in this category.</source>
@@ -11479,20 +11698,28 @@
         <translation>ආයාත කරන්න</translation>
     </message>
     <message>
-        <source>No looks</source>
-        <translation>Looks නැත</translation>
+        <source>No LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Download a free pack of ready-made looks, or import your own .cube files.</source>
-        <translation>සූදානම් කළ looks නොමිලේ බාගත කරන්න, නැතහොත් ඔබේම .cube ගොනු ආයාත කරන්න.</translation>
+        <source>Download a free pack of ready-made color grading LUTs, or import your own .cube files.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Select a clip to try looks on it</source>
-        <translation>Looks අත්හදා බැලීමට ක්ලිප් එකක් තෝරන්න</translation>
+        <source>Get free LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Remove this look?</source>
-        <translation>මෙම look ඉවත් කරන්නද?</translation>
+        <source>Select a clip to try LUTs on it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove this LUT?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message numerus="yes">
         <source>“%1” is used by %n clip(s). They will show it as missing until it is imported again.</source>
@@ -11500,10 +11727,6 @@
             <numerusform>“%1” ක්ලිප් %nක් විසින් භාවිත කෙරේ. එය නැවත ආයාත කරන තෙක් ඒවායේ එය නොමැති බව පෙන්වනු ඇත.</numerusform>
             <numerusform>“%1” ක්ලිප් %nක් විසින් භාවිත කෙරේ. එය නැවත ආයාත කරන තෙක් ඒවායේ එය නොමැති බව පෙන්වනු ඇත.</numerusform>
         </translation>
-    </message>
-    <message>
-        <source>Rename look</source>
-        <translation>Look නම වෙනස් කරන්න</translation>
     </message>
     <message>
         <source>Rename</source>
@@ -11972,8 +12195,8 @@
         <translation type="unfinished">තේමාව</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation type="unfinished">පෙනුම (Look)</translation>
+        <source>LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Effect template</source>
@@ -12432,6 +12655,14 @@
 <context>
     <name>MaskOverlay</name>
     <message>
+        <source>Unlock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Drag points to reshape · Tap ○ on an edge to add a point · Hold a point to delete</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12453,6 +12684,28 @@
     <message>
         <source>Select a clip at the playhead to edit its masks</source>
         <translation>ආවරණ සංස්කරණය කිරීමට ධාවන ශීර්ෂයේ ඇති ක්ලිපයක් තෝරන්න</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayFeatherHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">%1 සංස්කරණය කරන්න</translation>
+    </message>
+    <message>
+        <source>Feather</source>
+        <translation type="unfinished">Feather (මෘදු දාර)</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayRoundnessHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">%1 සංස්කරණය කරන්න</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -12507,6 +12760,18 @@
     <message>
         <source>Clip converted to mask</source>
         <translation>ක්ලිප් එක ආවරණයක් බවට පරිවර්තනය කරන ලදී</translation>
+    </message>
+    <message>
+        <source>Clip</source>
+        <translation type="unfinished">ක්ලිප්</translation>
+    </message>
+    <message>
+        <source>%1 mask</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips used as mask</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Cutouts can&apos;t be moved yet</source>
@@ -12649,8 +12914,16 @@
         <translation>තීරු (Bars)</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">බෙදන්න</translation>
+    </message>
+    <message>
         <source>Matte</source>
         <translation>Matte</translation>
+    </message>
+    <message>
+        <source>Sequence matte</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -13120,6 +13393,10 @@
             <numerusform>හැඩතල කී %nක්</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>MasksInspector</name>
@@ -13152,6 +13429,10 @@
         <translation>තීරු (Bars)</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">බෙදන්න</translation>
+    </message>
+    <message>
         <source>Combine</source>
         <translation>ඒකාබද්ධ කරන්න</translation>
     </message>
@@ -13174,6 +13455,10 @@
     <message>
         <source>Remove mask</source>
         <translation>ආවරණය ඉවත් කරන්න</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Center X</source>
@@ -13202,6 +13487,38 @@
     <message>
         <source>Polygon</source>
         <translation type="unfinished">බහුඅස්‍රය</translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Matte channel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Alpha (transparency)</source>
+        <translation type="unfinished">Alpha (පාරදෘශ්‍යතාව)</translation>
+    </message>
+    <message>
+        <source>Luma (brightness)</source>
+        <translation type="unfinished">Luma (දීප්තිය)</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation type="unfinished">සරිලන (Fit)</translation>
+    </message>
+    <message>
+        <source>Stretch</source>
+        <translation type="unfinished">අදින්න (Stretch)</translation>
+    </message>
+    <message>
+        <source>Fill</source>
+        <translation type="unfinished">පිරවුම (Fill)</translation>
+    </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Invert</source>
@@ -13265,6 +13582,13 @@
     <message>
         <source>All files (*)</source>
         <translation>සියලු ගොනු (*)</translation>
+    </message>
+</context>
+<context>
+    <name>McpController</name>
+    <message>
+        <source>Relink media</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -13733,6 +14057,14 @@
         <translation>%1 (%2)</translation>
     </message>
     <message>
+        <source>The project was closed before the replace landed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The project was closed before the edit landed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Relink media</source>
         <translation type="unfinished"></translation>
     </message>
@@ -13742,6 +14074,10 @@
             <numerusform></numerusform>
             <numerusform></numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Track is locked</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Sub-clip added</source>
@@ -16628,7 +16964,7 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and looks come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
+        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and color grading LUTs come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -16810,8 +17146,8 @@ If playback stutters, try another.</source>
         <translation type="unfinished">සංක්‍රාන්ති</translation>
     </message>
     <message>
-        <source>Looks</source>
-        <translation type="unfinished">පෙනුම (Looks)</translation>
+        <source>LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Fonts</source>
@@ -16893,11 +17229,11 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the header.</source>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the header.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -23067,6 +23403,10 @@ If playback stutters, try another.</source>
 <context>
     <name>TextInspectorAnimCategoryStrip</name>
     <message>
+        <source>Favorites</source>
+        <translation type="unfinished">ප්‍රියතමයන්</translation>
+    </message>
+    <message>
         <source>All</source>
         <translation>සියල්ල</translation>
     </message>
@@ -23950,6 +24290,14 @@ If playback stutters, try another.</source>
         <translation>සියලු ශ්‍රව්‍ය ට්‍රැක් වෙන් කරන්න</translation>
     </message>
     <message>
+        <source>Stop looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Remove silence</source>
         <translation type="unfinished">නිශ්ශබ්දතාව ඉවත් කරන්න</translation>
     </message>
@@ -23964,6 +24312,14 @@ If playback stutters, try another.</source>
     <message>
         <source>Convert to mask</source>
         <translation>ආවරණයක් බවට පරිවර්තනය කරන්න</translation>
+    </message>
+    <message>
+        <source>Use as mask (nested timeline)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Convert to edit-friendly format</source>
@@ -24209,6 +24565,54 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Paste here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add bookmark here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips after here on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select all clips</source>
+        <translation type="unfinished">සියලු ක්ලිප් තෝරන්න</translation>
+    </message>
+    <message>
+        <source>Unmute track</source>
+        <translation type="unfinished">ට්‍රැකයේ නිහඬ බව ඉවත් කරන්න</translation>
+    </message>
+    <message>
+        <source>Mute track</source>
+        <translation type="unfinished">ට්‍රැකය නිහඬ කරන්න</translation>
+    </message>
+    <message>
+        <source>Show track</source>
+        <translation type="unfinished">ට්‍රැකය පෙන්වන්න</translation>
+    </message>
+    <message>
+        <source>Hide track</source>
+        <translation type="unfinished">ට්‍රැකය සඟවන්න</translation>
+    </message>
+    <message>
+        <source>Unlock track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lock track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove empty tracks</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rename bookmark</source>
         <translation>පොත් සලකුණේ නම වෙනස් කරන්න</translation>
     </message>
@@ -24292,6 +24696,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Main</source>
         <translation type="unfinished">ප්‍රධාන</translation>
+    </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -24605,12 +25013,24 @@ If playback stutters, try another.</source>
         <translation>උපසිරැසි</translation>
     </message>
     <message>
+        <source>Hide the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1, track %2</source>
         <translation>%1, ට්‍රැකය %2</translation>
     </message>
 </context>
 <context>
     <name>TimelineTrimHandle</name>
+    <message>
+        <source>Drag to repeat the clip</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <source>Drag to trim the start</source>
         <translation>ආරම්භය කප්පාදු කිරීමට අදින්න</translation>
@@ -24833,6 +25253,14 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Include in export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exclude from export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add camera clip at playhead</source>
         <translation>ප්ලේහෙඩ් එක ඇති තැන කැමරා ක්ලිප් එකක් එක් කරන්න</translation>
     </message>
@@ -25001,6 +25429,17 @@ If playback stutters, try another.</source>
     <message>
         <source>Mute track</source>
         <translation>ට්‍රැකය නිහඬ කරන්න</translation>
+    </message>
+</context>
+<context>
+    <name>TrackHeaderName</name>
+    <message>
+        <source>not exported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shown while editing, left out of every export</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -25860,6 +26299,14 @@ If playback stutters, try another.</source>
         <translation type="unfinished">පිහිටීම</translation>
     </message>
     <message>
+        <source>Reset position</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset size</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Edit width and height separately</source>
         <translation>පළල සහ උස වෙන වෙනම සංස්කරණය කරන්න</translation>
     </message>
@@ -25900,6 +26347,14 @@ If playback stutters, try another.</source>
         <translation>පාරාන්ධතාව සහ භ්‍රමණය</translation>
     </message>
     <message>
+        <source>Reset opacity</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset rotation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rotate the whole group as one flat card</source>
         <translation type="unfinished"></translation>
     </message>
@@ -25914,6 +26369,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Position, rotation, anchor point and depth occlusion are in the 3D workspace&apos;s 3D Transform panel</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset all</source>
+        <translation type="unfinished">සියල්ල යළි සකසන්න</translation>
     </message>
     <message>
         <source>Rotation</source>
@@ -25938,10 +26397,6 @@ If playback stutters, try another.</source>
     <message>
         <source>Flip V</source>
         <translation>සිරස්ව පෙරළන්න (Flip V)</translation>
-    </message>
-    <message>
-        <source>Reset position &amp; size</source>
-        <translation>පිහිටීම සහ ප්‍රමාණය යළි සකසන්න</translation>
     </message>
     <message>
         <source>Fix orientation</source>
@@ -27537,10 +27992,6 @@ If playback stutters, try another.</source>
         <translation>වර්ණ</translation>
     </message>
     <message>
-        <source>Looks</source>
-        <translation>පෙනුම (Looks)</translation>
-    </message>
-    <message>
         <source>Scopes</source>
         <translation>දර්ශක (Scopes)</translation>
     </message>
@@ -27655,6 +28106,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Camera</source>
         <translation>කැමරාව</translation>
+    </message>
+    <message>
+        <source>Color Grading LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Stabilization</source>

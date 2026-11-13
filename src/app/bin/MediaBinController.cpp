@@ -3,6 +3,7 @@
 #include "app/editor/AppController.h"
 #include "app/editor/AppControllerDetail.h"
 #include "app/bin/AssetLibrary.h"
+#include "app/mcp/McpController.h"
 #include "app/editor/ProjectFileController.h"
 #include "engine/platform/AndroidUri.h"
 #include "engine/encode/MediaEditor.h"
@@ -62,6 +63,9 @@ QString MediaBinController::createFolder(const QString &name, const QString &par
     const drift::Project before = m_app->m_project;
     const QString id = m_folderModel.createFolder(trimmed, parentId);
     m_app->pushProjectEdit(before, tr("Folder created"));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    if (McpController *mcp = m_app->mcp())
+        mcp->bumpEditRevision();
     m_app->settleUndoRefresh();
     return id;
 }
@@ -81,6 +85,9 @@ bool MediaBinController::renameFolder(const QString &folderId, const QString &na
         return false;
 
     m_app->pushProjectEdit(before, tr("Folder renamed"));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    if (McpController *mcp = m_app->mcp())
+        mcp->bumpEditRevision();
     m_app->settleUndoRefresh();
     return true;
 }
@@ -96,6 +103,9 @@ bool MediaBinController::moveFolder(const QString &folderId, const QString &newP
         return false;
 
     m_app->pushProjectEdit(before, tr("Folder moved"));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    if (McpController *mcp = m_app->mcp())
+        mcp->bumpEditRevision();
     m_app->settleUndoRefresh();
     return true;
 }
@@ -117,6 +127,9 @@ bool MediaBinController::deleteFolder(const QString &folderId)
         setCurrentFolderId(parentId);
 
     m_app->pushProjectEdit(before, tr("Folder deleted"));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    if (McpController *mcp = m_app->mcp())
+        mcp->bumpEditRevision();
     m_app->settleUndoRefresh();
     return true;
 }
@@ -135,6 +148,9 @@ bool MediaBinController::moveAssetToFolder(int assetIndex, const QString &folder
         return false;
 
     m_app->pushProjectEdit(before, tr("Media moved"));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    if (McpController *mcp = m_app->mcp())
+        mcp->bumpEditRevision();
     m_app->settleUndoRefresh();
     return true;
 }
@@ -158,6 +174,9 @@ int MediaBinController::moveAssetsToFolder(const QStringList &assetIds, const QS
 
     m_app->pushProjectEdit(before,
                            moved == 1 ? tr("Media moved") : tr("%n items moved", "", moved));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    if (McpController *mcp = m_app->mcp())
+        mcp->bumpEditRevision();
     m_app->settleUndoRefresh();
     return moved;
 }
@@ -377,6 +396,12 @@ bool MediaBinController::replaceSource(int assetIndex, const QUrl &url)
     // Reading a file off a slow disk is the one part of this the user waits on with nothing to
     // show for it, so the row it belongs to goes busy until the probe lands.
     m_replacingAssetId = assetId;
+    // The probe lands outside the agent's call (its wait runs a nested event loop), so the change
+    // feed learns whose replace it was from here.
+    if (m_app->mcp() && m_app->mcp()->inAgentCall())
+        m_replacesByAgent.insert(assetId);
+    else
+        m_replacesByAgent.remove(assetId);
     // applyProbedSource overwrites the whole struct from the probe result, which knows nothing
     // about where the file came from — so the URI is held here and put back in finalizeReplace.
     m_replacingAssetSourceUri = sourceUri;
@@ -631,6 +656,9 @@ bool MediaBinController::saveEdit(int assetIndex, double inSeconds, double outSe
             return true;
         }
         m_app->pushProjectEdit(before, tr("Media trimmed"));
+        // An undo step without finishEdit: the revision (and the change feed) moves here.
+        if (McpController *mcp = m_app->mcp())
+            mcp->bumpEditRevision();
         m_app->settleUndoRefresh();
         m_app->setLastMessage(tr("Trim saved"));
         emit editFinished(true, tr("Trim saved"));
@@ -756,6 +784,9 @@ QString MediaBinController::addSubclip(const QString &assetId, double inSeconds,
     if (id.isEmpty())
         return {};
     m_app->pushProjectEdit(before, tr("Sub-clip added"));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    if (McpController *mcp = m_app->mcp())
+        mcp->bumpEditRevision();
     m_app->settleUndoRefresh();
     return id;
 }
@@ -855,8 +886,12 @@ void MediaBinController::startEditJob(const QString &assetId, const QString &nam
                 const int assetIndex = m_app->m_assetLibrary
                                            ? m_app->m_assetLibrary->indexOfId(assetId)
                                            : -1;
+                m_editOutputPath = spec.outputPath;
+                m_editOutputAssetId = assetId;
                 if (assetIndex < 0
                     || !replaceSource(assetIndex, QUrl::fromLocalFile(spec.outputPath))) {
+                    m_editOutputPath.clear();
+                    m_editOutputAssetId.clear();
                     QFile::remove(spec.outputPath);
                     m_editing = false;
                     m_editingAssetId.clear();
@@ -927,12 +962,19 @@ void MediaBinController::finalizeReplace(const QString &assetId, const drift::Me
     // whichever replace runs next.
     const QString replacementSourceUri =
         refresh ? QString() : std::exchange(m_replacingAssetSourceUri, QString());
+    const bool byAgent = !refresh && m_replacesByAgent.remove(assetId);
 
     std::function<void(drift::MediaAsset &)> adjust = std::exchange(m_replaceAdjust, nullptr);
     if (refresh)
         adjust = nullptr;
 
     const bool fromEdit = (m_editingAssetId == assetId);
+    // The edit's own replace has landed. Not keyed on fromEdit: a replace of the asset while it
+    // encoded ends the edit early, and its render still lands here afterwards.
+    if (!refresh && assetId == m_editOutputAssetId) {
+        m_editOutputPath.clear();
+        m_editOutputAssetId.clear();
+    }
     const QString keptEditName = fromEdit ? m_editKeepName : QString();
     auto finishEditJob = [&](bool editOk, const QString &message) {
         if (!fromEdit)
@@ -1050,6 +1092,8 @@ void MediaBinController::finalizeReplace(const QString &assetId, const drift::Me
     const QString label = fromEdit ? tr("Media edited")
                                    : (refresh ? tr("Media refreshed") : tr("Media replaced"));
     m_app->pushProjectEdit(before, label);
+    if (byAgent && m_app->mcp())
+        m_app->mcp()->markNextChangeByAgent();
     m_app->finishEdit(label);
     finishEditJob(true, newName);
     if (!fromEdit && !refresh)
@@ -1086,22 +1130,74 @@ QHash<QString, QString> MediaBinController::findSiblingRelinks(const QString &as
     return remap;
 }
 
+void MediaBinController::dropPendingReplace()
+{
+    // An edit (crop, trim, convert) whose render has started its replace. One still encoding
+    // hasn't, and is left to finish.
+    const QString editOutput = std::exchange(m_editOutputPath, QString());
+    const QString editAssetId = std::exchange(m_editOutputAssetId, QString());
+    if (!m_replacingAssetId.isEmpty()) {
+        const QString assetId = std::exchange(m_replacingAssetId, QString());
+        m_replacingAssetSourceUri.clear();
+        m_replacesByAgent.remove(assetId);
+        m_replaceAdjust = nullptr;
+        emit replacingAssetIdChanged();
+        // Ends whoever waits on it (the replace dialog, the Source Lab, which removes its
+        // render). The edit's own replace ends below.
+        if (editOutput.isEmpty() || assetId != editAssetId)
+            reportReplace(assetId, false, tr("The project was closed before the replace landed"), 0);
+    }
+    if (!editOutput.isEmpty()) {
+        // The edit's own render, which nothing else points at.
+        QFile::remove(editOutput);
+        // Conversions queued behind it were picked in the old project.
+        m_conversionQueue.clear();
+        // Unless a replace of the asset while it encoded ended the edit already.
+        if (m_editing && m_editingAssetId == editAssetId) {
+            m_editing = false;
+            m_editingAssetId.clear();
+            m_editKeepName.clear();
+            m_editProgress = 0.0;
+            m_editStatus = tr("The project was closed before the edit landed");
+            emit editChanged();
+            emit editFinished(false, m_editStatus);
+        }
+    }
+}
+
 void MediaBinController::relinkSiblings()
 {
     const QHash<QString, QString> remap = std::exchange(m_siblingRelink, {});
     if (remap.isEmpty() || !m_app->m_assetLibrary)
         return;
+    if (relinkPaths(remap, tr("Relink media")))
+        m_app->setLastMessage(tr("Relinked %n file(s)", nullptr, int(remap.size())),
+                              QStringLiteral("success"));
+}
+
+bool MediaBinController::relinkPaths(const QHash<QString, QString> &remap, const QString &label)
+{
+    if (remap.isEmpty() || !m_app->m_assetLibrary)
+        return false;
     const drift::Project before = m_app->m_project;
     m_app->projectFile()->remapProjectPaths(remap);
-    m_app->pushProjectEdit(before, tr("Relink media"));
+    m_app->pushProjectEdit(before, label);
+    if (m_app->m_editRefusedByLock) {
+        // pushProjectEdit put the project back.
+        m_app->m_editRefusedByLock = false;
+        m_app->setLastMessage(tr("Track is locked"), QStringLiteral("warning"));
+        return false;
+    }
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    if (McpController *mcp = m_app->mcp())
+        mcp->bumpEditRevision();
     m_app->settleUndoRefresh();
     m_app->m_assetLibrary->setProject(&m_app->m_project);
     m_folderModel.setProject(&m_app->m_project);
     m_app->restoreFilmstripsAfterLoad();
     m_app->notifyTracksChanged();
     m_app->projectFile()->setDirty(true);
-    m_app->setLastMessage(tr("Relinked %n file(s)", nullptr, int(remap.size())),
-                          QStringLiteral("success"));
+    return true;
 }
 
 int MediaBinController::rebindClipsToAsset(const QString &assetId, const drift::MediaAsset &asset,
@@ -1154,7 +1250,7 @@ int MediaBinController::rebindClipsToAsset(const QString &assetId, const drift::
                     // Pulls timelineDuration along with the shortened range, so the clip never
                     // addresses frames past the end of its media. The range is re-derived from the
                     // timeline span first, so a rebased srcIn keeps the span instead of the old srcOut.
-                    clip.srcOut = clip.srcIn + clip.sourceSpanUs();
+                    clip.srcOut = clip.srcIn + (clip.loops() ? clip.srcOut - clip.srcIn : clip.sourceSpanUs());
                     clip.syncSrcOutFromSpeed(asset.durationUs);
                 }
                 ++adjusted;

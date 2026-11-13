@@ -136,8 +136,16 @@ public:
     // frame rate and swaps it in, one at a time, the same undoable way a crop does, marking the
     // asset edit-friendly. The original file is left where it was.
     Q_INVOKABLE void convertToConstantFrameRate(const QStringList &assetIds);
+    // The document was replaced (load, new, close) while a replace's probe ran: AssetLibrary
+    // drops the probe, so finalizeReplace never runs. Clears the busy row, and the edit that
+    // was waiting on it (jmn8718/Drift#74).
+    void dropPendingReplace();
     // Applies the relinks offered by the last siblingRelinkAvailable, as one undoable edit.
     Q_INVOKABLE void relinkSiblings();
+    // Points every path in `remap` (old file -> new file) at its new file, as one undoable edit
+    // labelled `label`, and refreshes the bin and the timeline's caches. False when a locked track
+    // holds one of the clips: the edit is then refused as a whole and nothing changes.
+    bool relinkPaths(const QHash<QString, QString> &remap, const QString &label);
 
 signals:
     void currentFolderIdChanged();
@@ -189,6 +197,7 @@ private:
     // The content:// URI the in-flight replace picked, held across the probe so it can be put back
     // on the asset once applyProbedSource has overwritten the struct.
     QString m_replacingAssetSourceUri;
+    QSet<QString> m_replacesByAgent; // assets whose in-flight replace an agent call started
     std::function<void(drift::MediaAsset &)> m_replaceAdjust;
     QSet<QString> m_refreshFailed;
     QHash<QString, QString> m_siblingRelink;
@@ -197,6 +206,10 @@ private:
     QString m_editStatus;
     QString m_editKeepName;
     QString m_editingAssetId;
+    // The edit's render while the replace it started is pending; removed if that replace is
+    // dropped (jmn8718/Drift#74).
+    QString m_editOutputPath;
+    QString m_editOutputAssetId;
     QAtomicInt m_editCancel = 0;
     bool m_editIsConversion = false;
     // Asset ids waiting for convertToConstantFrameRate; the edit job runs one at a time.

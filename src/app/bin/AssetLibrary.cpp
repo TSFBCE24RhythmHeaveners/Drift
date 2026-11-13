@@ -846,6 +846,8 @@ void AssetLibrary::snapshotAssets()
 
 void AssetLibrary::syncToProject()
 {
+    // An undo can bring back an asset without its preview: ensurePreview may try again.
+    m_previewTried.clear();
     if (!m_project)
         return;
 
@@ -910,11 +912,13 @@ void AssetLibrary::syncToProject()
 
 void AssetLibrary::setProject(drift::Project *project, bool newDocument)
 {
+    m_previewTried.clear();
     beginResetModel();
     if (newDocument || m_project != project) {
         m_probeToken.clear();
         m_refreshPending.clear();
         m_autoProxyPending.clear();
+        m_proxyErrors.clear();
     }
     m_project = project;
     m_importPending.clear();
@@ -1046,6 +1050,20 @@ void AssetLibrary::emitAssetRowChanged(int index, const QList<int> &roles)
     emit dataChanged(modelIndex, modelIndex, roles);
 }
 
+void AssetLibrary::ensurePreview(int index)
+{
+    const drift::MediaAsset *asset = assetAtIndex(index);
+    // Audio has no thumbnail to make; composites get theirs elsewhere.
+    if (!asset || asset->kind == drift::MediaKind::Composite || asset->kind == drift::MediaKind::Audio
+        || m_thumbPending.contains(asset->id) || m_importPending.contains(asset->id)
+        || m_previewTried.contains(asset->id))
+        return;
+    if (asset->thumbnailPath.isEmpty() || asset->filmstripPath.isEmpty()) {
+        m_previewTried.insert(asset->id);
+        startThumbJob(asset->id);
+    }
+}
+
 void AssetLibrary::startThumbJob(const QString &assetId)
 {
     if (!m_project || assetId.isEmpty())
@@ -1149,6 +1167,27 @@ void AssetLibrary::applyThumbResult(const QString &assetId, const QString &sourc
 
     emitAssetRowChanged(indexOfId(assetId), {ThumbnailPathRole, FilmstripPathRole});
     emit assetMetadataChanged(assetId);
+
+    // Clips placed before this existed copied empty paths, and the timeline draws no filmstrip
+    // without one: give them these.
+    bool filled = false;
+    m_project->forEachTrackList([&](QList<drift::Track> &tracks) {
+        for (drift::Track &track : tracks)
+            for (drift::Clip &clip : track.clips) {
+                if (clip.assetId != assetId || clip.path != asset->path)
+                    continue;
+                if (clip.thumbnailPath.isEmpty() && !asset->thumbnailPath.isEmpty()) {
+                    clip.thumbnailPath = asset->thumbnailPath;
+                    filled = true;
+                }
+                if (clip.filmstripPath.isEmpty() && !asset->filmstripPath.isEmpty()) {
+                    clip.filmstripPath = asset->filmstripPath;
+                    filled = true;
+                }
+            }
+    });
+    if (filled)
+        emit clipPreviewsFilled();
 }
 
 void AssetLibrary::refreshMediaAt(int index)
@@ -1165,6 +1204,8 @@ void AssetLibrary::startImportJob(const QString &assetId, const QString &absolut
         return;
 
     m_importPending.insert(assetId);
+    if (m_deferPreviews)
+        m_previewsDeferred.insert(assetId);
 
     (void)QtConcurrent::run(&m_jobs, [this, assetId, absolutePath, imageOnly]() {
         // Taken before the probe: a file still being written must not get its final size and
@@ -1295,6 +1336,7 @@ void AssetLibrary::applyImportResult(const QString &assetId, const drift::MediaA
                                      bool suggestProxy)
 {
     m_importPending.remove(assetId);
+    const bool previewsDeferred = m_previewsDeferred.remove(assetId);
     // Flushed on every way out below, so a failed or withdrawn last probe still delivers the
     // suggestions the rest of the batch collected.
     const auto flushSuggestions = qScopeGuard([this] {
@@ -1377,7 +1419,9 @@ void AssetLibrary::applyImportResult(const QString &assetId, const drift::MediaA
     refreshSidecars({assetId});
     // The bin/timeline can use the file as soon as its metadata is ready. Generating
     // thumbnails and scanning packets for VFR now happen independently in the job pool.
-    startThumbJob(assetId);
+    // Not for an import that skipped previews: ensurePreview builds them when something shows it.
+    if (!previewsDeferred)
+        startThumbJob(assetId);
     if (asset->kind == drift::MediaKind::Video)
         isVariableFrameRate(assetId);
 }
@@ -1495,8 +1539,11 @@ bool AssetLibrary::hasProxyForPath(const QString &path) const
 void AssetLibrary::createProxies(const QStringList &assetIds)
 {
     for (const QString &id : assetIds) {
-        if (proxyState(id) != QLatin1String("none"))
+        // One cancelled while it builds is queued again, to start once its job winds down.
+        if (proxyState(id) != QLatin1String("none")
+            && !(proxyCancelling(id) && !m_proxyQueue.contains(id)))
             continue;
+        m_proxyErrors.remove(id);
         m_proxyQueue.append(id);
         emit proxyStateChanged(id);
     }
@@ -1504,11 +1551,33 @@ void AssetLibrary::createProxies(const QStringList &assetIds)
     startNextProxy();
 }
 
+QFuture<QStringList> AssetLibrary::slowToPreview(const QStringList &assetIds) const
+{
+    QList<QPair<QString, QString>> videos;
+    for (const QString &id : assetIds) {
+        const drift::MediaAsset *asset = m_project ? m_project->asset(id) : nullptr;
+        if (asset && asset->kind == drift::MediaKind::Video && !asset->path.isEmpty())
+            videos.append({id, asset->path});
+    }
+    return QtConcurrent::run([videos]() {
+        const QList<QPair<QString, QString>> slow = QtConcurrent::blockingFiltered(
+            videos, [](const QPair<QString, QString> &video) {
+                const MediaInfo info = MediaProbe::probe(video.second);
+                return info.ok && wantsPreviewProxy(info);
+            });
+        QStringList ids;
+        for (const auto &video : slow)
+            ids.append(video.first);
+        return ids;
+    });
+}
+
 void AssetLibrary::removeProxies(const QStringList &assetIds)
 {
     bool removedAny = false;
     for (const QString &id : assetIds) {
         m_autoProxyPending.remove(id);
+        m_proxyErrors.remove(id);
         if (m_proxyQueue.removeAll(id) > 0)
             emit proxyStateChanged(id);
         if (id == m_proxyBuilding)
@@ -1633,9 +1702,12 @@ void AssetLibrary::startNextProxy()
                     } else {
                         cache.insertPreview(sourcePath, shortSide, outPath);
                     }
+                    // Asked for again after a cancel that came too late: it's made now.
+                    m_proxyQueue.removeAll(assetId);
                     bumpBadges();
                     emit proxiesChanged();
                 } else if (!cancelled) {
+                    m_proxyErrors.insert(assetId, error.isEmpty() ? tr("The proxy could not be made") : error);
                     emit proxyFailed(name, error);
                 }
                 emit proxyStateChanged(assetId);
@@ -1666,14 +1738,21 @@ void AssetLibrary::refreshSidecars()
 
 void AssetLibrary::refreshSidecars(const QStringList &assetIds)
 {
-    if (!m_project)
+    if (!m_project) {
+        for (const QString &id : assetIds)
+            m_autoProxyPending.remove(id);
         return;
+    }
 
     QList<QPair<QString, QString>> targets;
     for (const QString &id : assetIds) {
         const drift::MediaAsset *asset = m_project->asset(id);
         if (asset && asset->kind == drift::MediaKind::Video && drift::isLocalSourcePath(asset->path))
             targets.append({id, asset->path});
+        else
+            // Not scanned (not a local video file), so the scan that would create its proxy never
+            // lands: it would wait forever (jmn8718/Drift#74).
+            m_autoProxyPending.remove(id);
     }
     if (targets.isEmpty())
         return;

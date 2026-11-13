@@ -58,15 +58,27 @@
         <translation>自動（推薦）</translation>
     </message>
     <message>
-        <source>NVIDIA graphics (faster)</source>
-        <translation>英偉達顯卡（快速）</translation>
-    </message>
-    <message>
-        <source>AMD graphics (faster)</source>
+        <source>Processor (CPU)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>CPU</source>
+        <source>NVIDIA CUDA</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>AMD MIGraphX (Windows ML)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>AMD ROCm (MIGraphX)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Windows ML (DirectX 12)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebGPU (any graphics card)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1073,6 +1085,10 @@
     <message>
         <source>Custom</source>
         <translation>自訂</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">收藏</translation>
     </message>
     <message>
         <source>Template</source>
@@ -2559,6 +2575,10 @@
         <translation>在目前時間分割</translation>
     </message>
     <message>
+        <source>Split selected clip at current time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add transition at playhead</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2733,6 +2753,14 @@
     <message>
         <source>Clip moved</source>
         <translation>片段已移動</translation>
+    </message>
+    <message>
+        <source>Select a clip to split first</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The playhead isn&apos;t over a selected clip</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing to split here — move to a clip first</source>
@@ -3209,6 +3237,38 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>The gap stays open: a linked track is locked</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: a clip is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: &quot;%1&quot; is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip inserted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Ripple trim</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Gaps closed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips swapped</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Set sequence</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Replace clip</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3295,6 +3355,22 @@
     <message>
         <source>Adjustment unlinked</source>
         <translation>已取消調整圖層鏈接</translation>
+    </message>
+    <message>
+        <source>Hide effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer hidden</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer shown</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Link adjustment to clip</source>
@@ -3537,6 +3613,26 @@
         <translation>片段恢復正放</translation>
     </message>
     <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop on</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop off</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip not looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>A clip is already being reversed</source>
         <translation>已有片段正在倒放處理中</translation>
     </message>
@@ -3611,6 +3707,14 @@
     <message>
         <source>Composite</source>
         <translation>合成</translation>
+    </message>
+    <message>
+        <source>Timeline %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Timeline created</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Flattening composite…</source>
@@ -3801,6 +3905,10 @@
         <translation>條形</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">分割</translation>
+    </message>
+    <message>
         <source>Freeform</source>
         <translation>自由形狀</translation>
     </message>
@@ -3851,10 +3959,6 @@
     <message>
         <source>No cut between two clips to add a transition to</source>
         <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Change look</source>
-        <translation>更改外觀</translation>
     </message>
     <message>
         <source>Edit curve</source>
@@ -4213,6 +4317,14 @@
         <translation>關鍵格插值</translation>
     </message>
     <message>
+        <source>Add keyframes</source>
+        <translation type="unfinished">添加關鍵格</translation>
+    </message>
+    <message>
+        <source>Keyframes set</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Reset camera</source>
         <translation>重置攝影機</translation>
     </message>
@@ -4227,6 +4339,10 @@
     <message>
         <source>Transform reset</source>
         <translation>變換已重置</translation>
+    </message>
+    <message>
+        <source>Motion blur follows one clip&apos;s movement, so it goes on a clip, not on an adjustment layer.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Depth effects read one clip&apos;s depth, so they go on a clip, not on an adjustment layer.</source>
@@ -4303,6 +4419,10 @@
     <message>
         <source>Effect updated</source>
         <translation>效果已更新</translation>
+    </message>
+    <message>
+        <source>Change LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Could not read the selected file</source>
@@ -4533,6 +4653,18 @@
     <message>
         <source>Track shown</source>
         <translation>軌道已顯示</translation>
+    </message>
+    <message>
+        <source>Exclude from export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track left out of export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track included in export</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Track lock</source>
@@ -4856,6 +4988,22 @@
         <source>Video size cropped to %1×%2</source>
         <translation>視頻尺寸已裁剪為 %1×%2</translation>
     </message>
+    <message>
+        <source>Clear clip label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Label clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip label cleared</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip labelled</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>AppSettingsMenu</name>
@@ -4905,6 +5053,10 @@
         <translation>媒體檔案 (%1)</translation>
     </message>
     <message>
+        <source>The proxy could not be made</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1 s</source>
         <translation>%1 秒</translation>
     </message>
@@ -4926,6 +5078,17 @@
     <message>
         <source>Add to timeline</source>
         <translation>添加到時間線</translation>
+    </message>
+</context>
+<context>
+    <name>AssetSearchBar</name>
+    <message>
+        <source>Clear search</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove from history</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -5233,6 +5396,14 @@
     <message>
         <source>Create a new folder here</source>
         <translation>在此處新建資料夾</translation>
+    </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Create an empty timeline and open it</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -6504,16 +6675,8 @@
         <translation>無</translation>
     </message>
     <message>
-        <source>Missing look</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Adjust color</source>
         <translation>調整顏色</translation>
-    </message>
-    <message>
-        <source>Set look</source>
-        <translation>設置外觀</translation>
     </message>
     <message>
         <source>Reset %1</source>
@@ -6523,37 +6686,45 @@
         <source>Reset grade</source>
         <translation>重置調色</translation>
     </message>
-    <message numerus="yes">
-        <source>Imported %n look(s)</source>
-        <translation>
-            <numerusform>已導入 %n 個外觀</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>Imported %n look(s), %1 failed</source>
-        <translation>
-            <numerusform>已導入 %n 個外觀，%1 個失敗</numerusform>
-        </translation>
-    </message>
     <message>
-        <source>Could not import that look</source>
+        <source>Missing LUT</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Could not remove the look</source>
-        <translation>無法移除外觀</translation>
+        <source>Set LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Imported %n LUT(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Imported %n LUT(s), %1 failed</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+        </translation>
     </message>
     <message>
-        <source>Look removed</source>
-        <translation>外觀已移除</translation>
+        <source>Could not import that LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Could not rename the look</source>
-        <translation>無法重命名外觀</translation>
+        <source>Could not remove the LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Look renamed</source>
-        <translation>外觀已重命名</translation>
+        <source>LUT removed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not rename the LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT renamed</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Grade this clip before applying it to others</source>
@@ -6820,18 +6991,6 @@
         <translation>顏色</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation>外觀</translation>
-    </message>
-    <message>
-        <source>None. Choose a look in the Looks panel.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>外觀強度</translation>
-    </message>
-    <message>
         <source>Color wheels</source>
         <translation type="unfinished">色彩輪</translation>
     </message>
@@ -6870,6 +7029,18 @@
     <message>
         <source>Apply to all clips</source>
         <translation>應用到所有片段</translation>
+    </message>
+    <message>
+        <source>LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>None. Choose one in the Color Grading LUTs panel.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Apply</source>
@@ -8754,16 +8925,16 @@
         <translation>導入…</translation>
     </message>
     <message>
-        <source>Import looks</source>
-        <translation>導入調色</translation>
+        <source>Import LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>LUT files (*.cube)</source>
         <translation>LUT 檔案 (*.cube)</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>缺少調色檔案</translation>
     </message>
 </context>
 <context>
@@ -9109,6 +9280,10 @@
         <translation>正在導出視頻</translation>
     </message>
     <message>
+        <source>Exporting audio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Export</source>
         <translation>導出</translation>
     </message>
@@ -9123,6 +9298,10 @@
     <message>
         <source>Rendering your video. Close to keep editing, or cancel to stop.</source>
         <translation>正在算圖你的視頻。關閉視窗可繼續編輯，或取消以停止導出。</translation>
+    </message>
+    <message>
+        <source>Rendering your audio. Close to keep editing, or cancel to stop.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Export finished.</source>
@@ -9963,6 +10142,18 @@
         <translation>到</translation>
     </message>
     <message>
+        <source>Loop</source>
+        <translation type="unfinished">循環</translation>
+    </message>
+    <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Repeat the trimmed part for as long as the clip runs. Drag the clip&apos;s edges past the end to add repeats. Turn it off to change the trim.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rename</source>
         <translation>重命名</translation>
     </message>
@@ -10001,6 +10192,26 @@
     <message>
         <source>File</source>
         <translation>檔案</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation type="unfinished">標籤</translation>
+    </message>
+    <message>
+        <source>Clip label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>e.g. intro (empty clears it)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -10097,6 +10308,10 @@
     <message>
         <source>Presets</source>
         <translation>預設</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">收藏</translation>
     </message>
     <message>
         <source>Type</source>
@@ -10646,6 +10861,10 @@
     <message>
         <source>Feather</source>
         <translation>羽化</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -11235,6 +11454,10 @@
         <translation>選擇分類、模板和畫質。之後可在 設置 → 選擇版式 中隨時更改。</translation>
     </message>
     <message>
+        <source>Favorites</source>
+        <translation type="unfinished">收藏</translation>
+    </message>
+    <message>
         <source>Template</source>
         <translation>模板</translation>
     </message>
@@ -11365,60 +11588,56 @@
 <context>
     <name>LooksPanel</name>
     <message>
-        <source>Looks</source>
-        <translation>調色風格</translation>
-    </message>
-    <message>
-        <source>My Looks</source>
-        <translation>我的調色風格</translation>
-    </message>
-    <message>
-        <source>Import looks</source>
-        <translation>導入調色風格</translation>
-    </message>
-    <message>
         <source>LUT files (*.cube)</source>
         <translation>LUT 檔案 (*.cube)</translation>
-    </message>
-    <message>
-        <source>Search looks</source>
-        <translation>搜索調色風格</translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>調色強度</translation>
     </message>
     <message>
         <source>Adjust %1</source>
         <translation>調整 %1</translation>
     </message>
     <message>
-        <source>Get free looks</source>
-        <translation>獲取免費調色風格</translation>
-    </message>
-    <message>
         <source>Rename…</source>
         <translation>重命名…</translation>
-    </message>
-    <message>
-        <source>Import .cube looks</source>
-        <translation>導入 .cube 調色風格</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>調色風格缺失</translation>
     </message>
     <message>
         <source>Remove</source>
         <translation>移除</translation>
     </message>
     <message>
-        <source>No looks match “%1”.</source>
-        <translation>沒有符合“%1”的調色風格。</translation>
+        <source>Color Grading LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>No favorites yet. Star looks to save them here.</source>
-        <translation>暫無收藏。點星收藏調色風格後即會顯示在此處。</translation>
+        <source>Import LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Import .cube LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>My LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No LUTs match “%1”.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No favorites yet. Star LUTs to save them here.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing in this category.</source>
@@ -11437,30 +11656,34 @@
         <translation>導入</translation>
     </message>
     <message>
-        <source>No looks</source>
-        <translation>暫無調色風格</translation>
+        <source>No LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Download a free pack of ready-made looks, or import your own .cube files.</source>
-        <translation>下載免費現成的調色風格包，或導入自己的 .cube 檔案。</translation>
+        <source>Download a free pack of ready-made color grading LUTs, or import your own .cube files.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Select a clip to try looks on it</source>
-        <translation>選擇一個片段以試色調色風格</translation>
+        <source>Get free LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Remove this look?</source>
-        <translation>移除此調色風格？</translation>
+        <source>Select a clip to try LUTs on it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove this LUT?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message numerus="yes">
         <source>“%1” is used by %n clip(s). They will show it as missing until it is imported again.</source>
         <translation>
             <numerusform>%n 個片段正在使用“%1”。在重新導入之前，它們會顯示為缺失。</numerusform>
         </translation>
-    </message>
-    <message>
-        <source>Rename look</source>
-        <translation>重命名調色風格</translation>
     </message>
     <message>
         <source>Rename</source>
@@ -11927,8 +12150,8 @@
         <translation type="unfinished">主題</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation type="unfinished">外觀</translation>
+        <source>LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Effect template</source>
@@ -12384,6 +12607,14 @@
 <context>
     <name>MaskOverlay</name>
     <message>
+        <source>Unlock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Drag points to reshape · Tap ○ on an edge to add a point · Hold a point to delete</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12405,6 +12636,28 @@
     <message>
         <source>Select a clip at the playhead to edit its masks</source>
         <translation>選中播放頭處的片段以編輯其遮罩</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayFeatherHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">編輯 %1</translation>
+    </message>
+    <message>
+        <source>Feather</source>
+        <translation type="unfinished">羽化</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayRoundnessHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">編輯 %1</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -12459,6 +12712,18 @@
     <message>
         <source>Clip converted to mask</source>
         <translation>剪輯已轉換為遮罩</translation>
+    </message>
+    <message>
+        <source>Clip</source>
+        <translation type="unfinished">片段</translation>
+    </message>
+    <message>
+        <source>%1 mask</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips used as mask</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Cutouts can&apos;t be moved yet</source>
@@ -12601,8 +12866,16 @@
         <translation>條紋</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">分割</translation>
+    </message>
+    <message>
         <source>Matte</source>
         <translation>遮罩</translation>
+    </message>
+    <message>
+        <source>Sequence matte</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -13069,6 +13342,10 @@
             <numerusform>%n 個形狀關鍵格</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>MasksInspector</name>
@@ -13101,6 +13378,10 @@
         <translation>條形</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">分割</translation>
+    </message>
+    <message>
         <source>Combine</source>
         <translation>組合</translation>
     </message>
@@ -13123,6 +13404,10 @@
     <message>
         <source>Remove mask</source>
         <translation>移除遮罩</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Center X</source>
@@ -13151,6 +13436,38 @@
     <message>
         <source>Polygon</source>
         <translation type="unfinished">多邊形</translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Matte channel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Alpha (transparency)</source>
+        <translation type="unfinished">Alpha (透明度)</translation>
+    </message>
+    <message>
+        <source>Luma (brightness)</source>
+        <translation type="unfinished">亮度 (Luma)</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stretch</source>
+        <translation type="unfinished">拉伸</translation>
+    </message>
+    <message>
+        <source>Fill</source>
+        <translation type="unfinished">填充</translation>
+    </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Invert</source>
@@ -13214,6 +13531,13 @@
     <message>
         <source>All files (*)</source>
         <translation>所有檔案 (*)</translation>
+    </message>
+</context>
+<context>
+    <name>McpController</name>
+    <message>
+        <source>Relink media</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -13676,6 +14000,14 @@
         <translation>%1（%2）</translation>
     </message>
     <message>
+        <source>The project was closed before the replace landed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The project was closed before the edit landed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Relink media</source>
         <translation type="unfinished"></translation>
     </message>
@@ -13684,6 +14016,10 @@
         <translation type="unfinished">
             <numerusform></numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Track is locked</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Sub-clip added</source>
@@ -16558,7 +16894,7 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and looks come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
+        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and color grading LUTs come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -16740,7 +17076,7 @@ If playback stutters, try another.</source>
         <translation type="unfinished">轉場</translation>
     </message>
     <message>
-        <source>Looks</source>
+        <source>LUTs</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -16823,11 +17159,11 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the header.</source>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the header.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -22988,6 +23324,10 @@ If playback stutters, try another.</source>
 <context>
     <name>TextInspectorAnimCategoryStrip</name>
     <message>
+        <source>Favorites</source>
+        <translation type="unfinished">收藏</translation>
+    </message>
+    <message>
         <source>All</source>
         <translation>全部</translation>
     </message>
@@ -23871,6 +24211,14 @@ If playback stutters, try another.</source>
         <translation>分離所有音軌</translation>
     </message>
     <message>
+        <source>Stop looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop</source>
+        <translation type="unfinished">循環</translation>
+    </message>
+    <message>
         <source>Remove silence</source>
         <translation type="unfinished">移除靜音</translation>
     </message>
@@ -23885,6 +24233,14 @@ If playback stutters, try another.</source>
     <message>
         <source>Convert to mask</source>
         <translation>轉換為遮罩</translation>
+    </message>
+    <message>
+        <source>Use as mask (nested timeline)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Convert to edit-friendly format</source>
@@ -24130,6 +24486,54 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Paste here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add bookmark here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips after here on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select all clips</source>
+        <translation type="unfinished">全選片段</translation>
+    </message>
+    <message>
+        <source>Unmute track</source>
+        <translation type="unfinished">取消靜音軌道</translation>
+    </message>
+    <message>
+        <source>Mute track</source>
+        <translation type="unfinished">靜音軌道</translation>
+    </message>
+    <message>
+        <source>Show track</source>
+        <translation type="unfinished">顯示軌道</translation>
+    </message>
+    <message>
+        <source>Hide track</source>
+        <translation type="unfinished">隱藏軌道</translation>
+    </message>
+    <message>
+        <source>Unlock track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lock track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove empty tracks</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rename bookmark</source>
         <translation>重命名標記</translation>
     </message>
@@ -24213,6 +24617,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Main</source>
         <translation type="unfinished">主</translation>
+    </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -24525,12 +24933,24 @@ If playback stutters, try another.</source>
         <translation>子標題</translation>
     </message>
     <message>
+        <source>Hide the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1, track %2</source>
         <translation>%1，軌道 %2</translation>
     </message>
 </context>
 <context>
     <name>TimelineTrimHandle</name>
+    <message>
+        <source>Drag to repeat the clip</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <source>Drag to trim the start</source>
         <translation>拖動以修剪起點</translation>
@@ -24752,6 +25172,14 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Include in export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exclude from export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add camera clip at playhead</source>
         <translation>在播放頭處添加相機片段</translation>
     </message>
@@ -24919,6 +25347,17 @@ If playback stutters, try another.</source>
     <message>
         <source>Mute track</source>
         <translation>靜音軌道</translation>
+    </message>
+</context>
+<context>
+    <name>TrackHeaderName</name>
+    <message>
+        <source>not exported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shown while editing, left out of every export</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -25777,6 +26216,14 @@ If playback stutters, try another.</source>
         <translation type="unfinished">位置</translation>
     </message>
     <message>
+        <source>Reset position</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset size</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Edit width and height separately</source>
         <translation>分別編輯寬度和高度</translation>
     </message>
@@ -25817,6 +26264,14 @@ If playback stutters, try another.</source>
         <translation>不透明度與旋轉</translation>
     </message>
     <message>
+        <source>Reset opacity</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset rotation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rotate the whole group as one flat card</source>
         <translation type="unfinished"></translation>
     </message>
@@ -25830,6 +26285,10 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Position, rotation, anchor point and depth occlusion are in the 3D workspace&apos;s 3D Transform panel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset all</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -25855,10 +26314,6 @@ If playback stutters, try another.</source>
     <message>
         <source>Flip V</source>
         <translation>垂直翻轉</translation>
-    </message>
-    <message>
-        <source>Reset position &amp; size</source>
-        <translation>重置位置與大小</translation>
     </message>
     <message>
         <source>Fix orientation</source>
@@ -27448,10 +27903,6 @@ If playback stutters, try another.</source>
         <translation>顏色</translation>
     </message>
     <message>
-        <source>Looks</source>
-        <translation>外觀</translation>
-    </message>
-    <message>
         <source>Scopes</source>
         <translation>示波器</translation>
     </message>
@@ -27566,6 +28017,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Camera</source>
         <translation>攝影機</translation>
+    </message>
+    <message>
+        <source>Color Grading LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Stabilization</source>

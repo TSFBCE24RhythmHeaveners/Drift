@@ -59,18 +59,18 @@ static QVariantList easingSamplesToVariant(const drift::EasingSpec &spec, int n)
 }
 } // namespace
 
-void AppController::setClipKeyframe(int trackIndex, int clipIndex, const QString &prop, double atSeconds,
+bool AppController::setClipKeyframe(int trackIndex, int clipIndex, const QString &prop, double atSeconds,
                                     double value)
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
-        return;
+        return false;
     // "fx.<i>.<param>" addresses the effect stack, which now lives on the adjustment
     // linked to this clip. Transform props are untouched by this.
     redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
 
     drift::Track &track = m_project.tracks()[trackIndex];
     if (clipIndex < 0 || clipIndex >= track.clips.size())
-        return;
+        return false;
 
     drift::Clip &clip = track.clips[clipIndex];
     const drift::Project before = m_project;
@@ -84,9 +84,9 @@ void AppController::setClipKeyframe(int trackIndex, int clipIndex, const QString
         for (const auto &write : legacyModel3dPoseWrites(clip, prop.mid(8), value, rel, m_project.height()))
             wrote = writeClipPropValue(clip, write.first, rel, write.second, m_autoKeyEnabled, true) || wrote;
         if (!wrote)
-            return;
+            return false;
     } else if (!writeClipPropValue(clip, prop, rel, value, m_autoKeyEnabled, /*force=*/true)) {
-        return;
+        return false;
     }
 
     if (m_positionLinked && (prop == QLatin1String("x") || prop == QLatin1String("y"))) {
@@ -105,6 +105,7 @@ void AppController::setClipKeyframe(int trackIndex, int clipIndex, const QString
     }
     pushProjectEdit(before, tr("Add keyframe"));
     finishEdit(tr("Keyframe set"));
+    return true;
 }
 
 void AppController::setClipColorKeyframe(int trackIndex, int clipIndex, const QString &prop,
@@ -1087,6 +1088,120 @@ void AppController::setKeyframeHold(int trackIndex, int clipIndex, const QString
     finishEdit(hold ? tr("Keyframe holds") : tr("Keyframe interpolates"));
 }
 
+bool AppController::setKeyframeSmooth(int trackIndex, int clipIndex, const QString &prop,
+                                       double atSeconds, bool all)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return false;
+    redirectToKeyframeHost(&trackIndex, &clipIndex, prop);
+    drift::Track &track = m_project.tracks()[trackIndex];
+    if (clipIndex < 0 || clipIndex >= track.clips.size())
+        return false;
+
+    const drift::Project before = m_project;
+    drift::Clip &clip = m_project.tracks()[trackIndex].clips[clipIndex];
+    drift::KeyframeTrack<double> *kt = keyframeTrackForProp(clip, prop, /*createIfMissing=*/false);
+    if (!kt || kt->isEmpty())
+        return false;
+    if (all) {
+        kt->setSmoothAll();
+    } else {
+        const drift::TimeUs at = kt->nearestKeyframe(
+            drift::secondsToUs(atSeconds) - clip.timelineStart, drift::kUsPerSecond / 60);
+        if (at < 0)
+            return false;
+        kt->setSmooth(at);
+    }
+    pushProjectEdit(before, tr("Keyframe curve changed"));
+    finishEdit(tr("Keyframe curve updated"));
+    return true;
+}
+
+QString AppController::setClipKeyframes(int trackIndex, int clipIndex,
+                                        const QList<KeyframeBatch> &batches, bool replace,
+                                        const QString &interpolation)
+{
+    const drift::Project before = m_project;
+    for (const KeyframeBatch &batch : batches) {
+        int hostTrack = trackIndex;
+        int hostClip = clipIndex;
+        redirectToKeyframeHost(&hostTrack, &hostClip, batch.prop);
+        if (!isValidClipIndex(hostTrack, hostClip)) {
+            m_project = before;
+            return batch.prop;
+        }
+        drift::Clip &clip = m_project.tracks()[hostTrack].clips[hostClip];
+        if (replace) {
+            if (drift::KeyframeTrack<double> *kt = keyframeTrackForProp(clip, batch.prop, false))
+                kt->clearKeyframes();
+        }
+
+        bool wrote = !batch.keys.isEmpty();
+        for (const QPointF &key : batch.keys) {
+            const drift::TimeUs rel = qBound<drift::TimeUs>(
+                0, drift::secondsToUs(key.x()) - clip.timelineStart, clip.timelineDuration);
+            if (batch.prop.startsWith(QLatin1String("model3d."))
+                && isLegacyModel3dPoseKey(batch.prop.mid(8))) {
+                bool any = false;
+                for (const auto &write : legacyModel3dPoseWrites(clip, batch.prop.mid(8), key.y(), rel,
+                                                                 m_project.height()))
+                    any = writeClipPropValue(clip, write.first, rel, write.second, m_autoKeyEnabled, true) || any;
+                wrote = any;
+            } else {
+                wrote = writeClipPropValue(clip, batch.prop, rel, key.y(), m_autoKeyEnabled, true);
+            }
+            if (!wrote)
+                break;
+        }
+        drift::KeyframeTrack<double> *kt = keyframeTrackForProp(clip, batch.prop, false);
+        if (!wrote || !kt) {
+            m_project = before;
+            return batch.prop;
+        }
+
+        if (interpolation == QLatin1String("smooth")) {
+            kt->setSmoothAll();
+        } else if (!interpolation.isEmpty()) {
+            const drift::Interpolation mode = drift::interpolationFromString(interpolation);
+            for (const drift::TimeUs time : kt->keyframes().keys())
+                kt->setEasing(time, mode);
+        }
+    }
+    pushProjectEdit(before, tr("Add keyframes"));
+    finishEdit(tr("Keyframes set"));
+    return {};
+}
+
+static void applyDefaultClipLayout(const drift::Project &project, drift::Clip &clip)
+{
+    // Media resets to how it first landed: its own shape, fitted and centred. Everything else
+    // (text, shapes, composites, transform layers) resets to the full canvas.
+    int mediaW = 0;
+    int mediaH = 0;
+    if (clip.type == drift::ClipType::Vector) {
+        mediaW = clip.vector.width;
+        mediaH = clip.vector.height;
+    } else if (clip.type == drift::ClipType::Video || clip.type == drift::ClipType::Image
+               || clip.type == drift::ClipType::Pdf) {
+        if (const drift::MediaAsset *asset = project.asset(clip.assetId)) {
+            mediaW = asset->width;
+            mediaH = asset->height;
+            if ((asset->rotationDegrees + clip.rotationCorrection) % 180 == 90)
+                std::swap(mediaW, mediaH);
+            if (clip.type == drift::ClipType::Video && mediaW > 0 && mediaH > 0) {
+                mediaW = qMax(1, qRound(mediaW * clip.sourceFrame.width()));
+                mediaH = qMax(1, qRound(mediaH * clip.sourceFrame.height()));
+            }
+        }
+    }
+    if (clip.type == drift::ClipType::Model3d)
+        placeModelClipLayout(clip, project.width(), project.height());
+    else if (mediaW > 0 && mediaH > 0)
+        fitClipLayoutToCanvas(clip, mediaW, mediaH, project.width(), project.height());
+    else
+        setClipLayoutPixels(clip, 0, 0, project.width(), project.height());
+}
+
 void AppController::resetClipTransform(int trackIndex, int clipIndex)
 {
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
@@ -1110,32 +1225,46 @@ void AppController::resetClipTransform(int trackIndex, int clipIndex)
     clearClipPose3d(clip);
     clip.flipH = false;
     clip.flipV = false;
-    // Media resets to how it first landed: its own shape, fitted and centred. Everything else
-    // (text, shapes, composites, transform layers) resets to the full canvas.
-    int mediaW = 0;
-    int mediaH = 0;
-    if (clip.type == drift::ClipType::Vector) {
-        mediaW = clip.vector.width;
-        mediaH = clip.vector.height;
-    } else if (clip.type == drift::ClipType::Video || clip.type == drift::ClipType::Image
-               || clip.type == drift::ClipType::Pdf) {
-        if (const drift::MediaAsset *asset = m_project.asset(clip.assetId)) {
-            mediaW = asset->width;
-            mediaH = asset->height;
-            if ((asset->rotationDegrees + clip.rotationCorrection) % 180 == 90)
-                std::swap(mediaW, mediaH);
-            if (clip.type == drift::ClipType::Video && mediaW > 0 && mediaH > 0) {
-                mediaW = qMax(1, qRound(mediaW * clip.sourceFrame.width()));
-                mediaH = qMax(1, qRound(mediaH * clip.sourceFrame.height()));
-            }
+    applyDefaultClipLayout(m_project, clip);
+    pushProjectEdit(before, tr("Reset transform"));
+    finishEdit(tr("Transform reset"));
+}
+
+void AppController::resetClipTransformGroup(int trackIndex, int clipIndex, const QString &group)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return;
+
+    drift::Track &track = m_project.tracks()[trackIndex];
+    if (clipIndex < 0 || clipIndex >= track.clips.size())
+        return;
+
+    drift::Clip &clip = track.clips[clipIndex];
+    if (clip.type == drift::ClipType::Audio)
+        return;
+
+    const drift::Project before = m_project;
+    if (group == QLatin1String("opacity")) {
+        clip.opacity = {};
+    } else if (group == QLatin1String("rotation")) {
+        clip.rotation = {};
+    } else if (group == QLatin1String("position") || group == QLatin1String("size")) {
+        drift::Clip layout = clip;
+        layout.transformX = {};
+        layout.transformY = {};
+        layout.transformW = {};
+        layout.transformH = {};
+        applyDefaultClipLayout(m_project, layout);
+        if (group == QLatin1String("position")) {
+            clip.transformX = layout.transformX;
+            clip.transformY = layout.transformY;
+        } else {
+            clip.transformW = layout.transformW;
+            clip.transformH = layout.transformH;
         }
+    } else {
+        return;
     }
-    if (clip.type == drift::ClipType::Model3d)
-        placeModelClipLayout(clip, m_project.width(), m_project.height());
-    else if (mediaW > 0 && mediaH > 0)
-        fitClipLayoutToCanvas(clip, mediaW, mediaH, m_project.width(), m_project.height());
-    else
-        setClipLayoutPixels(clip, 0, 0, m_project.width(), m_project.height());
     pushProjectEdit(before, tr("Reset transform"));
     finishEdit(tr("Transform reset"));
 }

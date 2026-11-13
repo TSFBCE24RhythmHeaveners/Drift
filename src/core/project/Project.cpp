@@ -54,6 +54,7 @@ QJsonObject maskToJson(const Mask &m)
         {QStringLiteral("h"), m.h},
         {QStringLiteral("rotation"), m.rotation},
         {QStringLiteral("feather"), m.feather},
+        {QStringLiteral("roundness"), m.roundness},
         {QStringLiteral("invert"), m.invert},
         {QStringLiteral("points"), points},
         {QStringLiteral("mediaPath"), m.mediaPath},
@@ -66,6 +67,10 @@ QJsonObject maskToJson(const Mask &m)
         {QStringLiteral("keyframes"), maskKeyframesJson},
         {QStringLiteral("pathKeys"), pathKeys},
     };
+    if (m.lockAspect)
+        object.insert(QStringLiteral("lockAspect"), true);
+    if (!m.sequenceId.isEmpty())
+        object.insert(QStringLiteral("sequenceId"), m.sequenceId);
     if (!m.mediaPatches.isEmpty()) {
         QJsonArray patches;
         for (auto it = m.mediaPatches.constBegin(); it != m.mediaPatches.constEnd(); ++it)
@@ -88,7 +93,10 @@ Mask maskFromJson(const QJsonObject &o)
     m.h = o.value(QStringLiteral("h")).toDouble(m.h);
     m.rotation = o.value(QStringLiteral("rotation")).toDouble(m.rotation);
     m.feather = o.value(QStringLiteral("feather")).toDouble(m.feather);
+    m.roundness = o.value(QStringLiteral("roundness")).toDouble(m.roundness);
     m.invert = o.value(QStringLiteral("invert")).toBool(m.invert);
+    m.lockAspect = o.value(QStringLiteral("lockAspect")).toBool(false);
+    m.sequenceId = o.value(QStringLiteral("sequenceId")).toString();
     m.op = maskOpFromString(o.value(QStringLiteral("op")).toString());
     m.enabled = o.value(QStringLiteral("enabled")).toBool(m.enabled);
     m.name = o.value(QStringLiteral("name")).toString(m.name);
@@ -279,6 +287,8 @@ QJsonObject clipToJson(const Clip &clip)
         {QStringLiteral("speed"), clip.speed},
         {QStringLiteral("speedCurve"), clip.speedCurve.toJson()},
         {QStringLiteral("reverse"), clip.reverse},
+        {QStringLiteral("loop"), clip.loop},
+        {QStringLiteral("loopOffsetUs"), qint64(clip.loopOffsetUs)},
         {QStringLiteral("flipH"), clip.flipH},
         {QStringLiteral("flipV"), clip.flipV},
         {QStringLiteral("mask"), maskToJson(clip.mask)},
@@ -319,6 +329,8 @@ QJsonObject clipToJson(const Clip &clip)
         {QStringLiteral("effects"), effectsToJson(clip.effects)},
         {QStringLiteral("audioEffects"), effectsToJson(clip.audioEffects)},
     };
+    if (clip.hiddenInLane)
+        json.insert(QStringLiteral("hiddenInLane"), true);
     if (clip.audioFadeInUs > 0)
         json.insert(QStringLiteral("audioFadeInUs"), static_cast<double>(clip.audioFadeInUs));
     if (clip.audioFadeOutUs > 0)
@@ -364,6 +376,8 @@ QJsonObject clipToJson(const Clip &clip)
         json.insert(QStringLiteral("anchorY"), keyframesToJson(clip.anchorY));
     if (!clip.anchorZ.isEmpty())
         json.insert(QStringLiteral("anchorZ"), keyframesToJson(clip.anchorZ));
+    if (!clip.label.isEmpty())
+        json.insert(QStringLiteral("label"), clip.label);
     return json;
 }
 
@@ -415,7 +429,9 @@ Clip clipFromJsonV2(const QJsonObject &object, int canvasW = 1920, int canvasH =
     clip.adjustmentKind =
         adjustmentKindFromString(object.value(QStringLiteral("adjustmentKind")).toString());
     clip.linkedClipId = object.value(QStringLiteral("linkedClipId")).toString();
+    clip.hiddenInLane = object.value(QStringLiteral("hiddenInLane")).toBool(false);
     clip.name = object.value(QStringLiteral("name")).toString();
+    clip.label = object.value(QStringLiteral("label")).toString();
     clip.textContent = object.value(QStringLiteral("textContent")).toString();
     clip.textStyle = textStyleFromJson(object.value(QStringLiteral("textStyle")).toObject());
     clip.subtitleCues = subtitleCuesFromJson(object.value(QStringLiteral("subtitleCues")).toArray());
@@ -435,6 +451,8 @@ Clip clipFromJsonV2(const QJsonObject &object, int canvasW = 1920, int canvasH =
     clip.speed = object.value(QStringLiteral("speed")).toDouble(1.0);
     clip.speedCurve = SpeedCurve::fromJson(object.value(QStringLiteral("speedCurve")).toArray());
     clip.reverse = object.value(QStringLiteral("reverse")).toBool(false);
+    clip.loop = object.value(QStringLiteral("loop")).toBool(false);
+    clip.loopOffsetUs = object.value(QStringLiteral("loopOffsetUs")).toInteger(0);
     clip.flipH = object.value(QStringLiteral("flipH")).toBool(false);
     clip.flipV = object.value(QStringLiteral("flipV")).toBool(false);
     clip.mask = maskFromJson(object.value(QStringLiteral("mask")).toObject());
@@ -678,6 +696,21 @@ MediaAsset assetFromJsonV1(const QJsonObject &object)
 
 } // namespace
 
+QJsonObject clipJson(const Clip &clip)
+{
+    return clipToJson(clip);
+}
+
+QJsonObject assetJson(const MediaAsset &asset)
+{
+    return assetToJson(asset);
+}
+
+QJsonObject transitionJson(const Transition &transition)
+{
+    return transitionToJson(transition);
+}
+
 void Project::resetToDefaultTimeline()
 {
     m_tracks = {
@@ -715,6 +748,40 @@ void ensureTrackIds(QList<Track> &tracks)
             track.adjustmentScope = AdjustmentScope::AllBelow;
         }
     }
+
+    // Default labels ("Video 2") take each track's own number, so adding, deleting or reordering
+    // tracks renumbers nothing. A track without one (new, or from a project saved before numbers)
+    // or with one already taken lower down gets the next free number of its kind. When several
+    // need one, they're numbered from the bottom up, since new tracks go on top, except audio:
+    // extracted and companion audio goes below the rest, so audio counts from the top, which also
+    // keeps the labels a project saved before numbers showed for its audio.
+    QHash<QString, int> highest;
+    QHash<QString, QSet<int>> used;
+    QList<int> pending;
+    for (int i = int(tracks.size()) - 1; i >= 0; --i) {
+        Track &track = tracks[i];
+        const QString kind = trackNumberKind(track);
+        if (kind.isEmpty()) {
+            track.number = 0;
+            continue;
+        }
+        if (track.number > 0 && !used.value(kind).contains(track.number)) {
+            used[kind].insert(track.number);
+            highest[kind] = qMax(highest.value(kind), track.number);
+        } else {
+            pending.append(i);
+        }
+    }
+    const auto assign = [&](int i) {
+        Track &track = tracks[i];
+        track.number = ++highest[trackNumberKind(track)];
+    };
+    for (const int i : std::as_const(pending)) // bottom up
+        if (tracks.at(i).type != TrackType::Audio)
+            assign(i);
+    for (auto it = pending.crbegin(); it != pending.crend(); ++it) // top down
+        if (tracks.at(*it).type == TrackType::Audio)
+            assign(*it);
 }
 
 int Project::trackIndexById(const QString &id) const
@@ -774,6 +841,31 @@ Project Project::sequenceView(const QString &id) const
     Project view = *this;
     view.activateSequence(id);
     return view;
+}
+
+Project Project::exportView(const QString &id) const
+{
+    Project view = sequenceView(id);
+    view.forEachTrackList([](QList<Track> &tracks) {
+        for (Track &track : tracks) {
+            if (track.excludeFromExport) {
+                track.hidden = true;
+                track.muted = true;
+                track.solo = false;
+            }
+        }
+    });
+    return view;
+}
+
+bool Project::hasExportExcludedTracks() const
+{
+    bool any = false;
+    forEachTrackList([&any](const QList<Track> &tracks) {
+        for (const Track &track : tracks)
+            any = any || track.excludeFromExport;
+    });
+    return any;
 }
 
 QString Project::addSequence(TrackList tracks)
@@ -1283,10 +1375,12 @@ Project Project::fromJson(const QJsonObject &object, QString *errorOut)
             if (track.isTransformLayer())
                 track.spanEndTrackId = trackObject.value(QStringLiteral("spanEndTrackId")).toString();
             track.name = trackObject.value(QStringLiteral("name")).toString();
+            track.number = qMax(0, trackObject.value(QStringLiteral("number")).toInt(0));
             track.muted = trackObject.value(QStringLiteral("muted")).toBool(false);
             track.hidden = trackObject.value(QStringLiteral("hidden")).toBool(false);
             track.locked = trackObject.value(QStringLiteral("locked")).toBool(false);
             track.solo = trackObject.value(QStringLiteral("solo")).toBool(false);
+            track.excludeFromExport = trackObject.value(QStringLiteral("excludeFromExport")).toBool(false);
             track.volume = trackObject.value(QStringLiteral("volume")).toDouble(1.0);
             track.pan = trackObject.value(QStringLiteral("pan")).toDouble(0.0);
             // Projects before clipDisplay only had a waveform-instead-of-filmstrip flag.
@@ -1415,6 +1509,14 @@ Project Project::fromJson(const QJsonObject &object, QString *errorOut)
     // Version 22 moved the 3D world to After Effects' convention (migrateWorldTo22 above).
     // Version 24 added ClipType::Procedural. Nothing to migrate; the bump is a gate, as for versions
     // 6 and 9. An older build would load those clips as videos with no path.
+    // Version 25 added looping clips. Nothing to migrate; the bump is a gate, as for versions 6
+    // and 9. An older build would cut a looped clip off at the end of its first pass.
+    // Version 26 added mask roundness. Nothing to migrate; the bump is a gate, as for versions 6
+    // and 9. An older build would draw a rounded rectangle mask with sharp corners.
+    // Version 27 added the Split mask shape. Nothing to migrate; the bump is a gate, as for
+    // versions 6 and 9. An older build would read the shape as none and drop the mask.
+    // Version 28 added the Sequence mask shape. Nothing to migrate; the bump is a gate, as for
+    // versions 6 and 9. An older build would read the shape as none and drop the mask.
     // Version 20 added stabilize tracker targets. Nothing to migrate; the bump is a gate, as for
     // versions 6 and 9. An older build would drop the targets and leave the clip unlocked.
 
@@ -1520,6 +1622,11 @@ QJsonObject Project::toJson(bool includeTranscripts) const
             };
             if (track.isTransformLayer())
                 trackObject.insert(QStringLiteral("spanEndTrackId"), track.spanEndTrackId);
+            if (track.number > 0)
+                trackObject.insert(QStringLiteral("number"), track.number);
+            // Written only when set, so projects without it stay byte-identical.
+            if (track.excludeFromExport)
+                trackObject.insert(QStringLiteral("excludeFromExport"), true);
             tracksArray.append(trackObject);
         }
         return tracksArray;

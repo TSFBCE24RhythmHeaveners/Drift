@@ -200,6 +200,24 @@
           objectSchema(mergeProps({{QStringLiteral("name"), stringProp(QStringLiteral("New name, must be non-empty"))}},
                                   clipRefProps()),
                        {QStringLiteral("name")}) },
+        { "set_clip_label", "timeline", "Tag a clip with a stable label",
+          "Set the clip's label (empty clears it): a tag that survives renames, shown in the "
+          "inspector. A split or duplicate gives the copy the next number (intro, intro.2, "
+          "intro.3); the original keeps its label. Find clips by it with find_clips.",
+          objectSchema(mergeProps({{QStringLiteral("label"), stringProp(QStringLiteral("Label; empty clears it"))}},
+                                  clipRefProps()),
+                       {QStringLiteral("label")}) },
+        { "find_clips", "timeline", "Search clips by label or name",
+          "Clips matching every filter given: label (exact; an unnumbered label also finds its "
+          "numbered copies; \"\" finds unlabelled clips), name (case-insensitive substring), asset, track, kind. Returns "
+          "clips:[{id, track, label, name, kind, start, duration, ...}] in timeline order.",
+          objectSchema({{QStringLiteral("label"), stringProp(QStringLiteral("Label, e.g. intro"))},
+                        {QStringLiteral("name"), stringProp(QStringLiteral("Part of the name"))},
+                        {QStringLiteral("asset"), assetRefProp()},
+                        {QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
+                        {QStringLiteral("kind"), stringProp(QStringLiteral("Clip kind, e.g. video, audio, text"))}},
+                       {}),
+          true, false, true },
         { "add_bookmark", "timeline", "Mark a time",
           "Add a bookmark at `at` seconds. Does not return its index — bookmarks are addressed by "
           "position in inspect({detail:true}).bookmarks, so re-read that before removing or updating.",
@@ -335,6 +353,15 @@
           objectSchema(mergeProps({{QStringLiteral("reverse"), boolProp(QStringLiteral("Reversed"))}},
                                   clipRefProps()),
                        {QStringLiteral("reverse")}) },
+        { "set_clip_loop", "canvas", "Repeat a clip's trimmed range",
+          "Loop a video or audio clip: its In/Out range (srcIn..srcOut) repeats for as long as the clip "
+          "runs, so its duration is no longer limited by the source; compact clips then show loop:true. "
+          "Lengthen or shorten it with set_duration; set_trim changes the repeated range and "
+          "keeps the duration. Turning loop off cuts the clip back to one pass of the range from its head. Fails bad_args on "
+          "other clip kinds and on clips with a speed curve.",
+          objectSchema(mergeProps({{QStringLiteral("loop"), boolProp(QStringLiteral("Loop on or off"))}},
+                                  clipRefProps()),
+                       {QStringLiteral("loop")}) },
         { "cancel_reverse_render", "canvas", "Stop reverse proxy",
           "Cancel the in-flight reverse proxy render. Returns ok even when nothing was running; "
           "confirm with inspect({detail:true}).jobs.reverseRender.active.",
@@ -666,8 +693,9 @@
 
         { "procedural_authoring_guide", "procedural", "How to write a procedural 3D package",
           "Read before create_procedural. Returns {guide} - the full authoring guide (docs/procedural.md): "
-          "package layout and manifest, the Lua API, budgets, the shader contract with both camera modes, "
-          "and a complete worked example.",
+          "package layout and manifest, the Lua API, budgets, the shader contract with both camera modes "
+          "(world mode + a keyframed Camera clip is the recommended way to animate the view; scene:camera "
+          "is for special cases), the unit-space toWorld/toBlock pattern, and a complete worked example.",
           objectSchema({}), true, false, true },
         { "list_procedurals", "procedural", "See installed procedural packages",
           "Returns {procedurals:[{id, name, description, category, user, shaders:[names], params:[{key, "
@@ -680,7 +708,8 @@
           "Lua log and the driver log per shader, and leave nothing on disk. Returns {id, stats:{meshCount, "
           "vertexCount, instanceCount, triangleCount, elapsedMs}, log, shaders:{name:{ok, log}}, "
           "shaderCheck: ok|skipped, warnings?}. id is user.<slug> and works with add_procedural at once. "
-          "Not undoable.",
+          "Not undoable. Do not call scene:camera in main.lua unless the shot must be self-contained: "
+          "leave the script in world mode and frame it with add_camera + set_keyframes (see the guide).",
           objectSchema({{QStringLiteral("slug"), stringProp(QStringLiteral("a-z, 0-9, _ (max 48); the id becomes user.<slug>"))},
                         {QStringLiteral("manifest"), QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                                                                  {QStringLiteral("description"), QStringLiteral("procedural.json body (displayName, description, category, parameters, maxVertices, maxInstances); id is set for you")}}},
@@ -690,13 +719,21 @@
         { "update_procedural", "procedural", "Change a My Procedurals package",
           "Replaces parts of an existing user package by id, keeping the id so clips already using it pick the "
           "change up. Omitted manifest and files stay as they are; files overwrites or adds, remove_files drops "
-          "shader files. Validated like create_procedural. Bundled and add-on packages are refused "
+          "shader files. edits patches files in place with exact-string replacements, applied in order "
+          "after files (so a small fix does not need the whole script resent): each old must match its "
+          "file exactly once, else the call fails bad_args naming the file and edit index and nothing is "
+          "written. Validated like create_procedural. Bundled and add-on packages are refused "
           "(not_user_procedural) - fork those with create_procedural. Not undoable.",
           objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Existing user procedural id"))},
                         {QStringLiteral("manifest"), QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                                                                  {QStringLiteral("description"), QStringLiteral("Full replacement manifest (optional)")}}},
                         {QStringLiteral("files"), QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                                                               {QStringLiteral("description"), QStringLiteral("Only the files to overwrite or add, e.g. {\"main.lua\": \"...\"}")}}},
+                        {QStringLiteral("edits"), arrayProp(objectSchema({{QStringLiteral("file"), stringProp(QStringLiteral("File name, e.g. main.lua"))},
+                                                                          {QStringLiteral("old"), stringProp(QStringLiteral("Exact text to replace; must occur exactly once in the file"))},
+                                                                          {QStringLiteral("new"), stringProp(QStringLiteral("Replacement text (may be empty)"))}},
+                                                                         {QStringLiteral("file"), QStringLiteral("old"), QStringLiteral("new")}),
+                                                            QStringLiteral("Exact-string replacements applied to the package's files, in order, after `files`"))},
                         {QStringLiteral("remove_files"), arrayProp(stringProp(QStringLiteral("Shader file name")),
                                                                     QStringLiteral("Shader files to delete, e.g. [\"old.vert\", \"old.frag\"]"))}},
                        {QStringLiteral("id")}),
@@ -715,7 +752,9 @@
         { "add_procedural", "procedural", "Place a procedural 3D clip",
           "Add a clip of an installed package on a graphic track, creating one when needed. It is a 3D layer "
           "the size of the canvas; the whole scene is built by main.lua each frame, in project pixels (origin "
-          "top-left, y down, +z away). Params start at the manifest defaults; params sets "
+          "top-left, y down, +z away); frame it with a Camera clip (add_camera, set_keyframes with "
+          "interpolation \"smooth\" on x/y/z and anchorX/Y/Z, camera_look_at aimAtTarget) rather than "
+          "scene:camera in the script. Params start at the manifest defaults; params sets "
           "starting values, and set_keyframe on proc.<key> animates them later (one key holds a constant). "
           "Returns {id, track, index}.",
           objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Package id from list_procedurals"))},
@@ -733,7 +772,8 @@
           "meshes:[{shader, vertices, instances, uniforms}], lights, camera? (own mode), log (print output), "
           "errors}. Give id to try a package with default params plus params overrides, or clip to evaluate a "
           "placed clip as it renders at timeline second t (keyframes, seed and the covering Camera clip "
-          "included; params overrides still apply). Without clip, t is the script's `time`. A script error "
+          "included; params overrides still apply). cameraMode is world when the Camera clip frames the scene "
+          "(recommended) and own when the script called scene:camera. Without clip, t is the script's `time`. A script error "
           "returns ok:false lua_error with errors[]. Use it to check bounds and counts without exporting.",
           objectSchema(mergeProps({{QStringLiteral("id"), stringProp(QStringLiteral("Package id (when not evaluating a clip)"))},
                                    {QStringLiteral("t"), numberProp(QStringLiteral("Seconds: script time for id; timeline time for clip (default 0, or the clip start)"))},
@@ -1429,6 +1469,9 @@
           "theme. autoKey matters for set_transform: when on, transform writes become keyframes at the "
           "playhead. proxySuggestion sets what import_media does with slow-to-preview footage; only the "
           "user can choose always (Settings › Preview), since it transcodes every later import. "
+          "useProxies makes preview read proxies where they exist (create them with create_proxies); "
+          "export always reads the original media. proxySize is the short side of new proxies; "
+          "proxies made at another size aren't used until made again. "
           "Returns the resulting flags plus theme {overridden, dark}.",
           objectSchema({{QStringLiteral("autoKey"), boolProp(QStringLiteral("Auto-keyframe: transform edits create keyframes at the playhead"))},
                         {QStringLiteral("mediaGrid"), boolProp(QStringLiteral("Media bin grid mode"))},
@@ -1439,7 +1482,9 @@
                                   {QStringLiteral("all"), QStringLiteral("problems")})},
                         {QStringLiteral("proxySuggestion"),
                          enumProp(QStringLiteral("What imports do with footage that would preview slowly: ask (a notification offers proxies; default) or never. always is user-only. Global, kept across sessions"),
-                                  {QStringLiteral("ask"), QStringLiteral("never")})}}) },
+                                  {QStringLiteral("ask"), QStringLiteral("never")})},
+                        {QStringLiteral("useProxies"), boolProp(QStringLiteral("Preview reads proxies where they exist (Settings › Preview › Use proxies). Global, kept across sessions"))},
+                        {QStringLiteral("proxySize"), integerProp(QStringLiteral("Short side of new proxies: 360, 540, 720 or 1080. Global, kept across sessions"))}}) },
 
         { "get_camera_state", "timeline", "Read the scene camera's pose at a time",
           "The camera clip covering `at` (default the playhead), or `clip`, as it is posed then, "
@@ -1475,7 +1520,8 @@
           "from the viewer; z defaults to 0). `at` (default the playhead) is where the aim is "
           "computed and, with keyframe:true, where keys are written; a property that is already "
           "animated always takes a key, otherwise the plain value is written (like set_transform). "
-          "One undo step. Returns the new pose and eye. Needs a camera: add_camera first.",
+          "One undo step. Returns the new pose and eye. Needs a camera: add_camera first. For a path "
+          "over several keys, write the eye with set_keyframes and interpolation \"smooth\".",
           objectSchema(mergeProps(
               {{QStringLiteral("target"), QJsonObject{{QStringLiteral("type"), QJsonArray{QStringLiteral("string"), QStringLiteral("object")}},
                                                       {QStringLiteral("description"), QStringLiteral("Clip id to look at, or a world point {x,y,z} in canvas px from the canvas top-left (+z away)")}}},
@@ -1559,6 +1605,18 @@
           objectSchema({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
                         {QStringLiteral("at"), numberProp(QStringLiteral("Left edge of the hole, timeline seconds"))}},
                        {QStringLiteral("track"), QStringLiteral("at")}) },
+        { "close_gaps", "timeline", "Close every hole on a track",
+          "Close every gap on `track` within [from, to] (seconds; default the whole track) in one undo "
+          "step: the hole before the first clip and each hole between clips, latest first. Later "
+          "clips move left, together with every track joined to this one by linked clips, so A/V "
+          "stays in sync. A gap that a clip on such a track sits in (or whose close would drag "
+          "an earlier linked clip along, or past 0) is left open and listed in skipped with that clip; "
+          "a locked track or an adjustment track refuses the op. Returns closed:[{at, width}] and "
+          "skipped:[{at, width, blocker}] at their positions before the op, and moved:[{id, start}].",
+          objectSchema({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
+                        {QStringLiteral("from"), numberProp(QStringLiteral("Only gaps starting at or after this time (seconds)"))},
+                        {QStringLiteral("to"), numberProp(QStringLiteral("Only gaps ending at or before this time (seconds)"))}},
+                       {QStringLiteral("track")}) },
         { "set_snap", "timeline", "Turn magnetic snapping on or off",
           "Editor snap-to-clips/beats/bookmarks. Not undoable.",
           objectSchema({{QStringLiteral("enabled"), boolProp(QStringLiteral("Snap on"))}},

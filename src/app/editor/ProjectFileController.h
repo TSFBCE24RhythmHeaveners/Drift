@@ -11,6 +11,7 @@
 #include <QList>
 #include <QJsonObject>
 #include <QObject>
+#include <functional>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -85,6 +86,9 @@ public:
     bool projectLoadPending() const { return m_projectLoadPending; }
     double projectLoadProgress() const { return m_projectLoadProgress; }
     bool hasUnsavedChanges() const { return m_dirty; }
+    // The project as it was when it last became clean (saved, loaded or new): what
+    // inspect({dirty_detail}) compares the current state against.
+    const drift::Project &savedProject() const { return *m_savedProject; }
     QString currentProjectPath() const { return m_currentProjectPath; }
     bool recoveryAvailable() const { return m_recoveryAvailable; }
     QVariantMap recoveryInfo() const { return m_recoveryInfo; }
@@ -180,6 +184,10 @@ public:
     const QSet<QString> &embeddedSources() const { return m_embeddedSources; }
     void remapProjectPaths(const QHash<QString, QString> &remap);
     static void remapPaths(drift::Project &project, const QHash<QString, QString> &remap);
+    // The same walk over every path that names a file (assets, clips, masks, transcripts, face
+    // tracks, effect files, ...): `map` returns a path's new form, or nothing to leave it.
+    using PathMap = std::function<std::optional<QString>(const QString &)>;
+    static void remapPaths(drift::Project &project, const PathMap &map);
     void rehydrateMissingSources();
     void reportMissingCatalogEntries();
     void sweepExtractionDirs();
@@ -301,6 +309,13 @@ private:
     // Save state / autosave / crash recovery.
     QString m_currentProjectPath;
     bool m_dirty = false;
+    // Shared with the save that wrote it, so landing a save costs no copy.
+    std::shared_ptr<const drift::Project> m_savedProject;
+    // A save or package landed: the file now holds `written`; the project is clean only if
+    // nothing changed since it was captured.
+    void landWrite(const SaveCapture &capture, const std::optional<ProjectIdentity> &adopt);
+    // Clean, with `baseline` as what the file holds.
+    void markClean(std::shared_ptr<const drift::Project> baseline);
     // Bumped by every setDirty(true). A save records it when it captures the document and only
     // clears the dirty flag if it is unchanged when the write lands: an edit made during the
     // write is not in the file.

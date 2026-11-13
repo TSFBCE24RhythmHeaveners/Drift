@@ -258,6 +258,44 @@ Item {
             }
         }
 
+        // A stable tag that survives renames; splits and duplicates number the copies.
+        Column {
+            width: root.width
+            spacing: 4
+            Text {
+                text: qsTr("Label")
+                SearchAnchor {
+                    searchId: "general-clip-label"
+                    title: qsTr("Clip label")
+                    keywords: "tag label find"
+                }
+                color: Theme.c.generalInspector.foregroundMuted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeXs
+            }
+            Row {
+                width: parent.width
+                spacing: Theme.spacingSm
+                Text {
+                    width: parent.width - labelButton.width - parent.spacing
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: (root.hasSelection && root.clipData.label) || qsTr("No label")
+                    color: root.hasSelection && root.clipData.label ? Theme.c.generalInspector.foreground : Theme.c.generalInspector.foregroundMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeBase
+                    elide: Text.ElideRight
+                }
+                IconButton {
+                    id: labelButton
+                    glyph: Theme.icons.pencil
+                    variant: "ghost"
+                    buttonSize: Theme.controlHeightSm
+                    tooltip: qsTr("Edit label")
+                    onClicked: labelDialog.openWith(qsTr("Clip label"), root.clipData.label || "")
+                }
+            }
+        }
+
         Column {
             width: root.width
             spacing: 4
@@ -564,6 +602,7 @@ Item {
                     }
                     ThemedNumberField {
                         id: inPointField
+                        enabled: !root.clipData.loop
                         to: 86400
                         unit: "s"
                         width: parent.width
@@ -593,6 +632,7 @@ Item {
                     }
                     ThemedNumberField {
                         id: outPointField
+                        enabled: !root.clipData.loop
                         to: 86400
                         unit: "s"
                         width: parent.width
@@ -602,6 +642,27 @@ Item {
                         onEdited: v => root.applyTrim(root.clipData.inPoint, v)
                     }
                 }
+            }
+
+            ThemedSwitch {
+                visible: root.clipKind === "video" || root.clipKind === "audio"
+                enabled: !root.clipData.hasSpeedCurve
+                text: qsTr("Loop")
+                tooltip: root.clipData.hasSpeedCurve
+                         ? qsTr("A clip with a speed ramp can't loop")
+                         : qsTr("Repeat the trimmed part for as long as the clip runs. Drag the clip's edges past the end to add repeats. Turn it off to change the trim.")
+                SearchAnchor {
+                    searchId: "general-loop"
+                    title: qsTr("Loop")
+                    keywords: "repeat cycle extend"
+                }
+                Binding on checked {
+                    value: {
+                        void root.clipDataRevision
+                        return !!root.clipData.loop
+                    }
+                }
+                onToggled: EditorState.setClipLoop(EditorState.selectedTrack, EditorState.selectedClip, checked)
             }
         }
 
@@ -646,6 +707,14 @@ Item {
                 }
             }
         }
+    }
+
+    NameDialog {
+        id: labelDialog
+        fieldLabel: qsTr("Label")
+        placeholder: qsTr("e.g. intro (empty clears it)")
+        allowEmpty: true
+        onSubmitted: name => EditorState.setClipLabel(EditorState.selectedTrack, EditorState.selectedClip, name)
     }
 
     NameDialog {

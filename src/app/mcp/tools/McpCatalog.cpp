@@ -73,7 +73,7 @@ QJsonObject animPropProp()
     return stringProp(QStringLiteral(
         "Animated property: x, y, width, height, rotation, rotationX, rotationY, z, anchorX, anchorY, anchorZ, perspective, "
         "opacity, volume, fx.<effectIndex>.<paramKey>, afx.<audioEffectIndex>.<paramKey> "
-        "(e.g. fx.0.amount), mask.<x|y|w|h|rotation|feather>, or on a text/subtitle clip text.<key> with "
+        "(e.g. fx.0.amount), mask.<x|y|w|h|rotation|feather|roundness>, or on a text/subtitle clip text.<key> with "
         "key one of pixelSize, letterSpacing, lineHeight, boxPadding, pathBend, or a shading layer field "
         "text.layer.<layerId>.<opacity|offsetX|offsetY|blur|width|spread|trimStart|trimEnd|dashOffset|"
         "sketchLength|sketchDeviation|color.r|color.g|color.b|color.a|gradient.angle|gradient.offset|"
@@ -114,13 +114,16 @@ QJsonObject maskSchema()
          enumProp(QStringLiteral("Mask shape. Omitted or unrecognised = none, i.e. mask off."),
                   {QStringLiteral("none"), QStringLiteral("rectangle"), QStringLiteral("ellipse"),
                    QStringLiteral("star"), QStringLiteral("heart"), QStringLiteral("bars"),
-                   QStringLiteral("freeform"), QStringLiteral("media"), QStringLiteral("matte")})},
+                   QStringLiteral("split"), QStringLiteral("freeform"), QStringLiteral("media"), QStringLiteral("matte"),
+                   QStringLiteral("sequence")})},
         {QStringLiteral("x"), numberProp(QStringLiteral("Center x, fraction of canvas (default 0.5)"), 0, 1)},
         {QStringLiteral("y"), numberProp(QStringLiteral("Center y, fraction of canvas (default 0.5)"), 0, 1)},
         {QStringLiteral("w"), numberProp(QStringLiteral("Width, fraction of canvas (default 0.6)"), 0, 1)},
         {QStringLiteral("h"), numberProp(QStringLiteral("Height, fraction of canvas (default 0.6)"), 0, 1)},
         {QStringLiteral("rotation"), numberProp(QStringLiteral("Degrees clockwise (default 0)"))},
         {QStringLiteral("feather"), numberProp(QStringLiteral("Alpha edge blur in pixels (default 0)"))},
+        {QStringLiteral("roundness"),
+         numberProp(QStringLiteral("rectangle only: corner rounding, 0 sharp to 1 pill (default 0)"), 0, 1)},
         {QStringLiteral("invert"), boolProp(QStringLiteral("Invert coverage (default false)"))},
         {QStringLiteral("points"),
          arrayProp({{QStringLiteral("type"), QJsonArray{QStringLiteral("array"), QStringLiteral("object")}}},
@@ -130,6 +133,7 @@ QJsonObject maskSchema()
         {QStringLiteral("enabled"), boolProp(QStringLiteral("Mask on/off without losing it (default true)"))},
         {QStringLiteral("name"), stringProp(QStringLiteral("Display name"))},
         {QStringLiteral("mediaPath"), stringProp(QStringLiteral("matte/media only: absolute path of the matte video or image"))},
+        {QStringLiteral("sequenceId"), stringProp(QStringLiteral("sequence only: id of the nested sequence whose render is the matte; mediaChannel and mediaFit apply"))},
         {QStringLiteral("mediaFgrPath"), stringProp(QStringLiteral("matte/media only: foreground pass of a cutout, when one exists"))},
         {QStringLiteral("mediaSrcOffsetUs"), integerProp(QStringLiteral("matte/media only: source offset in microseconds"))},
         {QStringLiteral("mediaFit"), enumProp(QStringLiteral("matte/media only: how the matte fills the clip"),
@@ -550,10 +554,12 @@ const QList<Op> &ops()
           objectSchema({{QStringLiteral("paths"),
                          arrayProp({{QStringLiteral("type"), QStringLiteral("string")}},
                                    QStringLiteral("Absolute file paths from your own filesystem search"))},
-                        {QStringLiteral("folder"), stringProp(QStringLiteral("Bin folder id (or unique name) new files land in; \"\" for the bin root. Default: the folder the user is viewing. Paths already in the bin stay where they are"))}},
+                        {QStringLiteral("folder"), stringProp(QStringLiteral("Bin folder id (or unique name) new files land in; \"\" for the bin root. Default: the folder the user is viewing. Paths already in the bin stay where they are"))},
+                        {QStringLiteral("previews"), propWithDefault(boolProp(QStringLiteral("false: probe only; video and audio get no thumbnail or filmstrip until something needs one (the bin showing the file, or place_clip), which saves decoding on big scripted imports")), true)}},
                        {QStringLiteral("paths")}) },
         { "list_assets", "media", "See what is in the bin",
-          "List imported assets. Returns {assets:[{index, id, name, kind, dur, w, h, folderId}]}; "
+          "List imported assets. Returns {assets:[{index, id, name, kind, dur, w, h, folderId, proxy?}]}; "
+          "proxy, on videos, is the create_proxies state; "
           "folderId \"\" is the bin root (see list_folders). usage:true adds clips, how many clips use "
           "each asset (inside composites too), and derived, how many assets were made from it (a "
           "stabilized render's original; in use even with clips 0; absent when none). There is no "
@@ -571,6 +577,75 @@ const QList<Op> &ops()
           objectSchema({{QStringLiteral("dry_run"),
                          boolProp(QStringLiteral("List what would go without removing it"))}}),
           false, true },
+        { "list_missing_media", "media", "Find media whose file is gone",
+          "Returns {missing:[{asset, name, path, clips}], n}: assets whose file isn't there any more "
+          "(moved, renamed, or on a drive this session can't see), with how many clips use each. Fix "
+          "them with relink_media.",
+          objectSchema({}), true, false, true },
+        { "relink_media", "media", "Point moved media at its new place",
+          "Relinks missing media in one undo step. {from, to}: a folder or drive that moved, e.g. "
+          "{from:\"/mnt/hd/VIDEOS\", to:\"/mnt/x/VIDEOS\"} (from may be another platform's path, e.g. "
+          "\"D:/footage\"): each missing file under from is pointed at the same place under to (assets, "
+          "clips, masks, transcripts, effect files). {search_dir}: finds each missing asset's file by name "
+          "under that folder; missing files of one name it can't tell apart (no known size, or the same "
+          "one) aren't guessed, and a search cut short at 200,000 files relinks nothing. A file is only "
+          "relinked when it's there, isn't another asset's, and is the "
+          "same size as before (when known); files still in place aren't touched. Returns {relinked:"
+          "[{from, to}], n (paths), matched (from/to only: paths under from), still_missing:[{path, "
+          "reason, tried?, asset?, candidates?}], still_missing_n, truncated?}; lists cut at 200. Error "
+          "locked when a locked track holds one of the clips (a dry_run can't foresee that). "
+          "dry_run:true reports without changing anything.",
+          objectSchema({{QStringLiteral("from"), stringProp(QStringLiteral("Old folder or drive (absolute)"))},
+                        {QStringLiteral("to"), stringProp(QStringLiteral("New folder or drive (absolute)"))},
+                        {QStringLiteral("search_dir"), stringProp(QStringLiteral("Folder to search for missing files by name"))},
+                        {QStringLiteral("dry_run"), boolProp(QStringLiteral("Report only"))}}) },
+        { "create_proxies", "media", "Make preview proxies for footage",
+          "Queue preview proxies (small, fast-decoding copies preview reads instead of the original; "
+          "export always reads the original). Pick assets, the assets of clips, all:true (every video "
+          "in the bin) or all_slow:true (every video that would preview slowly: past 1080p, or "
+          "10-bit HEVC/AV1/VP9; probes each file, error timeout past a minute). A composite isn't a "
+          "video: pick the clips inside it. Built one at a time in the background: poll "
+          "proxy_status. Preview only reads them with useProxies on "
+          "(set_ui_preferences). Not undoable: a proxy is a cache. Returns {queued:[ids], already:"
+          "[{asset, state}], skipped:[{asset|clip, reason: not_video|missing|no_media|gone}], not_slow? (all_slow), queue:"
+          "{busy, progress, current, queued}, useProxies, proxySize}.",
+          objectSchema({{QStringLiteral("assets"),
+                         arrayProp(assetRefProp(), QStringLiteral("Asset ids, names or indexes"))},
+                        {QStringLiteral("clips"),
+                         arrayProp({{QStringLiteral("type"), QStringLiteral("string")}},
+                                   QStringLiteral("Clip ids whose assets get proxies"))},
+                        {QStringLiteral("all"), boolProp(QStringLiteral("Every video asset"))},
+                        {QStringLiteral("all_slow"), boolProp(QStringLiteral("Every video asset that would preview slowly"))}}) },
+        { "proxy_status", "media", "Check preview proxies",
+          "Per-asset proxy state for video assets: none, queued, building, ready (made by Drift at "
+          "the current size) or linked (a file made elsewhere, matched by name). A failed build reads "
+          "none with error. Default every video asset; or pick assets/clips. Returns {proxies:[{asset, "
+          "name, state, error?}], counts:{state: n}, truncated? (rows cut at 500), queue:{busy, "
+          "progress, current, queued}, useProxies, proxySize}; picked assets or clips with no video "
+          "come back in skipped.",
+          objectSchema({{QStringLiteral("assets"),
+                         arrayProp(assetRefProp(), QStringLiteral("Asset ids, names or indexes"))},
+                        {QStringLiteral("clips"),
+                         arrayProp({{QStringLiteral("type"), QStringLiteral("string")}},
+                                   QStringLiteral("Clip ids"))}}),
+          true, false, true },
+        { "remove_proxies", "media", "Delete preview proxies",
+          "Drop queued proxies, stop one being built and delete the proxies Drift made at the current "
+          "size (assets, clips or all:true). A linked proxy (made elsewhere) is never deleted. Not "
+          "undoable. Returns {removed:[ids], kept:[{asset|clip, reason: none|linked|not_video|"
+          "no_media}], queue, useProxies, proxySize}.",
+          objectSchema({{QStringLiteral("assets"),
+                         arrayProp(assetRefProp(), QStringLiteral("Asset ids, names or indexes"))},
+                        {QStringLiteral("clips"),
+                         arrayProp({{QStringLiteral("type"), QStringLiteral("string")}},
+                                   QStringLiteral("Clip ids whose assets lose their proxies"))},
+                        {QStringLiteral("all"), boolProp(QStringLiteral("Every video asset"))}}),
+          false, true },
+        { "cancel_proxies", "media", "Stop building proxies",
+          "Empty the proxy queue (automatic ones from import included) and stop the one being built; "
+          "one whose last frames already landed may still finish. Proxies already made stay. Returns "
+          "{cancelled, queue, useProxies, proxySize}.",
+          objectSchema({}) },
         { "rename_asset", "media", "Rename a bin row",
           "Rename an asset in the bin. Does not rename the file on disk.",
           objectSchema({{QStringLiteral("asset"), assetRefProp()},
@@ -634,7 +709,8 @@ const QList<Op> &ops()
           "the clip covers the whole sequence (what a first camera wants); with `at` it is one clip "
           "starting there, so two in a row read as a camera cut. A camera at rest looks exactly like "
           "no camera, so adding one changes nothing until you move it. Frame it with set_keyframe on "
-          "the returned clip using x/y/z (the eye, world px: canvas top-left origin, y down, +z away "
+          "the returned clip (for a path of several keys, write them with set_keyframes and "
+          "interpolation \"smooth\" in one call) using x/y/z (the eye, world px: canvas top-left origin, y down, +z away "
           "from the viewer; at rest [w/2, h/2, -zoom]), rotationX/rotationY/rotation (pitch, yaw, "
           "roll, degrees; yaw is applied first, so the horizon stays level with zero roll), "
           "anchorX/anchorY/anchorZ (the point of interest, used when camera_look_at is given "
@@ -660,12 +736,16 @@ const QList<Op> &ops()
           objectSchema({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))}},
                        {QStringLiteral("track")}),
           false, true },
-        { "set_track", "timeline", "Mute, hide or lock a lane",
-          "Set track muted/hidden/locked.",
+        { "set_track", "timeline", "Mute, hide, lock or keep a lane out of export",
+          "Set track muted/hidden/locked. exclude_from_export:true makes it a review track: still "
+          "shown and heard while editing, but left out of export_video and flatten_composite (e.g. a "
+          "subtitle lane with the VO script to read along); bakes overlapping it aren't reused. Refused "
+          "on a transform or camera layer. Undoable.",
           objectSchema(mergeProps({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
                                    {QStringLiteral("muted"), boolProp(QStringLiteral("Mute"))},
                                    {QStringLiteral("hidden"), boolProp(QStringLiteral("Hide from composite"))},
-                                   {QStringLiteral("locked"), boolProp(QStringLiteral("Lock against edits"))}},
+                                   {QStringLiteral("locked"), boolProp(QStringLiteral("Lock against edits"))},
+                                   {QStringLiteral("exclude_from_export"), boolProp(QStringLiteral("Keep this track out of export (a review track)"))}},
                                   {}),
                        {QStringLiteral("track")}) },
         { "place_clip", "timeline", "Put media on the timeline",
@@ -680,12 +760,83 @@ const QList<Op> &ops()
                                    {QStringLiteral("track"), integerProp(QStringLiteral("Destination track, or insert position when new_track is true"))},
                                    {QStringLiteral("new_track"), boolProp(QStringLiteral("Insert a new matching track above"))}},
                                   {})) },
+        { "insert_clip", "timeline", "Insert media and push the rest along",
+          "Insert an asset as a clip at an exact point, in one undo step. The point is `at` (seconds), "
+          "or `before`/`after` a clip id. With ripple (default true) every later clip on the track "
+          "moves right by the new clip's length, and so does every later clip on the tracks holding "
+          "their linked audio, so A/V stays in sync; effect adjustments follow their clips. A locked "
+          "track it would change refuses the insert. With ripple the "
+          "point must be at a clip boundary or in a gap, not inside a clip (split it first); "
+          "without it the space must already be free. `in`/`out` are source seconds within the "
+          "media (default: the asset's bin trim, else its whole length); a range past the media "
+          "fails bad_args. `track` defaults to the track of `before`/`after`, else the first that "
+          "accepts the asset. Returns the new clip {id, track, index, start, dur, in, out}, "
+          "moved:[{id, start}] with the final start of every clip the ripple moved, and "
+          "removed_transitions:[ids] when a transition at the cut had to go (its clips no longer touch).",
+          objectSchema(mergeProps({{QStringLiteral("asset"), assetRefProp()},
+                                   {QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds to insert at"))},
+                                   {QStringLiteral("before"), stringProp(QStringLiteral("Clip id to insert before (its start)"))},
+                                   {QStringLiteral("after"), stringProp(QStringLiteral("Clip id to insert after (its end)"))},
+                                   {QStringLiteral("track"), integerProp(QStringLiteral("Destination track"))},
+                                   {QStringLiteral("in"), numberProp(QStringLiteral("Source in, seconds (default: the bin trim's in, else 0)"))},
+                                   {QStringLiteral("out"), numberProp(QStringLiteral("Source out, seconds (default: the bin trim's out, else the media's end)"))},
+                                   {QStringLiteral("ripple"), propWithDefault(boolProp(QStringLiteral("Push later clips right to make room")), true)}},
+                                  {}),
+                       {QStringLiteral("asset")}) },
         { "move_clip", "timeline", "Change a clip's start time",
           "Move a clip on its track. When overlap is off (default) the start may be pushed forward to "
-          "the next gap; the reply carries requested, placed, and reason:\"gap\" when they differ.",
-          objectSchema(mergeProps({{QStringLiteral("at"), numberProp(QStringLiteral("New start seconds"))}},
+          "the next gap; the reply carries requested, placed, and reason:\"gap\" when they differ. "
+          "Or reorder: before/after (a clip id on the same track) puts it at that clip's start or "
+          "end and moves the clips in between by its length, linked tracks too, in one undo step; "
+          "the reply adds moved:[{id, start}] and any removed_transitions. Refused when the two are "
+          "linked, a track is locked, or a clip would land on another or before 0.",
+          objectSchema(mergeProps({{QStringLiteral("at"), numberProp(QStringLiteral("New start seconds"))},
+                                   {QStringLiteral("before"), stringProp(QStringLiteral("Clip id to move in front of"))},
+                                   {QStringLiteral("after"), stringProp(QStringLiteral("Clip id to move behind"))}},
                                   clipRefProps()),
-                       {QStringLiteral("at")}) },
+                       {}) },
+        { "set_sequence", "timeline", "Lay a track out from a list",
+          "Make `track` exactly `clips`, end to end from `start` (default 0), in one undo step. An "
+          "entry is {clip} (a clip on this track, keeping its settings) or {asset}, each with "
+          "optional in/out (source seconds) and name. Unlisted clips on the track are deleted with "
+          "their linked audio and effects; listed clips' linked audio moves with them. Refused, "
+          "nothing changed, for a clip from another track or listed twice, a range past the media, "
+          "clips linked to each other, a locked or adjustment track, or linked audio landing on "
+          "another clip or before 0. Clear a track with delete_clips. Returns "
+          "clips:[{id, start, dur}] in order, created, removed and any removed_transitions.",
+          objectSchema({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
+                        {QStringLiteral("clips"),
+                         arrayProp(objectSchema({{QStringLiteral("clip"), stringProp(QStringLiteral("Clip id on this track"))},
+                                                 {QStringLiteral("asset"), assetRefProp()},
+                                                 {QStringLiteral("in"), numberProp(QStringLiteral("Source in, seconds"))},
+                                                 {QStringLiteral("out"), numberProp(QStringLiteral("Source out, seconds"))},
+                                                 {QStringLiteral("name"), stringProp(QStringLiteral("Clip name"))}},
+                                                {}),
+                                   QStringLiteral("The track's clips, in order"))},
+                        {QStringLiteral("start"), numberProp(QStringLiteral("Where the first clip starts, seconds"))}},
+                       {QStringLiteral("track"), QStringLiteral("clips")}) },
+        { "replace_clip", "timeline", "Put new media under a clip",
+          "Swap the clip's media for another asset in place, in one undo step. The clip keeps its "
+          "name, transform, effects and keyframes; linked audio follows when the new file has sound. "
+          "A silent file leaves linked audio in place, loosely linked. in/out set the new source "
+          "range (neither: the clip's length, shorter if the file runs out; a still takes none). "
+          "With ripple (default) later clips, linked tracks too, move by the change in length; "
+          "without, a longer clip must not land on the next. Returns moved:[{id, start}] and any "
+          "removed_transitions.",
+          objectSchema(mergeProps({{QStringLiteral("asset"), assetRefProp()},
+                                   {QStringLiteral("in"), numberProp(QStringLiteral("Source in, seconds (alone: to the media's end)"))},
+                                   {QStringLiteral("out"), numberProp(QStringLiteral("Source out, seconds (alone: from 0)"))},
+                                   {QStringLiteral("ripple"), propWithDefault(boolProp(QStringLiteral("Move later clips by the change in length")), true)}},
+                                  clipRefProps()),
+                       {QStringLiteral("asset")}) },
+        { "swap_clips", "timeline", "Exchange two clips' places",
+          "Swap two clips on one track in one undo step: each takes the other's place, the clips "
+          "between them move by the difference in length, and linked A/V moves along. Refused for "
+          "different tracks, linked clips, a locked track, or a clip landing on another or before 0. "
+          "Returns moved:[{id, start}] and any removed_transitions.",
+          objectSchema({{QStringLiteral("a"), stringProp(QStringLiteral("Clip id"))},
+                        {QStringLiteral("b"), stringProp(QStringLiteral("Clip id"))}},
+                       {QStringLiteral("a"), QStringLiteral("b")}) },
         { "set_duration", "timeline", "Change timeline length",
           "Set the clip's timeline duration in seconds. Trims source out (or in if reversed). Clamped "
           "to the source material left after the current trim, so the applied dur in the reply may be "
@@ -697,9 +848,15 @@ const QList<Op> &ops()
         { "set_trim", "timeline", "Set source in/out",
           "Set source in/out points in seconds. Recomputes timeline duration from the span and speed. "
           "Values are not validated here — out <= in or a span past the end of the source is clamped "
-          "downstream; read back in/out/dur from the reply.",
+          "downstream; read back in/out/dur from the reply. ripple:true (default false) also trims the "
+          "clip's linked audio the same way and moves every later clip on its track (and on the tracks "
+          "of their linked audio) by the change in length, whatever set_ripple says, in the same undo "
+          "step; the reply then adds moved:[{id, start}]. A locked track it would change refuses it, "
+          "and so does a clip sitting in the space a shorter trim would close.",
           objectSchema(mergeProps({{QStringLiteral("in"), numberProp(QStringLiteral("Source in seconds"))},
-                                   {QStringLiteral("out"), numberProp(QStringLiteral("Source out seconds"))}},
+                                   {QStringLiteral("out"), numberProp(QStringLiteral("Source out seconds"))},
+                                   {QStringLiteral("ripple"),
+                                    propWithDefault(boolProp(QStringLiteral("Later clips follow the new length")), false)}},
                                   clipRefProps()),
                        {QStringLiteral("in"), QStringLiteral("out")}) },
         { "move_to_track", "timeline", "Move a clip to another lane",
@@ -723,6 +880,23 @@ const QList<Op> &ops()
                                     boolProp(QStringLiteral("Also delete the adjustments pinned to the "
                                                             "clip (its effects and masks). Default false"))}},
                                   clipRefProps())),
+          false, true },
+        { "delete_clips", "timeline", "Remove several clips and close up",
+          "Delete several clips in one undo step, with their linked A/V partners. With ripple "
+          "(default true) the space they leave is closed, whatever set_ripple says: later clips "
+          "move left, together with every track joined to theirs by linked clips, so A/V stays in "
+          "sync. Overlapping or adjacent spaces close as one. A clip in the way on one of those "
+          "tracks, or a locked one, refuses the delete (nothing changes). with_effects (default "
+          "true, unlike delete_clip) also deletes the adjustments pinned to them. All ids must "
+          "exist, or nothing is deleted (not_found lists the unknown ones). Returns removed:[ids] "
+          "(partners and effects included) and moved:[{id, start}] with the final start of every "
+          "clip that moved.",
+          objectSchema({{QStringLiteral("clips"), arrayProp(stringProp(QStringLiteral("Clip id")),
+                                                            QStringLiteral("Clips to delete"))},
+                        {QStringLiteral("ripple"), propWithDefault(boolProp(QStringLiteral("Close the space they leave")), true)},
+                        {QStringLiteral("with_effects"),
+                         propWithDefault(boolProp(QStringLiteral("Also delete the adjustments pinned to them")), true)}},
+                       {QStringLiteral("clips")}),
           false, true },
         { "duplicate_clip", "timeline", "Copy a clip after itself",
           "Duplicate a clip immediately after it on the same track. Returns the new clip's id.",
@@ -759,6 +933,37 @@ const QList<Op> &ops()
           "the project. Caps at 32 files (oldest dropped). Not undoable.",
           objectSchema({{QStringLiteral("label"),
                          stringProp(QStringLiteral("Optional note stored only in the reply"))}}) },
+        { "clear_history", "timeline", "Free undo history",
+          "Drop undo history to free memory and shrink the next save: keeps the newest keep_last "
+          "steps that can be undone (default 0: none) and drops every undone (redo) step. The "
+          "project is unchanged; media only the dropped steps used is no longer kept for them. "
+          "Returns {removed, steps, index}. Not undoable.",
+          objectSchema({{QStringLiteral("keep_last"),
+                         propWithDefault(integerProp(QStringLiteral("Newest undoable steps to keep"), 0, 100000), 0)}}),
+          false, true },
+        { "set_history_limit", "timeline", "Cap or stop undo history",
+          "This project's own undo history setting, saved with it; each part set overrides the app "
+          "setting the user picks in Settings › General. steps: most steps that can be undone, "
+          "oldest dropped first; 0 = no history, -1 = no limit; a non-zero value turns history on "
+          "even when the app has it off. persist: true saves history into the project, false keeps "
+          "it for this session only (with history on again, unset persist follows the app setting, "
+          "or the session when the app has history off). reset:true drops both parts first. "
+          "Returns {mode, steps, source, steps_kept}. Not undoable.",
+          objectSchema({{QStringLiteral("steps"),
+                         integerProp(QStringLiteral("Most undoable steps; 0 = no history, -1 = no limit"), -1, 100000)},
+                        {QStringLiteral("persist"),
+                         boolProp(QStringLiteral("Save history into the project (true) or keep it for this session only (false)"))},
+                        {QStringLiteral("reset"),
+                         boolProp(QStringLiteral("Drop this project's setting and use the app's"))}}) },
+        { "history_stats", "timeline", "How much undo history holds",
+          "Returns {steps, undoable, redoable, snapshots (project copies held in memory), "
+          "saved_with_project, history_only_media (count of files only history still uses), "
+          "history_only_media_paths (first 20), settings:{mode, steps, source}}. size:true adds "
+          "json_bytes, the history as uncompressed JSON (what a save adds before compression; memory "
+          "use is higher and not measured); it serialises every state, so it is slow on a long history.",
+          objectSchema({{QStringLiteral("size"),
+                         boolProp(QStringLiteral("Also measure json_bytes (serialises every state)"))}}),
+          true, false, true },
         { "list_snapshots", "timeline", "On-disk history JSON files",
           "Snapshots written by take_snapshot. Returns {snapshots:[{hash, short, path, bytes, savedAt}]}.",
           objectSchema({}), true, false, true },
@@ -768,6 +973,25 @@ const QList<Op> &ops()
           objectSchema({{QStringLiteral("hash"),
                          stringProp(QStringLiteral("Snapshot hash or unique prefix"))}},
                        {QStringLiteral("hash")}) },
+        { "changes", "timeline", "What changed since a revision",
+          "The edits after revision `since` (from inspect or a previous call), oldest first, made in "
+          "the editor or by you, undo/redo included. Each: {revision, source:mcp|ui, kind:edit|undo|redo, "
+          "label, clips:[{id, change:added|removed|changed, track, sequence, fields, from_track, "
+          "split_from}], tracks, assets, settings}; a batch is one entry. Without since, just the "
+          "current revision. more:true: call again from the last revision. The log starts at your "
+          "first call this session and keeps 500 edits; truncated:true (or detail:false on an old "
+          "entry) means some detail is gone: re-read inspect.",
+          objectSchema({{QStringLiteral("since"), integerProp(QStringLiteral("Revision you last saw"))},
+                        {QStringLiteral("limit"), propWithDefault(integerProp(QStringLiteral("Most edits to return"), 1, 500), 50)}}),
+          true, false, true },
+        { "diff", "timeline", "Compare two project versions",
+          "What differs between two states: clips added, removed or changed (with the fields), "
+          "tracks and assets. from/to: a hash from list_history or take_snapshot (8+ chars) or "
+          "\"head\" (default for to). E.g. check a scripted round, or what undo_to would revert.",
+          objectSchema({{QStringLiteral("from"), stringProp(QStringLiteral("Older state: hash or head"))},
+                        {QStringLiteral("to"), stringProp(QStringLiteral("Newer state: hash or head (default)"))}},
+                       {QStringLiteral("from")}),
+          true, false, true },
         { "set_overlap", "timeline", "Allow clips to overlap",
           "Project setting. Off (default): place/move push to the next gap. On: requested start is kept.",
           objectSchema({{QStringLiteral("enabled"), boolProp(QStringLiteral("Allow overlapping clips"))}},
@@ -999,6 +1223,41 @@ const QList<Op> &ops()
           objectSchema({{QStringLiteral("discard"),
                          boolProp(QStringLiteral("Quit even with unsaved changes, losing them"))}}),
           false, true },
+        { "get_performance", "project", "Read playback and cache settings",
+          "The global settings that decide how much is decoded and kept (Settings › Performance and "
+          "Settings › Preview). Returns {settings:{frame_cache_mib (0 = automatic), preview_quality, "
+          "decode_mode, read_ahead_ms, continuous_read_ahead, stale_frame_lag_ms, target_pool_max, "
+          "target_pool_mib, upload_cache_max, upload_cache_mib, reader_history_mib, "
+          "prefer_hardware_export}, frame_cache_budget_mib (what the frame cache is actually capped "
+          "at, automatic resolved), decode_modes:[ids decode_mode takes on this machine]}.",
+          objectSchema({}), true, false, true },
+        { "set_performance", "project", "Tune playback and cache settings",
+          "Change the global settings get_performance reports; only supplied keys change. They are "
+          "the user's own settings, kept across sessions: change them for a round, then pass the "
+          "reply's previous back to restore them. frame_cache_mib caps the decoded frame cache (0 = "
+          "automatic, an eighth of RAM (a sixteenth on Android), at least 128; else 128–8192); clear_cache frees what's cached now. "
+          "preview_quality auto|full|half|quarter|eighth. read_ahead_ms (0–5000) is how much each "
+          "clip decodes ahead during playback. reset:true first puts the Performance page back to its "
+          "defaults (not preview_quality or decode_mode). Out-of-range values are refused, and "
+          "nothing changes. Not undoable. Returns get_performance's reply plus previous:{key: old "
+          "value} for each key that changed.",
+          objectSchema({{QStringLiteral("frame_cache_mib"), integerProp(QStringLiteral("Decoded frame cache cap in MiB; 0 = automatic, else 128–8192"))},
+                        {QStringLiteral("preview_quality"),
+                         enumProp(QStringLiteral("Preview resolution"),
+                                  {QStringLiteral("auto"), QStringLiteral("full"), QStringLiteral("half"),
+                                   QStringLiteral("quarter"), QStringLiteral("eighth")})},
+                        {QStringLiteral("decode_mode"), stringProp(QStringLiteral("auto, software, or a hw: id from get_performance's decode_modes"))},
+                        {QStringLiteral("read_ahead_ms"), integerProp(QStringLiteral("Decode-ahead per clip during playback, 0–5000"))},
+                        {QStringLiteral("continuous_read_ahead"), boolProp(QStringLiteral("Keep decoding until the read-ahead window is full; off decodes one frame ahead per frame shown"))},
+                        {QStringLiteral("stale_frame_lag_ms"), integerProp(QStringLiteral("Drop preview frames this late, 0–1000 (0 never)"))},
+                        {QStringLiteral("target_pool_max"), integerProp(QStringLiteral("Render targets kept, 4–64"))},
+                        {QStringLiteral("target_pool_mib"), integerProp(QStringLiteral("Render target memory cap, 0–4096 (0 none)"))},
+                        {QStringLiteral("upload_cache_max"), integerProp(QStringLiteral("GPU uploads kept, 8–96"))},
+                        {QStringLiteral("upload_cache_mib"), integerProp(QStringLiteral("GPU upload memory cap, 0–4096 (0 none)"))},
+                        {QStringLiteral("reader_history_mib"), integerProp(QStringLiteral("Decoded history per reader, 0–1024 (0 = frame count only)"))},
+                        {QStringLiteral("prefer_hardware_export"), boolProp(QStringLiteral("Export with the GPU encoder when there is one"))},
+                        {QStringLiteral("reset"), boolProp(QStringLiteral("Put the Performance page back to its defaults first"))}}),
+          false, false, true },
         { "memory_stats", "project", "Where Drift's memory goes",
           "Returns {process:{rss_bytes, peak_rss_bytes} (-1 where the platform does not say), "
           "frame_cache:{bytes, frames, gpu_frames, budget_bytes, setting_mib} (decoded frames the "
@@ -1045,6 +1304,32 @@ const QList<Op> &ops()
         { "export_status", "project", "Check an in-flight encode",
           "Returns {busy, progress 0..1, message}. Same data as inspect().export.",
           objectSchema({}), true, false, true },
+        { "wait_idle", "project", "Wait for background work to finish",
+          "Blocks until background work settles or `timeout` seconds pass (default 30, max 600), then "
+          "returns {idle, waited, busy?, suspended?}: busy is what was still running, {kind: count} "
+          "(jobs: by job kind); suspended lists filmstrips/waveforms paused by playback, which don't "
+          "hold the wait. kinds limits the wait; default all: probe, thumbnails, proxy, filmstrips, "
+          "waveforms, export, project (save, load, package, collect), subtitles, reverse, scenes, "
+          "beats, stabilize, segmentation, denoise, faces, tracking, tts, align, bake, source_lab, "
+          "loudness, bin_edit, downloads (add-ons, updates), jobs, and the job kinds transcribe, "
+          "diarize, depth, restore, sfx. Other calls are served while it waits. Not inside apply.",
+          objectSchema({{QStringLiteral("timeout"), numberProp(QStringLiteral("Seconds to wait at most"), 0, 600)},
+                        {QStringLiteral("kinds"), arrayProp(stringProp(QStringLiteral("Kind of work")),
+                                                            QStringLiteral("Only wait for these"))}}),
+          true, false, true },
+
+        { "validate_project", "project", "Check the project is sound",
+          "Read-only health check, quick enough to run after every round. Returns {problems:[{kind, "
+          "message, clip?, asset?, track?, sequence?}], n, counts?:{kind: n}, truncated?, "
+          "open_sequence?}; rows without sequence are on the main timeline. Kinds: missing_media "
+          "(file gone; clips: how many use the asset), missing_asset (a clip's asset isn't in the project), "
+          "asset_mismatch (a clip plays another file than its asset), range_past_media (out point "
+          "past the end of its media), overlap (overlap off; crossfades don't count), "
+          "orphaned_effect (pinned to a clip that's gone), empty_lane, broken_link (A/V link with "
+          "one side missing), dangling_transition. overlap and broken_link are advisory. Covers "
+          "every composite's timeline too (sequence). Fixing is up to you.",
+          objectSchema({{QStringLiteral("limit"), integerProp(QStringLiteral("Rows at most (default 200)"), 1, 1000)}}),
+          true, false, true },
 
         { "list_animated_properties", "keyframes", "See what already has keys",
           "Returns {props:[…]} — only the properties that already carry keyframes on this clip. Empty "
@@ -1068,6 +1353,26 @@ const QList<Op> &ops()
                                    {QStringLiteral("value"), numberProp(QStringLiteral("Property value, in the property's own units (pixels, degrees, 0..1)"))}},
                                   clipRefProps()),
                        {QStringLiteral("prop"), QStringLiteral("at"), QStringLiteral("value")}) },
+        { "set_keyframes", "keyframes", "Write many keys at once (bulk path, smooth)",
+          "Write many keys on one or more properties in ONE call and one undo step; use it instead of a "
+          "set_keyframe per key for camera paths and other dense animation. `keys` maps each prop to an "
+          "array of [seconds, value] pairs ({at, value} objects work too); times are timeline seconds, "
+          "clamped to the clip like set_keyframe. A key at an existing time overwrites its value. "
+          "`replace:true` first clears each listed prop's existing keys. `interpolation` is applied to "
+          "every key of each listed prop afterwards: linear, hold, ease, or smooth (Catmull-Rom auto "
+          "tangents from neighbouring keys, written as bezier handles, so velocity is continuous "
+          "across keys; dense linear keys look jerky, ease stops at every key). Omit it to leave the "
+          "tangents alone. Props are validated like set_keyframe; one bad prop fails bad_args and "
+          "nothing is written. Never writes the other axis of x/y. Returns {written:{prop:count}}.",
+          objectSchema(mergeProps(
+              {{QStringLiteral("keys"), QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                                                    {QStringLiteral("description"), QStringLiteral("{prop: [[seconds, value], ...]} e.g. {\"x\": [[0, 100], [2, 400]], \"z\": [[0, -800], [2, -500]]}")}}},
+               {QStringLiteral("replace"), boolProp(QStringLiteral("Clear each listed prop's existing keys first (default false)"))},
+               {QStringLiteral("interpolation"), enumProp(QStringLiteral("Applied to every key of each listed prop after writing"),
+                                                          {QStringLiteral("linear"), QStringLiteral("hold"),
+                                                           QStringLiteral("ease"), QStringLiteral("smooth")})}},
+              clipRefProps()),
+                       {QStringLiteral("keys")}) },
         { "remove_keyframe", "keyframes", "Delete a key",
           "Remove the keyframe NEAREST to `at` — there is no distance limit, so a time that misses "
           "every key still deletes the closest one. Confirm the exact key time with list_keyframes "
@@ -1077,17 +1382,17 @@ const QList<Op> &ops()
                                   clipRefProps()),
                        {QStringLiteral("prop"), QStringLiteral("at")}),
           false, true },
-        { "set_keyframe_interpolation", "keyframes", "Set linear/hold/ease on a key",
-          "Set the easing preset on the key nearest `at`. SIDE EFFECT: this moves the playhead to `at`, "
-          "which changes the default time of later ops in the same apply batch and the target of "
-          "set_transform — seek back if that matters. For custom beziers, elastic or bounce curves, "
-          "or saved presets, use set_keyframe_easing.",
+        { "set_keyframe_interpolation", "keyframes", "Set linear/hold/ease/smooth on a key",
+          "Set the easing preset on the key nearest `at`; the playhead does not move. Mode smooth writes "
+          "Catmull-Rom auto tangents from the neighbouring keys onto that key (velocity continuous "
+          "through it; for a whole property use set_keyframe_easing smooth+all, or set_keyframes). For "
+          "custom beziers, elastic or bounce curves, or saved presets, use set_keyframe_easing.",
           objectSchema(mergeProps(
               {{QStringLiteral("prop"), animPropProp()},
-               {QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds; the playhead is moved here"))},
+               {QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds of the key"))},
                {QStringLiteral("mode"), enumProp(QStringLiteral("Interpolation"),
                                                 {QStringLiteral("linear"), QStringLiteral("hold"),
-                                                 QStringLiteral("ease")})}},
+                                                 QStringLiteral("ease"), QStringLiteral("smooth")})}},
               clipRefProps()),
                        {QStringLiteral("prop"), QStringLiteral("at"), QStringLiteral("mode")}) },
         { "list_easing_presets", "keyframes", "See the easing presets",
@@ -1097,7 +1402,10 @@ const QList<Op> &ops()
           "Shape the segment that leaves the key at `at` (on the last key, the segment that arrives "
           "there). Give exactly one of `preset` (an id from list_easing_presets; linear and hold are "
           "presets too), `bezier` [x1, y1, x2, y2] with x in 0..1, or `fn` (elastic or bounce, with "
-          "optional amplitude and period). `all:true` applies the curve to every segment of the "
+          "optional amplitude and period). Or `smooth:true` instead of those: Catmull-Rom auto "
+          "tangents from the neighbouring keys (slope = chord between neighbours, handles a third of "
+          "each segment), so velocity is continuous across keys; it shapes the key at `at`, and with "
+          "`all:true` every key of the property. `all:true` applies the curve to every segment of the "
           "property and `at` is then not needed. Does NOT move the playhead.",
           objectSchema(mergeProps(
               {{QStringLiteral("prop"), animPropProp()},
@@ -1111,12 +1419,15 @@ const QList<Op> &ops()
                                                 QStringLiteral("bounceOut"), QStringLiteral("bounceInOut")})},
                {QStringLiteral("amplitude"), numberProp(QStringLiteral("Elastic amplitude (defaults to 1)"))},
                {QStringLiteral("period"), numberProp(QStringLiteral("Elastic period, above 0 (defaults to 0.3)"))},
+               {QStringLiteral("smooth"), boolProp(QStringLiteral("Auto Catmull-Rom tangents instead of preset/bezier/fn (use with all:true for the whole property)"))},
                {QStringLiteral("all"), boolProp(QStringLiteral("Apply to every segment of the property; at is ignored"))}},
               clipRefProps()),
                        {QStringLiteral("prop")}) },
         { "set_keyframe_tangents", "keyframes", "Shape bezier handles",
           "Set tangent handles on the key at `at`, relative to it. Omitted handle fields are sent as 0, "
-          "not left alone — pass all four to avoid flattening the ones you skip.",
+          "not left alone — pass all four to avoid flattening the ones you skip. Writes only this "
+          "property: the editor's X/Y link (which copies x's handles onto y) is OFF over MCP unless "
+          "you pass linked:true.",
           objectSchema(mergeProps(
               {{QStringLiteral("prop"), animPropProp()},
                {QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds"))},
@@ -1124,7 +1435,8 @@ const QList<Op> &ops()
                {QStringLiteral("inDy"), numberProp(QStringLiteral("Incoming handle dy in property units (defaults to 0)"))},
                {QStringLiteral("outDx"), numberProp(QStringLiteral("Outgoing handle dx in seconds (defaults to 0)"))},
                {QStringLiteral("outDy"), numberProp(QStringLiteral("Outgoing handle dy in property units (defaults to 0)"))},
-               {QStringLiteral("corner"), boolProp(QStringLiteral("Break tangent collinearity"))}},
+               {QStringLiteral("corner"), boolProp(QStringLiteral("Break tangent collinearity"))},
+               {QStringLiteral("linked"), boolProp(QStringLiteral("x/y only: also copy the shape onto the other axis, scaled by segment delta, like the editor's link toggle (default false)"))}},
               clipRefProps()),
                        {QStringLiteral("prop"), QStringLiteral("at")}) },
         { "set_keyframe_hold", "keyframes", "Step-hold a key",
@@ -1167,7 +1479,7 @@ const QList<Op> &ops()
 
         { "get_ui_preferences", "ui", "Read editor UI settings",
           "Returns {theme:{overridden, dark}, autoKey, mediaGrid, reopenLastProject, proxySuggestion, "
-          "agentNotifications}. autoKey matters "
+          "useProxies, proxySize, agentNotifications}. autoKey matters "
           "for set_transform: when true, transform writes become keyframes at the playhead (or its `at`), which must be inside the clip.",
           objectSchema({}), true, false, true },
         { "set_theme", "ui", "Set dark or light theme",
@@ -1335,11 +1647,14 @@ QStringList undoExemptOps()
         QStringLiteral("pause"),               QStringLiteral("undo"),
         QStringLiteral("redo"),                QStringLiteral("undo_to"),
         QStringLiteral("take_snapshot"),       QStringLiteral("restore_snapshot"),
+        QStringLiteral("clear_history"),       QStringLiteral("set_history_limit"),
         QStringLiteral("set_overlap"),         QStringLiteral("set_ripple"),
         QStringLiteral("set_snap"),            QStringLiteral("set_loop_work_area"),
         QStringLiteral("export_video"),
         QStringLiteral("save_project"),        QStringLiteral("quit_instance"),
-        QStringLiteral("clear_cache"),
+        QStringLiteral("clear_cache"),         QStringLiteral("set_performance"),
+        QStringLiteral("create_proxies"),      QStringLiteral("remove_proxies"),
+        QStringLiteral("cancel_proxies"),
         QStringLiteral("set_theme"),        QStringLiteral("set_preview_view"),
         QStringLiteral("set_shortcut"),        QStringLiteral("reset_shortcuts"),
         QStringLiteral("export_theme"),        QStringLiteral("import_theme"),
@@ -1405,21 +1720,30 @@ QString agentGuideText()
         "Toolbox ops may also be called by name directly on /mcp instead of through apply, but only "
         "apply gives you one undo step for a batch.\n"
         "\n"
-        "Conventions:\n"
+        "Batches: a big batch in one apply call is fine (and is one undo step); do not split it up to be\n"
+        "careful. For animation paths use set_keyframes (many keys, many props, one op; interpolation\n"
+        "\"smooth\" gives continuous velocity) rather than one set_keyframe per key.\n"
+        "\n"        "Conventions:\n"
         "- Times are seconds. Track index 0 is the top lane.\n"
         "- Identify clips by UUID from inspect({clips:true}); track+index are positional and shift as\n"
         "  tracks and clips move. Clip-ref ops need one or the other — they never fall back to the\n"
         "  selection.\n"
         "- Clip overlap is off by default (place/move snap to the next gap; the reply reports\n"
         "  requested vs placed).\n"
+        "- An op that changes the timeline adds geometry:[{id,track,start,dur,in,out}], the final\n"
+        "  place of every clip it moved, trimmed or created (ripple followers and split pieces too),\n"
+        "  and removed_clips:[ids], so no inspect is needed after it. A batch lists them once, on the\n"
+        "  apply reply. Over 100 rows: geometry_truncated, geometry_total.\n"
         "- Every op returns {ok:true, …} or {ok:false, error:<code>, detail:<text>}. Codes: bad_args,\n"
         "  not_found, type_mismatch (also: wrong clip kind for the op), unknown_op, unknown_toolbox,\n"
-        "  wrong_endpoint, wrong_toolbox, apply_failed, import_failed, import_timeout, export_busy,\n"
+        "  wrong_endpoint, wrong_toolbox, apply_failed, dry_run_failed, import_failed, import_timeout, export_busy,\n"
         "  export_failed, export_timeout, capture_failed, conflict, unsupported (no vector renderer\n"
         "  in this build), market_unavailable, market_error, rate_limited, app_too_old, quota_exceeded,\n"
         "  install_timeout, download_failed,\n"
         "  exists, in_use, not_user_effect, bad_manifest, shader_compile_failed, io_error.\n"
         "- apply is not atomic: on failure the ops before it stay applied; done lists only those.\n"
+        "  apply({ops, atomic:true}) puts the project back instead (rolled_back:true); it refuses ops\n"
+        "  that reach outside the project. apply({ops, dry_run:true}) runs nothing and lists problems.\n"
         "- Toolbox op args are validated against the schema: bad_args (missing/enum/range),\n"
         "  type_mismatch; unknown keys come back as ignored:[…]. The homepage tools (catalog,\n"
         "  toolbox, search, inspect, apply, capture, frames, activity) are checked too and reject\n"
@@ -1439,6 +1763,9 @@ QString agentGuideText()
         "bytes hash to the same value; restore_snapshot loads a disk copy only if it has fallen off\n"
         "the stack (and resets Origin).\n"
         "\n"
+        "wait_idle({timeout, kinds?}) waits for all background work (probes, thumbnails, proxies,\n"
+        "filmstrips, waveforms and every job below) and returns {idle, waited, busy?, suspended?}.\n"
+        "Call it directly, not inside apply.\n"
         "Async jobs return {started:true} immediately. Poll these fields, all of which need\n"
         "inspect({detail:true}) except export:\n"
         "- export_video      -> export.{active,progress}      (or export_status)\n"
@@ -1446,6 +1773,7 @@ QString agentGuideText()
         "- generate_subtitles-> jobs.subtitleGen.{active,progress,status}\n"
         "- detect_scenes     -> jobs.sceneDetect.{active,progress,status}\n"
         "- set_clip_reverse  -> jobs.reverseRender.{active,progress,status}\n"
+        "- create_proxies    -> proxy_status (queue and per-asset state; not under jobs)\n"
         "- market_install    -> jobs.downloads.{active,byKind} (every download, addons and updates included),\n"
         "  or market_downloads for per-job status\n"
         "- transcribe, diarize, tts_generate, sfx_generate, add_voice, voiceover_from_subtitles return {job_id}: poll get_job({id});\n"
@@ -1490,9 +1818,12 @@ QString agentGuideText()
         "\n"
         "Procedural 3D (procedural toolbox):\n"
         "1. procedural_authoring_guide for the Lua API, the manifest and the shader contract.\n"
+        "   Leave the script in world mode and move the view with add_camera + set_keyframes\n"
+        "   (interpolation \"smooth\"); scene:camera is only for self-contained shots.\n"
         "2. create_procedural({slug, manifest, files:{\"main.lua\", \"<n>.vert\", \"<n>.frag\"}}) - the Lua is run and\n"
         "   the shaders compiled first; fix and retry on lua_error / shader_compile_failed.\n"
-        "3. evaluate_procedural({id, t}) for counts, bounds, lights and print output; update_procedural to iterate.\n"
+        "3. evaluate_procedural({id, t}) for counts, bounds, lights and print output; update_procedural to iterate\n"
+        "   (edits:[{file, old, new}] patches a file without resending it).\n"
         "4. add_procedural({id}) places it; set_keyframe on proc.<key> animates a manifest param.\n"
         "\n"
         "Understanding the footage (scene toolbox):\n"
@@ -1535,6 +1866,20 @@ QString agentGuideText()
         "list_shapes → add_shape({shape}) → set_shape_style({style:{kind, layers|layer, cornerRadius,\n"
         "points, …}}); the same *_shape_layer ops as text edit its stack; keyframe shape.<key> and\n"
         "shape.layer.<id>.<field>. A fresh shape has layers \"fill\" and \"stroke\".\n"
+        "\n"
+        "Long sessions and scripted rounds:\n"
+        "- Every undo step holds full project snapshots, so a long round of batches fills memory and,\n"
+        "  unless set_history_limit({persist:false}), the saved file. Run batches that don't need their\n"
+        "  own step as apply({ops, history:false}): it joins the newest step, whose hash changes, and\n"
+        "  with no step to join it can't be undone. Cap history with set_history_limit({steps}) or free\n"
+        "  it with clear_history({keep_last}) between rounds; history_stats and memory_stats show the cost.\n"
+        "- With a step limit set, each new step can renumber list_history: keep hashes, not indices.\n"
+        "- Decoded frames: clear_cache frees them; the frame cache cap is in Settings › Performance.\n"
+        "- Replaced media stays in the bin. list_assets({usage:true}) counts each asset's clips;\n"
+        "  remove_unused_assets({dry_run:true}) lists the unused ones; without dry_run it removes them\n"
+        "  in one undo step.\n"
+        "- delete_clip leaves the clip's effects (adjustments pinned to it) on the timeline, still\n"
+        "  applying to whatever is under them; pass with_effects:true to delete them with it.\n"
         "\n"
         "Toolboxes: media, timeline, canvas, playback, text, effects, project, keyframes, speed, ui, "
         "shapes, motion, model3d, subtitles, segmentation, ai, audio, scene, multicam, market, procedural.\n");
@@ -1721,7 +2066,8 @@ QJsonArray homepageTools()
                        "use or still sits at its default: an absent boolean is false; transform "
                        "{x,y,w,h,rotation,opacity} is always present (values at the playhead) and "
                        "animated lists the keyframed properties. verbose=true returns every field. "
-                       "clip=<uuid> returns just that clip (detail on); track=<n> just that track. "
+                       "clip=<uuid> returns just that clip (detail on); track=<n> just that track, tracks=[n,...] just those; "
+                       "fields=[...] trims clip rows to those keys plus id. "
                        "Async jobs appear under jobs {package|subtitleGen|reverseRender|sceneDetect|downloads} only while "
                        "active, and jobs.list holds get_job's records; beats only once analysed. since=<revision> returns {unchanged:true, revision}."),
         objectSchema({{QStringLiteral("clips"), boolProp(QStringLiteral("Include per-clip rows under tracks[].items"))},
@@ -1737,18 +2083,45 @@ QJsonArray homepageTools()
                       {QStringLiteral("track"),
                        integerProp(QStringLiteral("Track index: return only that track"))},
                       {QStringLiteral("since"),
-                       integerProp(QStringLiteral("Revision from a prior inspect; returns {unchanged:true} when current"))}}),
+                       integerProp(QStringLiteral("Revision from a prior inspect; returns {unchanged:true} when current (not with dirty_detail)"))},
+                      {QStringLiteral("tracks"),
+                       arrayProp(integerProp(QStringLiteral("Track index")),
+                                 QStringLiteral("Return only these tracks (other tracks are left out of tracks[]; empty = all)"))},
+                      {QStringLiteral("fields"),
+                       arrayProp(stringProp(QStringLiteral("Clip row key, e.g. start")),
+                                 QStringLiteral("Clip rows keep only these keys (id always stays; empty = all), e.g. [\"start\",\"duration\",\"name\"]: "
+                                                "a smaller reply for a big timeline"))},
+                      {QStringLiteral("dirty_detail"),
+                       boolProp(QStringLiteral("Add dirty_detail: what the unsaved changes are, vs the saved file. timeline:true "
+                                               "with the clips/tracks/assets that differ, or only other (track_view, work_area, "
+                                               "bookmarks, sequence_tabs, project_info); unknown:true if unsaved with no named difference."))}}),
         toolAnnotations(true, false, true)));
     tools.append(toolDef(
         QStringLiteral("apply"),
-        QStringLiteral("When: Mutate. Runs ops in order and stops at the first failure. NOT atomic — ops before the failure stay applied; the reply is {ok:false, error:\"apply_failed\", stopped:<index>, tool, failed:<that op's error>, done:[results of the ops before it]}. On success: {ok:true, n, done}. Successful mutations collapse into a single undo step labelled from the op names, except the ops listed in catalog.limitations (import, save, playback, export, view-state toggles including set_beat_layers), which undo cannot revert. Only toolbox ops go here — catalog, toolbox, search, inspect, capture, frames, activity, and apply itself return unknown_op, so call those directly. Args are validated against the op schema (required, type, enum, min/max); unknown keys are reported back as ignored:[…]. An ops array cannot reference an id produced earlier in the same batch — end the batch after set_speed_curve or any op that mints a clip id you need next."),
+        QStringLiteral("When: Mutate. Runs ops in order and stops at the first failure. Not atomic unless atomic:true — ops before the failure stay applied; the reply is {ok:false, error:\"apply_failed\", stopped:<index>, tool, failed:<that op's error>, done:[results of the ops before it]}. On success: {ok:true, n, done}. Successful mutations collapse into a single undo step labelled from the op names (with history:false, into the newest existing step instead), except the ops listed in catalog.limitations (import, save, playback, export, view-state toggles including set_beat_layers), which undo cannot revert. Only toolbox ops go here — catalog, toolbox, search, inspect, capture, frames, activity, and apply itself return unknown_op, so call those directly. Args are validated against the op schema (required, type, enum, min/max); unknown keys are reported back as ignored:[…]. An ops array cannot reference an id produced earlier in the same batch — end the batch after set_speed_curve or any op that mints a clip id you need next."),
         objectSchema({{QStringLiteral("ops"),
                        arrayProp(objectSchema({{QStringLiteral("tool"), stringProp(QStringLiteral("Toolbox op name, e.g. place_clip"))},
                                                {QStringLiteral("args"),
                                                 QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                                                             {QStringLiteral("description"), QStringLiteral("That op's arguments, per its inputSchema from toolbox")}}}},
                                               {QStringLiteral("tool")}),
-                                 QStringLiteral("Sequential operations"))}},
+                                 QStringLiteral("Sequential operations"))},
+                      {QStringLiteral("history"),
+                       propWithDefault(boolProp(QStringLiteral(
+                           "false: no undo step of its own, for scripted batches. The changes join the newest "
+                           "undo step (undone and redone with it), and undone steps are dropped")), true)},
+                      {QStringLiteral("atomic"),
+                       propWithDefault(boolProp(QStringLiteral(
+                           "true: all or nothing. If an op fails, the project is put back as it was (no undo step, "
+                           "rolled_back:true; selection and playhead too). Only project edits are allowed: ops whose "
+                           "effects reach outside it (imports, saves, exports, files, clipboards, presets, settings, "
+                           "history, playback, background work, another project) are refused up front")), false)},
+                      {QStringLiteral("dry_run"),
+                       propWithDefault(boolProp(QStringLiteral(
+                           "true: run nothing; check each op's args and the clips, assets and tracks it names "
+                           "(not each op's own rules, such as move_clip needing one of at/before/after). "
+                           "{ok:true, dry_run, n}, or {ok:false, error:\"dry_run_failed\", problems:[{i, tool, error, detail}]}. "
+                           "An id an earlier op would create reads as not_found")), false)}},
                      {QStringLiteral("ops")})));
     tools.append(toolDef(
         QStringLiteral("capture"),
@@ -1769,7 +2142,13 @@ QJsonArray homepageTools()
                        "spaces n evenly; scenes uses detect_scenes thumbnails; at:[…] renders exact times. Every "
                        "tile has its time burned in AND listed in frames[].t, with diff = how different it is from "
                        "the previous kept tile (in-shot motion ~5-10, a cut 30+). Times are timeline seconds, or source "
-                       "seconds when clip/track+index is given (tl is then the timeline time). Tiles past the "
+                       "seconds when clip/track+index is given (tl is then the timeline time). On the timeline "
+                       "(at, uniform, changes), each row also names what shows there: clip (the topmost footage: "
+                       "video or composite, or an image with no video under it; on a track, the clip that started "
+                       "first), its track, src (the source time, for video), over:[ids] (titles, shapes, logos above "
+                       "it) and, inside a transition, with:{clip, side, transition, progress} (the other side, incoming "
+                       "or outgoing; progress 0 all outgoing, 1 all incoming); with no footage there, clip is the topmost clip. With scenes, clip is the clip the "
+                       "shot was scanned from. Tiles past the "
                        "end of the material render black and carry beyond_end:true. Cannot run inside "
                        "apply. Follow up with capture({at}) for a full-size look."),
         objectSchema(mergeProps(

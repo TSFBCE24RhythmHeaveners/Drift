@@ -154,7 +154,10 @@ private slots:
     void compositeTabEditUndoesFromMain();
     void removeEmptyTracksKeepsPopulatedAndUndoes();
     void compositeSeparateAudioAndRemoval();
+    void newTimelineCreatesEmptyComposite();
     void dissolveCompositeRoundTrip();
+    void dissolveCompositeKeepsTrackNumbers();
+    void replaceInterruptedByNewProjectClearsBusyRow();
     void retimeKeepsDisabledKeyframeTrackDisabled();
     void effectStackCopyPasteAppendsAndRescales();
     void chromaKeyHueIsFlaggedForTheColourSwatch();
@@ -212,6 +215,17 @@ private slots:
     void splitLeftKeepsLinkedAudioInSync();
     void splitRightKeepsLinkedAudioInSync();
     void edgeTrimRipplesFollowers();
+    void rippleDeleteMovesLinkedFollowersOnce();
+    void rippleDeleteClosesOverlappingRangesByTheirUnion();
+    void rippleDeleteMovesTracksJoinedThroughAThirdTrack();
+    void rippleDeleteKeepsTheGapWhenAClipIsInTheWay();
+    void rippleDeleteKeepsTheGapWhenALinkedTrackIsLocked();
+    void rippleDeleteOfACrossfadedClipClosesOnlyItsOwnPart();
+    void rippleDeleteTrimsAtSharedEdges();
+    void rippleDeleteOfACrossfadedLinkedPairClosesTheFreePart();
+    void rippleDeleteClosesEachGroupOnItsOwn();
+    void rippleDeleteTrimsPastSeveralKeptClips();
+    void rippleDeleteClosesALaterGroupAfterARefusal();
     void snapRadiusFollowsZoom();
     void splitLeftRightKeepOuterFades();
     void audioTrackTakesTransitions();
@@ -276,6 +290,7 @@ private slots:
     void decodeModePickerListsOnlyWorkingBackends();
     void decodeModePickerMarksOffGpuBackends();
     void exportFrameRatePersistsAcrossSessions();
+    void exportAudioOnlyIsExposedWhileExporting();
     void lastExportSettingsNormalisesStringTypedValues();
     void textStyleBlendModeKeyframesAndEffects();
     void previewSetTextRectScalesPixelSize();
@@ -386,6 +401,7 @@ private slots:
     void multicamSetUpBuildsAWorkingRigFromTheBin();
     void adjustmentLayerCreationAndCompositing();
     void clipEffectsLiveOnALinkedAdjustmentLane();
+    void addedEffectsLayerIsHiddenAndTheClipStaysSelected();
     void splittingAGradedClipKeepsEffectsOnBothHalves();
     void agentCallNotificationsFollowThePreference();
     void deletingWithEffectsAlsoHandlesASelectedAdjustment();
@@ -419,6 +435,7 @@ private slots:
     void droppingAMaskOnEmptyTrackSpaceMakesALaneClip();
     void droppingAMaskAssetOnAClipPinsAMatte();
     void convertClipToMaskMakesALaneMatteBelow();
+    void useTextClipAsSequenceMask();
     void assetMaskRoleRoundTripsThroughUndo();
     void addingAnEffectSelectsTheAdjustmentCarryingIt();
     void effectAdjustmentReportsItsSourceClipsFaceState();
@@ -435,6 +452,7 @@ private slots:
     void maskEditSessionMovesVertexOnPathKeyedMask();
     void maskEditSessionMovesKeyframedRect();
     void maskEditSessionResizeRotateAndSnap();
+    void maskLockAspectPersistsAndGatesCornerResize();
     void maskEditSessionNudgeAndBars();
     void trackingTranslationDrivesMaskKeys();
     void trackingPlanarConvertsRectangleToFreeform();
@@ -1582,6 +1600,42 @@ void EditorStateTest::compositeTabEditUndoesFromMain()
     QVERIFY(state.sequenceTabs().isEmpty());
 }
 
+void EditorStateTest::newTimelineCreatesEmptyComposite()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    const int assetsBefore = state.project()->assets().size();
+
+    state.newTimeline();
+    QCOMPARE(state.project()->assets().size(), assetsBefore + 1);
+    const QString sequenceId = state.activeSequenceId();
+    QVERIFY(!sequenceId.isEmpty());
+    QCOMPARE(state.sequenceTabs().size(), 1);
+    QVERIFY(!state.project()->tracks().isEmpty());
+    const drift::MediaAsset *asset = nullptr;
+    for (const drift::MediaAsset &candidate : state.project()->assets()) {
+        if (candidate.sequenceId == sequenceId)
+            asset = &candidate;
+    }
+    QVERIFY(asset);
+    QCOMPARE(asset->name, QStringLiteral("Timeline 1"));
+    QCOMPARE(asset->durationUs, drift::TimeUs(0));
+
+    state.openSequence(QString());
+    state.newTimeline();
+    state.openSequence(QString());
+    QVERIFY(state.project()->hasSequence(sequenceId));
+    QCOMPARE(state.project()->sequenceIds().size(), 2);
+
+    const drift::Project loaded = drift::Project::fromJson(state.project()->toJson());
+    QCOMPARE(loaded.sequenceIds().size(), 2);
+    QVERIFY(loaded.hasSequence(sequenceId));
+    QVERIFY(!loaded.sequenceTracks(sequenceId).isEmpty());
+
+    state.undo();
+    QCOMPARE(state.project()->sequenceIds().size(), 1);
+}
+
 void EditorStateTest::dissolveCompositeRoundTrip()
 {
     AssetLibrary library;
@@ -1636,6 +1690,113 @@ void EditorStateTest::dissolveCompositeRoundTrip()
 
     state.undo();
     QCOMPARE(project.sequenceIds().size(), 1);
+}
+
+// #48: rows a dissolve adds take the next free numbers; tracks already there keep theirs.
+void EditorStateTest::dissolveCompositeKeepsTrackNumbers()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    setUpTwoClipSelection(library, state);
+    drift::Track second;
+    second.type = drift::TrackType::Video;
+    drift::Clip moved = state.project()->tracks()[0].clips.takeLast();
+    second.clips.append(moved);
+    state.project()->tracks().append(second);
+    state.project()->ensureTrackIds();
+    state.setSelection({QVariantMap{{QStringLiteral("track"), 0}, {QStringLiteral("clip"), 0}},
+                        QVariantMap{{QStringLiteral("track"), 1}, {QStringLiteral("clip"), 0}}});
+    state.makeCompositeFromSelection();
+    // Inside the composite, its tracks are numbered on their own.
+    const QString sequenceId = state.project()->sequenceIds().constFirst();
+    QList<int> inner;
+    for (const drift::Track &track : state.project()->sequenceTracks(sequenceId))
+        inner.append(track.number);
+    std::sort(inner.begin(), inner.end());
+    QCOMPARE(inner, (QList<int>{1, 2}));
+
+    // Busy tracks everywhere the composite plays, so the dissolve has to add rows.
+    int compositeTrack = -1;
+    drift::TimeUs end = 0;
+    for (int t = 0; t < state.project()->tracks().size(); ++t)
+        for (const drift::Clip &clip : state.project()->tracks().at(t).clips)
+            if (clip.type == drift::ClipType::Composite) {
+                compositeTrack = t;
+                end = clip.timelineEnd();
+            }
+    QVERIFY(compositeTrack >= 0);
+    for (int t = 0; t < state.project()->tracks().size(); ++t) {
+        if (t == compositeTrack)
+            continue;
+        drift::Clip filler;
+        filler.id = QStringLiteral("filler-%1").arg(t);
+        filler.type = drift::ClipType::Text;
+        filler.timelineStart = 0;
+        filler.timelineDuration = end;
+        state.project()->tracks()[t].clips = {filler};
+    }
+    drift::Track top{.type = drift::TrackType::Video};
+    drift::Clip topFiller;
+    topFiller.id = QStringLiteral("filler-top");
+    topFiller.type = drift::ClipType::Text;
+    topFiller.timelineDuration = end;
+    top.clips = {topFiller};
+    state.project()->tracks().prepend(top);
+    state.project()->ensureTrackIds();
+    compositeTrack += 1;
+    QHash<QString, int> numbers;
+    for (const drift::Track &track : state.project()->tracks())
+        numbers.insert(track.id, track.number);
+
+    state.dissolveComposite(compositeTrack, 0);
+    QSet<QString> seen;
+    for (const drift::Track &track : state.project()->tracks()) {
+        if (numbers.contains(track.id))
+            QCOMPARE(track.number, numbers.value(track.id));
+        if (track.number == 0)
+            continue;
+        const QString key = drift::trackNumberKind(track) + QString::number(track.number);
+        QVERIFY2(!seen.contains(key), qPrintable(key));
+        seen.insert(key);
+    }
+}
+
+// #74: a replace whose probe a new project drops left its bin row busy until restart.
+void EditorStateTest::replaceInterruptedByNewProjectClearsBusyRow()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto writeImage = [&](const QString &name) {
+        QImage image(32, 24, QImage::Format_RGB32);
+        image.fill(Qt::darkMagenta);
+        const QString path = dir.filePath(name);
+        return image.save(path) ? path : QString();
+    };
+    const QString first = writeImage(QStringLiteral("first.png"));
+    const QString second = writeImage(QStringLiteral("second.png"));
+    QVERIFY(!first.isEmpty() && !second.isEmpty());
+
+    AssetLibrary library;
+    AppController state(&library);
+    const QStringList ids = library.importLocalPaths({first});
+    QVERIFY(!ids.isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!library.isImportPending(ids.first()), 10000);
+
+    QVERIFY(state.bin()->replaceSource(library.indexOfId(ids.first()), QUrl::fromLocalFile(second)));
+    QCOMPARE(state.bin()->replacingAssetId(), ids.first());
+    QSignalSpy busy(state.bin(), &MediaBinController::replacingAssetIdChanged);
+    QSignalSpy finished(state.bin(), &MediaBinController::replaceFinishedFor);
+    // Before the probe lands.
+    state.projectFile()->newProject(/*silent=*/true);
+    QVERIFY(state.bin()->replacingAssetId().isEmpty());
+    QVERIFY(busy.count() >= 1);
+    // Whoever waits on it (the replace dialog, the Source Lab) hears it failed.
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(finished.first().at(0).toString(), ids.first());
+    QCOMPARE(finished.first().at(1).toBool(), false);
+    // And it stays clear once the dropped probe would have landed.
+    QTest::qWait(500);
+    QVERIFY(state.bin()->replacingAssetId().isEmpty());
 }
 
 void EditorStateTest::compositeSeparateAudioAndRemoval()
@@ -5126,6 +5287,53 @@ void EditorStateTest::exportFrameRatePersistsAcrossSessions()
     QCOMPARE(remembered.value(QStringLiteral("fpsNum")).toInt(), 30000);
     QCOMPARE(remembered.value(QStringLiteral("fpsDen")).toInt(), 1001);
     QCOMPARE(relaunched.lastExportFolder(), dir.path());
+}
+
+// #61: the export progress dialog said "Exporting video" for an audio-only export. It reads
+// exportAudioOnly, set when the export starts.
+void EditorStateTest::exportAudioOnlyIsExposedWhileExporting()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftTest"));
+    const auto restore = qScopeGuard([&] {
+        QSettings().remove(QStringLiteral("export"));
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        QStandardPaths::setTestModeEnabled(false);
+    });
+    QSettings().remove(QStringLiteral("export"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    AssetLibrary library;
+    AppController state(&library);
+    QVERIFY(!state.exportAudioOnly());
+
+    // What the property says at the moment the export starts, for each kind of export.
+    QList<bool> seenAtStart;
+    connect(&state, &AppController::exportInProgressChanged, &state, [&] {
+        if (state.exportInProgress())
+            seenAtStart.append(state.exportAudioOnly());
+    });
+
+    // Audio only, a video, then a GIF with audioOnly also set (a GIF wins, as in the exporter).
+    const QList<QPair<bool, bool>> kinds{{true, false}, {false, false}, {true, true}};
+    for (const auto &[audioOnly, gif] : kinds) {
+        QVariantMap settings;
+        settings.insert(QStringLiteral("audioOnly"), audioOnly);
+        settings.insert(QStringLiteral("gifExport"), gif);
+        settings.insert(QStringLiteral("videoCodecId"), QStringLiteral("h264"));
+        settings.insert(QStringLiteral("audioCodecId"), QStringLiteral("aac"));
+        const QString name = gif ? QStringLiteral("out.gif") : audioOnly ? QStringLiteral("out.m4a") : QStringLiteral("out.mp4");
+        QSignalSpy finished(&state, &AppController::exportFinished);
+        state.exportWithSettings(QUrl::fromLocalFile(dir.filePath(name)), settings);
+        // Must not outlive the worker: it captures `state`.
+        QVERIFY(finished.wait(15000));
+    }
+    QCOMPARE(seenAtStart, (QList<bool>{true, false, false}));
 }
 
 // A real relaunch re-parses the INI and every value comes back a QString. QML reads
@@ -11714,6 +11922,45 @@ void EditorStateTest::redoAfterASpeedDragKeepsTheGradeOnTheClip()
     QCOMPARE(grade->timelineDuration, host.timelineDuration);
 }
 
+void EditorStateTest::addedEffectsLayerIsHiddenAndTheClipStaysSelected()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.selectClip(0, 0);
+    const QString clipId = state.project()->tracks().at(0).clips.at(0).id;
+
+    state.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+
+    QCOMPARE(state.project()->tracks().at(state.selectedTrack()).clips.at(state.selectedClip()).id, clipId);
+    QCOMPARE(state.selectedClipEffects().size(), 1);
+    QVERIFY(state.selectedClipData().value(QStringLiteral("caps")).toStringList()
+                .contains(QStringLiteral("effectable")));
+
+    QCOMPARE(state.project()->tracks().size(), 2);
+    QVERIFY(state.project()->tracks().at(1).clips.at(0).hiddenInLane);
+    QCOMPARE(state.adjustmentLaneCount(0), 0);
+    QCOMPARE(static_cast<TimelineClipsModel *>(state.clipsModel(0))->rows().at(0).fxLayer, 1);
+
+    state.toggleEffectsLayerRevealed(0, 0);
+    QVERIFY(!state.project()->tracks().at(1).clips.at(0).hiddenInLane);
+    QCOMPARE(state.adjustmentLaneCount(0), 1);
+    QCOMPARE(static_cast<TimelineClipsModel *>(state.clipsModel(0))->rows().at(0).fxLayer, 2);
+    state.undo();
+    QVERIFY(state.project()->tracks().at(1).clips.at(0).hiddenInLane);
+    state.redo();
+    QVERIFY(!state.project()->tracks().at(1).clips.at(0).hiddenInLane);
+
+    QCOMPARE(state.effectsLayerHostClip(1, 0, 0, 0.1), 0);
+    QCOMPARE(state.effectsLayerHostClip(1, 0, 0, 1e6), -1);
+    state.hideEffectsLayer(1, 0);
+    QVERIFY(state.project()->tracks().at(1).clips.at(0).hiddenInLane);
+
+    const drift::Project back = drift::Project::fromJson(state.project()->toJson());
+    QVERIFY(back.tracks().at(1).clips.at(0).hiddenInLane);
+    QVERIFY(!back.tracks().at(0).clips.at(0).hiddenInLane);
+}
+
 void EditorStateTest::clipEffectsLiveOnALinkedAdjustmentLane()
 {
     AssetLibrary library;
@@ -12276,9 +12523,8 @@ void EditorStateTest::maskingFrameFollowsTheSelectedClip()
 // as well made the handles undiscoverable — you had to already know they existed.
 // The assets-panel drop path. Dropping onto a clip pins a mask and selects the adjustment it
 // minted — that selection is what opens the Masks inspector and the preview handles.
-// An effect stack is only editable in the inspector of the adjustment holding it — the Effects
-// tab is not offered for the clip the effect was aimed at — so adding one has to leave the
-// selection there rather than back on the media clip.
+// The Effects tab is offered on the clip itself and edits its linked layer's stack, so adding an
+// effect leaves the clip selected instead of jumping to the layer.
 void EditorStateTest::addingAnEffectSelectsTheAdjustmentCarryingIt()
 {
     AssetLibrary library;
@@ -12290,11 +12536,7 @@ void EditorStateTest::addingAnEffectSelectsTheAdjustmentCarryingIt()
 
     const drift::Clip &selected =
         state.project()->tracks().at(state.selectedTrack()).clips.at(state.selectedClip());
-    QCOMPARE(selected.type, drift::ClipType::Adjustment);
-    QCOMPARE(selected.adjustmentKind, drift::AdjustmentKind::VideoEffects);
-    QVERIFY(state.project()->tracks().at(state.selectedTrack()).isAdjustmentLane());
-    QCOMPARE(state.selectedClipData().value(QStringLiteral("adjustmentKind")).toString(),
-             QStringLiteral("videoEffects"));
+    QCOMPARE(selected.type, drift::ClipType::Video);
     QCOMPARE(state.selectedClipEffects().size(), 1);
 
     // A second effect on the same clip reuses that adjustment and stays on it.
@@ -12488,6 +12730,122 @@ void EditorStateTest::convertClipToMaskMakesALaneMatteBelow()
     QCOMPARE(masks.constFirst().mask.shape, drift::MaskShape::Media);
     QCOMPARE(masks.constFirst().mask.mediaTimeBase, drift::MaskMediaTimeBase::Adjustment);
     QCOMPARE(masks.constFirst().mask.mediaSrcOffsetUs, drift::secondsToUs(1.5));
+}
+
+void EditorStateTest::useTextClipAsSequenceMask()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.project()->tracks().clear();
+    state.project()->tracks().append(drift::Track{.type = drift::TrackType::Video});
+    state.project()->tracks().append(drift::Track{.type = drift::TrackType::Video});
+
+    drift::Clip text;
+    text.id = QStringLiteral("title");
+    text.type = drift::ClipType::Text;
+    text.name = QStringLiteral("Big Title");
+    text.timelineStart = drift::secondsToUs(1.0);
+    text.timelineDuration = drift::secondsToUs(3.0);
+    text.srcOut = text.timelineDuration;
+    state.project()->tracks()[0].clips.append(text);
+
+    drift::Clip under;
+    under.id = QStringLiteral("under");
+    under.type = drift::ClipType::Video;
+    under.timelineDuration = drift::secondsToUs(6.0);
+    under.srcOut = under.timelineDuration;
+    state.project()->tracks()[1].clips.append(under);
+
+    const QVariantList ref{QVariantMap{{QStringLiteral("track"), 0}, {QStringLiteral("clip"), 0}}};
+    QVERIFY(state.masking()->canConvertClipsToSequenceMask(ref));
+    // The video clip has no track below it.
+    QVERIFY(!state.masking()->canConvertClipsToSequenceMask(
+        {QVariantMap{{QStringLiteral("track"), 1}, {QStringLiteral("clip"), 0}}}));
+    QVERIFY(!state.masking()->canConvertClipsToSequenceMask({QVariantMap{{QStringLiteral("track"), 5}}}));
+
+    state.project()->tracks()[0].clips[0].sequenceId = QStringLiteral("nested");
+    QVERIFY(!state.masking()->canConvertClipsToSequenceMask(ref));
+    QVERIFY(!state.masking()->convertClipsToSequenceMask(ref));
+    state.project()->tracks()[0].clips[0].sequenceId.clear();
+
+    QVERIFY(state.masking()->convertClipsToSequenceMask(ref));
+
+    drift::Project &project = *state.project();
+    QVERIFY(project.tracks().at(0).clips.isEmpty());
+    QCOMPARE(project.sequenceIds().size(), 1);
+    const QString sequenceId = project.sequenceIds().constFirst();
+    const QList<drift::Track> &inner = project.sequenceTracks(sequenceId);
+    QCOMPARE(inner.size(), 1);
+    QCOMPARE(inner.constFirst().clips.size(), 1);
+    QCOMPARE(inner.constFirst().clips.constFirst().id, QStringLiteral("title"));
+    QCOMPARE(inner.constFirst().clips.constFirst().timelineStart, drift::TimeUs(0));
+
+    int composites = 0;
+    for (const drift::MediaAsset &asset : project.assets()) {
+        if (asset.kind == drift::MediaKind::Composite) {
+            ++composites;
+            QCOMPARE(asset.sequenceId, sequenceId);
+            QCOMPARE(asset.name, QStringLiteral("Big Title mask"));
+        }
+    }
+    QCOMPARE(composites, 1);
+
+    drift::Clip mask;
+    int maskTrack = -1;
+    int maskIndex = -1;
+    for (int t = 0; t < project.tracks().size(); ++t) {
+        const drift::Track &track = project.tracks().at(t);
+        for (int c = 0; c < track.clips.size(); ++c) {
+            if (track.clips.at(c).adjustmentKind == drift::AdjustmentKind::Mask) {
+                mask = track.clips.at(c);
+                maskTrack = t;
+                maskIndex = c;
+            }
+        }
+    }
+    QVERIFY(maskTrack > 0);
+    QCOMPARE(mask.mask.shape, drift::MaskShape::Sequence);
+    QCOMPARE(mask.mask.sequenceId, sequenceId);
+    QCOMPARE(mask.mask.mediaChannel, drift::MaskMediaChannel::Alpha);
+    QCOMPARE(mask.timelineStart, drift::secondsToUs(1.0));
+    QCOMPARE(mask.timelineDuration, drift::secondsToUs(3.0));
+    QCOMPARE(state.masking()->maskSequenceId(maskTrack, maskIndex), sequenceId);
+    QCOMPARE(state.masking()->maskSequenceId(1, 0), QString());
+
+    const QList<drift::LaneMask> lane =
+        drift::laneMasksAt(project, 1, drift::secondsToUs(2.0), QStringLiteral("under"));
+    QCOMPARE(lane.size(), 1);
+    QCOMPARE(lane.constFirst().mask.sequenceId, sequenceId);
+
+    QString error;
+    const drift::Project loaded = drift::Project::fromJson(project.toJson(), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(loaded.hasSequence(sequenceId));
+    QCOMPARE(loaded.tracks().at(maskTrack).clips.at(maskIndex).mask.sequenceId, sequenceId);
+    QCOMPARE(loaded.tracks().at(maskTrack).clips.at(maskIndex).mask.shape, drift::MaskShape::Sequence);
+
+    // The bin item goes away but the mask still plays the sequence, so it stays.
+    const QStringList assetIds = project.assetOrder();
+    for (const QString &id : assetIds)
+        project.assets().remove(id);
+    project.assetOrder().clear();
+    state.pruneOrphanSequences();
+    QVERIFY(project.hasSequence(sequenceId));
+    QCOMPARE(project.sequenceIds().size(), 1);
+
+    project.tracks()[maskTrack].clips.removeAt(maskIndex);
+    state.pruneOrphanSequences();
+    QVERIFY(project.sequenceIds().isEmpty());
+
+    // One undo step (the later edits above bypassed the stack) restores the clip and drops the mask.
+    state.undo();
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    QCOMPARE(state.project()->tracks().at(0).clips.constFirst().id, QStringLiteral("title"));
+    QVERIFY(state.project()->sequenceIds().isEmpty());
+    for (const drift::Track &track : state.project()->tracks()) {
+        for (const drift::Clip &clip : track.clips)
+            QVERIFY(clip.adjustmentKind != drift::AdjustmentKind::Mask);
+    }
 }
 
 void EditorStateTest::assetMaskRoleRoundTripsThroughUndo()
@@ -13028,8 +13386,62 @@ void EditorStateTest::maskEditSessionResizeRotateAndSnap()
     session->moveBody(0.504, 0.6, false);
     QVERIFY(qAbs(session->liveX() - 0.5) < 1e-9);
     QVERIFY(qAbs(session->liveY() - 0.6) < 1e-9);
+    QCOMPARE(session->snapGuideX(), 0.5);
+    QCOMPARE(session->snapGuideY(), 0.5);
     session->moveBody(0.504, 0.6, true);
     QVERIFY(qAbs(session->liveX() - 0.504) < 1e-9);
+    QCOMPARE(session->snapGuideX(), -1.0);
+    session->cancel();
+
+    // Resize: the moving edge pulls to the frame edge, Ctrl bypasses, the locked corner snaps one axis.
+    QVERIFY(session->begin(id2, 1000, 1000));
+    session->beginResize(1, 0, 0.6, 0.5);
+    session->resize(0.996, 0.5, false);
+    QVERIFY(qAbs(session->liveW() - 0.6) < 1e-9);
+    QVERIFY(qAbs(session->liveX() - 0.7) < 1e-9);
+    QCOMPARE(session->snapGuideX(), 1.0);
+    session->resize(0.996, 0.5, false, true);
+    QVERIFY(qAbs(session->liveW() - 0.596) < 1e-9);
+    QCOMPARE(session->snapGuideX(), -1.0);
+    session->cancel();
+    QVERIFY(session->begin(id2, 1000, 1000));
+    session->beginResize(1, 1, 0.6, 0.6);
+    session->resize(0.996, 0.9, true);
+    QVERIFY(qAbs(session->liveW() - 0.6) < 1e-9);
+    QVERIFY(qAbs(session->liveH() - 0.6) < 1e-9);
+    QCOMPARE(session->snapGuideY(), -1.0);
+    session->cancel();
+}
+
+void EditorStateTest::maskLockAspectPersistsAndGatesCornerResize()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.masking()->addShapeMask(0, 0, QStringLiteral("rectangle"), 0.5, 0.5, 0.3, 0.2);
+    const drift::ClipRef ref = drift::linkedMaskAdjustments(*state.project(), 0, 0).constFirst();
+    QVERIFY(!pinnedMaskClip(state).mask.lockAspect);
+    QVERIFY(!QJsonDocument(state.project()->toJson()).toJson().contains("lockAspect"));
+
+    state.masking()->setMaskProperty(ref.trackIndex, ref.clipIndex, QStringLiteral("lockAspect"), true);
+    QVERIFY(pinnedMaskClip(state).mask.lockAspect);
+    const QJsonObject json = state.project()->toJson();
+    QVERIFY(QJsonDocument(json).toJson().contains("lockAspect"));
+    const drift::Project loaded = drift::Project::fromJson(json);
+    const drift::ClipRef lref = drift::linkedMaskAdjustments(loaded, 0, 0).constFirst();
+    QVERIFY(loaded.tracks()[lref.trackIndex].clips[lref.clipIndex].mask.lockAspect);
+    state.undo();
+    QVERIFY(!pinnedMaskClip(state).mask.lockAspect);
+
+    // The overlay passes lockAspect XOR Shift: a corner keeps the ratio only when that is true.
+    MaskEditSession *session = state.masking()->editSession();
+    const QString id = pinnedMaskClip(state).id;
+    QVERIFY(session->begin(id, 1000, 1000));
+    session->beginResize(1, 1, 0.65, 0.6);
+    session->resize(0.8, 0.62, false, true);
+    QVERIFY(qAbs(session->liveW() / session->liveH() - 0.3 / 0.2) > 0.05);
+    session->resize(0.8, 0.62, true, true);
+    QVERIFY(qAbs(session->liveW() / session->liveH() - 0.3 / 0.2) < 1e-9);
     session->cancel();
 }
 
@@ -13392,6 +13804,7 @@ void EditorStateTest::trackRowHeightsForAdjustmentsAndLanes()
     appendTwoVideoClips(*laned.project());
     laned.selectClip(0, 0);
     laned.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+    laned.toggleEffectsLayerRevealed(0, 0);
     const int parent = 0;
     const QList<int> lanes = drift::adjustmentLaneIndexes(*laned.project(), parent);
     QCOMPARE(lanes.size(), 1);
@@ -13413,6 +13826,7 @@ void EditorStateTest::collapsedLanesAndEmptyLaneCleanup()
     AppController state(&library);
     appendTwoVideoClips(*state.project());
     state.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+    state.toggleEffectsLayerRevealed(0, 0);
     state.addAudioEffect(0, 0, QStringLiteral("space.autopan"));
     const QVariantMap metrics{{QStringLiteral("video"), 65.0}, {QStringLiteral("lane"), 20.0},
                               {QStringLiteral("ribbon"), 3.0}};
@@ -14443,6 +14857,424 @@ void EditorStateTest::edgeTrimRipplesFollowers()
         QCOMPARE(plain.project()->tracks().at(t).clips.at(0).timelineStart, drift::secondsToUs(1.0));
         QCOMPARE(plain.project()->tracks().at(t).clips.at(1).timelineStart, drift::secondsToUs(4.0));
     }
+}
+
+// #60: the timeline's ripple delete closed each removed clip's range track by track, so a linked
+// pair's followers moved once for the video range and again for the audio one.
+static drift::Clip *clipWithId(drift::Project &project, const QString &id)
+{
+    for (drift::Track &track : project.tracks())
+        for (drift::Clip &clip : track.clips)
+            if (clip.id == id)
+                return &clip;
+    return nullptr;
+}
+
+void EditorStateTest::rippleDeleteMovesLinkedFollowersOnce()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendLinkedVideoAudioPair(*state.project());
+    appendFollowerPair(*state.project());
+    for (int t = 0; t < 2; ++t)
+        state.project()->tracks()[t].clips[1].timelineStart = drift::secondsToUs(10.0);
+    state.setRippleEnabled(true);
+
+    state.selectClip(0, 0);
+    state.deleteSelectedClip();
+    const drift::Project &p = *state.project();
+    for (int t = 0; t < 2; ++t) {
+        QCOMPARE(p.tracks().at(t).clips.size(), 1);
+        QCOMPARE(p.tracks().at(t).clips.at(0).timelineStart, drift::secondsToUs(6.0));
+    }
+    QVERIFY(state.lastMessageSeverity() != QLatin1String("warning"));
+
+    state.undo();
+    for (int t = 0; t < 2; ++t) {
+        QCOMPARE(state.project()->tracks().at(t).clips.size(), 2);
+        QCOMPARE(state.project()->tracks().at(t).clips.at(1).timelineStart, drift::secondsToUs(10.0));
+    }
+    state.redo();
+    for (int t = 0; t < 2; ++t) {
+        QCOMPARE(state.project()->tracks().at(t).clips.size(), 1);
+        QCOMPARE(state.project()->tracks().at(t).clips.at(0).timelineStart, drift::secondsToUs(6.0));
+    }
+}
+
+void EditorStateTest::rippleDeleteClosesOverlappingRangesByTheirUnion()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendLinkedVideoAudioPair(*state.project());
+    drift::Project &project = *state.project();
+    project.tracks().removeAt(1);
+    drift::Clip &first = project.tracks()[0].clips[0];
+    first.linkId.clear();
+    drift::Clip second = first;
+    second.id = QStringLiteral("second");
+    second.timelineStart = drift::secondsToUs(2.0);
+    drift::Clip later = first;
+    later.id = QStringLiteral("later");
+    later.timelineStart = drift::secondsToUs(10.0);
+    project.tracks()[0].clips.append(second);
+    project.tracks()[0].clips.append(later);
+    state.setRippleEnabled(true);
+
+    state.selectClip(0, 0);
+    state.addToSelection(0, 1);
+    state.deleteSelectedClip();
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    // [0,4) and [2,6) close as [0,6): 10 s - 6 s, not 10 s - 8 s.
+    QCOMPARE(state.project()->tracks().at(0).clips.at(0).timelineStart, drift::secondsToUs(4.0));
+}
+
+void EditorStateTest::rippleDeleteMovesTracksJoinedThroughAThirdTrack()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendLinkedVideoAudioPair(*state.project());
+    appendFollowerPair(*state.project());
+    drift::Project &project = *state.project();
+    for (int t = 0; t < 2; ++t)
+        project.tracks()[t].clips[1].timelineStart = drift::secondsToUs(6.0);
+    // A second audio track, joined to the first (not to the video track) by a pair of its own, and
+    // a clip after it that nothing links: the old close moved the partner but left this one behind.
+    project.tracks().append(drift::Track{.type = drift::TrackType::Audio});
+    drift::Clip bridge = project.tracks().at(1).clips.at(1);
+    bridge.id = QStringLiteral("bridge");
+    bridge.linkId = QStringLiteral("link-3");
+    bridge.timelineStart = drift::secondsToUs(9.0);
+    bridge.timelineDuration = drift::secondsToUs(1.0);
+    bridge.srcOut = drift::secondsToUs(1.0);
+    project.tracks()[1].clips.append(bridge);
+    drift::Clip partner = bridge;
+    partner.id = QStringLiteral("third-partner");
+    drift::Clip loner = bridge;
+    loner.id = QStringLiteral("third-loner");
+    loner.linkId.clear();
+    loner.timelineStart = drift::secondsToUs(11.0);
+    project.tracks()[2].clips.append(partner);
+    project.tracks()[2].clips.append(loner);
+    state.setRippleEnabled(true);
+
+    state.selectClip(0, 0);
+    state.deleteSelectedClip();
+    drift::Project &p = *state.project();
+    QCOMPARE(clipWithId(p, QStringLiteral("follow-video"))->timelineStart, drift::secondsToUs(2.0));
+    QCOMPARE(clipWithId(p, QStringLiteral("follow-audio"))->timelineStart, drift::secondsToUs(2.0));
+    QCOMPARE(clipWithId(p, QStringLiteral("bridge"))->timelineStart, drift::secondsToUs(5.0));
+    QCOMPARE(clipWithId(p, QStringLiteral("third-partner"))->timelineStart, drift::secondsToUs(5.0));
+    QCOMPARE(clipWithId(p, QStringLiteral("third-loner"))->timelineStart, drift::secondsToUs(7.0));
+}
+
+// Where the agent's delete_clips refuses, the timeline still deletes, keeps the gap and says why.
+void EditorStateTest::rippleDeleteKeepsTheGapWhenAClipIsInTheWay()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendLinkedVideoAudioPair(*state.project());
+    appendFollowerPair(*state.project());
+    drift::Project &project = *state.project();
+    for (int t = 0; t < 2; ++t)
+        project.tracks()[t].clips[1].timelineStart = drift::secondsToUs(6.0);
+    // The audio half is shorter; an unlinked clip sits inside the rest of the video's range, away
+    // from its edges (a clip at an edge keeps its part and the rest closes).
+    drift::Clip &audio = project.tracks()[1].clips[0];
+    audio.timelineDuration = drift::secondsToUs(2.0);
+    audio.srcOut = drift::secondsToUs(2.0);
+    audio.linkLoose = true;
+    project.tracks()[0].clips[0].linkLoose = true;
+    drift::Clip bed = audio;
+    bed.id = QStringLiteral("bed");
+    bed.name = QStringLiteral("Bed");
+    bed.linkId.clear();
+    bed.linkLoose = false;
+    bed.timelineStart = drift::secondsToUs(2.5);
+    bed.timelineDuration = drift::secondsToUs(1.0);
+    bed.srcOut = drift::secondsToUs(1.0);
+    project.tracks()[1].clips.insert(1, bed);
+    state.setRippleEnabled(true);
+
+    state.selectClip(0, 0);
+    state.deleteSelectedClip();
+    drift::Project &p = *state.project();
+    QVERIFY(!clipWithId(p, QStringLiteral("clip-video")));
+    QVERIFY(!clipWithId(p, QStringLiteral("clip-audio")));
+    QCOMPARE(clipWithId(p, QStringLiteral("bed"))->timelineStart, drift::secondsToUs(2.5));
+    QCOMPARE(clipWithId(p, QStringLiteral("follow-video"))->timelineStart, drift::secondsToUs(6.0));
+    QCOMPARE(clipWithId(p, QStringLiteral("follow-audio"))->timelineStart, drift::secondsToUs(6.0));
+    QCOMPARE(state.lastMessageSeverity(), QStringLiteral("warning"));
+    QVERIFY(state.lastMessage().contains(QStringLiteral("Bed")));
+
+    state.undo();
+    QVERIFY(clipWithId(*state.project(), QStringLiteral("clip-video")));
+    QVERIFY(clipWithId(*state.project(), QStringLiteral("clip-audio")));
+}
+
+void EditorStateTest::rippleDeleteKeepsTheGapWhenALinkedTrackIsLocked()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendLinkedVideoAudioPair(*state.project());
+    appendFollowerPair(*state.project());
+    drift::Project &project = *state.project();
+    for (int t = 0; t < 2; ++t)
+        project.tracks()[t].clips[1].timelineStart = drift::secondsToUs(6.0);
+    // A locked track joined to the group only through the followers' link.
+    project.tracks().append(drift::Track{.type = drift::TrackType::Audio});
+    drift::Clip partner = project.tracks().at(1).clips.at(1);
+    partner.id = QStringLiteral("locked-partner");
+    project.tracks()[2].clips.append(partner);
+    project.tracks()[2].locked = true;
+    // The lock check matches tracks by id, which a saved project always has.
+    for (int t = 0; t < project.tracks().size(); ++t)
+        project.tracks()[t].id = QStringLiteral("track-%1").arg(t);
+    state.setRippleEnabled(true);
+
+    state.selectClip(0, 0);
+    state.deleteSelectedClip();
+    drift::Project &p = *state.project();
+    QVERIFY(!clipWithId(p, QStringLiteral("clip-video")));
+    QVERIFY(!clipWithId(p, QStringLiteral("clip-audio")));
+    // The old close moved the locked partner through its link, and the lock check then threw the
+    // whole delete away.
+    QCOMPARE(clipWithId(p, QStringLiteral("follow-video"))->timelineStart, drift::secondsToUs(6.0));
+    QCOMPARE(clipWithId(p, QStringLiteral("follow-audio"))->timelineStart, drift::secondsToUs(6.0));
+    QCOMPARE(clipWithId(p, QStringLiteral("locked-partner"))->timelineStart, drift::secondsToUs(6.0));
+    QCOMPARE(state.lastMessageSeverity(), QStringLiteral("warning"));
+}
+
+// A crossfade is an overlap: the neighbour still covers part of the deleted clip's range, and only
+// the rest closes. Closing the whole range would have run into the neighbour and kept the gap.
+void EditorStateTest::rippleDeleteOfACrossfadedClipClosesOnlyItsOwnPart()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendLinkedVideoAudioPair(*state.project());
+    drift::Project &project = *state.project();
+    project.tracks().removeAt(1);
+    drift::Clip &first = project.tracks()[0].clips[0];
+    first.linkId.clear();
+    drift::Clip faded = first;
+    faded.id = QStringLiteral("faded");
+    faded.timelineStart = drift::secondsToUs(3.0);
+    faded.timelineDuration = drift::secondsToUs(5.0);
+    faded.srcOut = drift::secondsToUs(5.0);
+    drift::Clip later = first;
+    later.id = QStringLiteral("later");
+    later.timelineStart = drift::secondsToUs(8.0);
+    later.timelineDuration = drift::secondsToUs(2.0);
+    later.srcOut = drift::secondsToUs(2.0);
+    project.tracks()[0].clips.append(faded);
+    project.tracks()[0].clips.append(later);
+    state.setRippleEnabled(true);
+
+    state.selectClip(0, 1);
+    state.deleteSelectedClip();
+    drift::Project &p = *state.project();
+    QVERIFY(!clipWithId(p, QStringLiteral("faded")));
+    QCOMPARE(clipWithId(p, QStringLiteral("clip-video"))->timelineStart, 0);
+    QCOMPARE(clipWithId(p, QStringLiteral("later"))->timelineStart, drift::secondsToUs(4.0));
+    QVERIFY(state.lastMessageSeverity() != QLatin1String("warning"));
+}
+
+// A clip left at either edge of the deleted range, sharing that edge, keeps its part too.
+void EditorStateTest::rippleDeleteTrimsAtSharedEdges()
+{
+    for (const bool keepHead : {true, false}) {
+        AssetLibrary library;
+        AppController state(&library);
+        appendLinkedVideoAudioPair(*state.project());
+        drift::Project &project = *state.project();
+        project.tracks().removeAt(1);
+        drift::Clip &deleted = project.tracks()[0].clips[0];
+        deleted.linkId.clear();
+        drift::Clip kept = deleted;
+        kept.id = QStringLiteral("kept");
+        kept.timelineStart = keepHead ? 0 : drift::secondsToUs(2.0);
+        kept.timelineDuration = drift::secondsToUs(2.0);
+        kept.srcOut = drift::secondsToUs(2.0);
+        drift::Clip later = kept;
+        later.id = QStringLiteral("later");
+        later.timelineStart = drift::secondsToUs(6.0);
+        project.tracks()[0].clips.insert(1, kept);
+        project.tracks()[0].clips.append(later);
+        state.setRippleEnabled(true);
+
+        state.selectClip(0, 0);
+        state.deleteSelectedClip();
+        drift::Project &p = *state.project();
+        QVERIFY(!clipWithId(p, QStringLiteral("clip-video")));
+        // Only the 2 s the kept clip doesn't cover close; a kept tail moves up with the rest.
+        QCOMPARE(clipWithId(p, QStringLiteral("kept"))->timelineStart, 0);
+        QCOMPARE(clipWithId(p, QStringLiteral("later"))->timelineStart, drift::secondsToUs(4.0));
+        QVERIFY(state.lastMessageSeverity() != QLatin1String("warning"));
+    }
+}
+
+// The crossfade is on the video track only: the group closes the part free on every track.
+void EditorStateTest::rippleDeleteOfACrossfadedLinkedPairClosesTheFreePart()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendLinkedVideoAudioPair(*state.project());
+    appendFollowerPair(*state.project());
+    drift::Project &project = *state.project();
+    // The pair moves to [4,8), its followers to 8; an unlinked title crossfades into the video.
+    for (int t = 0; t < 2; ++t) {
+        project.tracks()[t].clips[0].timelineStart = drift::secondsToUs(4.0);
+        project.tracks()[t].clips[1].timelineStart = drift::secondsToUs(8.0);
+    }
+    drift::Clip title = project.tracks().at(0).clips.at(0);
+    title.id = QStringLiteral("title");
+    title.linkId.clear();
+    title.timelineStart = 0;
+    title.timelineDuration = drift::secondsToUs(5.0);
+    title.srcOut = drift::secondsToUs(5.0);
+    project.tracks()[0].clips.insert(0, title);
+    state.setRippleEnabled(true);
+
+    state.selectClip(0, 1);
+    state.deleteSelectedClip();
+    drift::Project &p = *state.project();
+    QVERIFY(!clipWithId(p, QStringLiteral("clip-video")));
+    QVERIFY(!clipWithId(p, QStringLiteral("clip-audio")));
+    QCOMPARE(clipWithId(p, QStringLiteral("title"))->timelineStart, 0);
+    QCOMPARE(clipWithId(p, QStringLiteral("follow-video"))->timelineStart, drift::secondsToUs(5.0));
+    QCOMPARE(clipWithId(p, QStringLiteral("follow-audio"))->timelineStart, drift::secondsToUs(5.0));
+    QVERIFY(state.lastMessageSeverity() != QLatin1String("warning"));
+}
+
+// Groups close on their own: a locked track in one leaves another, unrelated one free to close.
+void EditorStateTest::rippleDeleteClosesEachGroupOnItsOwn()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendLinkedVideoAudioPair(*state.project());
+    appendFollowerPair(*state.project());
+    drift::Project &project = *state.project();
+    for (int t = 0; t < 2; ++t)
+        project.tracks()[t].clips[1].timelineStart = drift::secondsToUs(6.0);
+    // A locked track joined to the pair's group through the followers' link.
+    project.tracks().append(drift::Track{.type = drift::TrackType::Audio});
+    drift::Clip partner = project.tracks().at(1).clips.at(1);
+    partner.id = QStringLiteral("locked-partner");
+    project.tracks()[2].clips.append(partner);
+    project.tracks()[2].locked = true;
+    // An unrelated track with a clip to delete and one after it.
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    drift::Clip lone = project.tracks().at(0).clips.at(1);
+    lone.id = QStringLiteral("lone");
+    lone.linkId.clear();
+    lone.timelineStart = 0;
+    drift::Clip after = lone;
+    after.id = QStringLiteral("after");
+    after.timelineStart = drift::secondsToUs(4.0);
+    project.tracks()[3].clips.append(lone);
+    project.tracks()[3].clips.append(after);
+    for (int t = 0; t < project.tracks().size(); ++t)
+        project.tracks()[t].id = QStringLiteral("track-%1").arg(t);
+    state.setRippleEnabled(true);
+
+    state.selectClip(0, 0);
+    state.addToSelection(3, 0);
+    state.deleteSelectedClip();
+    drift::Project &p = *state.project();
+    QVERIFY(!clipWithId(p, QStringLiteral("clip-video")));
+    QVERIFY(!clipWithId(p, QStringLiteral("lone")));
+    QCOMPARE(clipWithId(p, QStringLiteral("follow-video"))->timelineStart, drift::secondsToUs(6.0));
+    QCOMPARE(clipWithId(p, QStringLiteral("after"))->timelineStart, drift::secondsToUs(2.0));
+    QCOMPARE(state.lastMessageSeverity(), QStringLiteral("warning"));
+}
+
+// Two kept clips at the head of the range, the later one listed first: the trim needs a second pass.
+void EditorStateTest::rippleDeleteTrimsPastSeveralKeptClips()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    appendLinkedVideoAudioPair(*state.project());
+    drift::Project &project = *state.project();
+    project.tracks().removeAt(1);
+    drift::Clip &deleted = project.tracks()[0].clips[0];
+    deleted.linkId.clear();
+    deleted.timelineDuration = drift::secondsToUs(10.0);
+    deleted.srcOut = drift::secondsToUs(10.0);
+    drift::Clip second = deleted;
+    second.id = QStringLiteral("second");
+    second.timelineStart = drift::secondsToUs(2.0);
+    second.timelineDuration = drift::secondsToUs(2.0);
+    second.srcOut = drift::secondsToUs(2.0);
+    drift::Clip first = second;
+    first.id = QStringLiteral("first");
+    first.timelineStart = 0;
+    drift::Clip later = second;
+    later.id = QStringLiteral("later");
+    later.timelineStart = drift::secondsToUs(12.0);
+    project.tracks()[0].clips.append(second);
+    project.tracks()[0].clips.append(first);
+    project.tracks()[0].clips.append(later);
+    state.setRippleEnabled(true);
+
+    state.selectClip(0, 0);
+    state.deleteSelectedClip();
+    drift::Project &p = *state.project();
+    QVERIFY(!clipWithId(p, QStringLiteral("clip-video")));
+    // [4,10) closes.
+    QCOMPARE(clipWithId(p, QStringLiteral("later"))->timelineStart, drift::secondsToUs(6.0));
+    QVERIFY(state.lastMessageSeverity() != QLatin1String("warning"));
+}
+
+// The group that can't close comes first; the one after it still closes, and undo/redo keep both.
+void EditorStateTest::rippleDeleteClosesALaterGroupAfterARefusal()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::Project &project = *state.project();
+    appendLinkedVideoAudioPair(project);
+    project.tracks().removeAt(1);
+    drift::Clip &blocked = project.tracks()[0].clips[0];
+    blocked.linkId.clear();
+    // The deleted clip and one left inside its range: refused.
+    drift::Clip inside = blocked;
+    inside.id = QStringLiteral("inside");
+    inside.name = QStringLiteral("Inside");
+    inside.timelineStart = drift::secondsToUs(1.0);
+    inside.timelineDuration = drift::secondsToUs(1.0);
+    inside.srcOut = drift::secondsToUs(1.0);
+    drift::Clip stays = inside;
+    stays.id = QStringLiteral("stays");
+    stays.timelineStart = drift::secondsToUs(6.0);
+    project.tracks()[0].clips.append(inside);
+    project.tracks()[0].clips.append(stays);
+    // An unrelated track with a clip to delete and one after it.
+    project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+    drift::Clip lone = stays;
+    lone.id = QStringLiteral("lone");
+    lone.timelineStart = 0;
+    drift::Clip after = stays;
+    after.id = QStringLiteral("after");
+    after.timelineStart = drift::secondsToUs(3.0);
+    project.tracks()[1].clips.append(lone);
+    project.tracks()[1].clips.append(after);
+    // Deletes walk tracks from the last one, so the refused group goes first.
+    project.tracks().swapItemsAt(0, 1);
+    state.setRippleEnabled(true);
+
+    state.selectClip(1, 0);
+    state.addToSelection(0, 0);
+    state.deleteSelectedClip();
+    QCOMPARE(clipWithId(*state.project(), QStringLiteral("stays"))->timelineStart, drift::secondsToUs(6.0));
+    QCOMPARE(clipWithId(*state.project(), QStringLiteral("after"))->timelineStart, drift::secondsToUs(2.0));
+    QCOMPARE(state.lastMessageSeverity(), QStringLiteral("warning"));
+    QVERIFY(state.lastMessage().contains(QStringLiteral("Inside")));
+
+    state.undo();
+    QVERIFY(clipWithId(*state.project(), QStringLiteral("clip-video")));
+    QCOMPARE(clipWithId(*state.project(), QStringLiteral("after"))->timelineStart, drift::secondsToUs(3.0));
+    state.redo();
+    QVERIFY(!clipWithId(*state.project(), QStringLiteral("clip-video")));
+    QCOMPARE(clipWithId(*state.project(), QStringLiteral("stays"))->timelineStart, drift::secondsToUs(6.0));
+    QCOMPARE(clipWithId(*state.project(), QStringLiteral("after"))->timelineStart, drift::secondsToUs(2.0));
 }
 
 // #249: a fixed 150 ms pull was under a pixel when zoomed out, so snapping looked switched off.

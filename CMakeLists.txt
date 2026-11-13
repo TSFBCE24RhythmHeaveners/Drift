@@ -6,7 +6,7 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Oldest macOS release Drift 
 
 # C is enabled for JUCE only: its modules compile a handful of C sources (zlib, flac, oggvorbis)
 # and its CMake refuses to configure without it.
-project(Drift VERSION 0.9.1 LANGUAGES CXX C)
+project(Drift VERSION 0.9.2 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -644,6 +644,8 @@ add_library(driftcore STATIC
     src/core/interchange/OtioReader.cpp
     src/core/edit/TimelineOps.h
     src/core/edit/TimelineOps.cpp
+    src/core/project/ProjectDiff.h
+    src/core/project/ProjectDiff.cpp
     src/core/edit/MaskSpace.h
     src/core/edit/MaskSpace.cpp
     src/core/edit/CutOps.h
@@ -746,9 +748,11 @@ else()
     add_library(drift_lua STATIC ${DRIFT_LUA_SOURCES})
     target_include_directories(drift_lua SYSTEM PUBLIC ${CMAKE_SOURCE_DIR}/third_party/lua)
     set_target_properties(drift_lua PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    if(EMSCRIPTEN)
+    if(EMSCRIPTEN OR MSVC)
         # Lua's LUAI_THROW is longjmp when built as C, which does not unwind through Qt for wasm's
-        # JS-exception model. As C++ it throws, which -fexceptions handles. LuaInclude.h reads the define.
+        # JS-exception model. As C++ it throws, which -fexceptions handles. On MSVC the longjmp out
+        # of LuaSandbox::hook (a C++ frame) crashed the deadline abort; a C++ throw unwinds it
+        # cleanly. LuaInclude.h reads the define.
         set_source_files_properties(${DRIFT_LUA_SOURCES} PROPERTIES LANGUAGE CXX)
         target_compile_definitions(drift_lua PUBLIC DRIFT_LUA_AS_CXX=1)
     endif()
@@ -2301,6 +2305,9 @@ qt_add_qml_module(drift
         src/qml/components/preview/mask/MaskOverlayResizeGrip.qml
         src/qml/components/preview/mask/MaskOverlayOutline.qml
         src/qml/components/preview/mask/MaskOverlayFeatherRing.qml
+        src/qml/components/preview/mask/MaskOverlayFeatherHandle.qml
+        src/qml/components/preview/mask/MaskOverlayRoundnessHandle.qml
+        src/qml/components/preview/mask/MaskOverlaySplitSide.qml
         src/qml/components/preview/mask/MaskOverlayEmptyHint.qml
         src/qml/components/preview/mask/MaskOverlayEdgeMidpoint.qml
         src/qml/components/preview/mask/MaskOverlayClipBounds.qml

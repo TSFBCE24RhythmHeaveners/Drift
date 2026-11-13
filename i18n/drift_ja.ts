@@ -58,16 +58,28 @@
         <translation>自動 (推奨)</translation>
     </message>
     <message>
-        <source>NVIDIA graphics (faster)</source>
-        <translation>NVIDIA グラフィックス (高速)</translation>
+        <source>Processor (CPU)</source>
+        <translation>Processor (CPU)</translation>
     </message>
     <message>
-        <source>AMD graphics (faster)</source>
-        <translation>AMD グラフィックス (高速)</translation>
+        <source>NVIDIA CUDA</source>
+        <translation>NVIDIA CUDA</translation>
     </message>
     <message>
-        <source>CPU</source>
-        <translation type="unfinished"></translation>
+        <source>AMD MIGraphX (Windows ML)</source>
+        <translation>AMD MIGraphX (Windows ML)</translation>
+    </message>
+    <message>
+        <source>AMD ROCm (MIGraphX)</source>
+        <translation>AMD ROCm (MIGraphX)</translation>
+    </message>
+    <message>
+        <source>Windows ML (DirectX 12)</source>
+        <translation>Windows ML (DirectX 12)</translation>
+    </message>
+    <message>
+        <source>WebGPU (any graphics card)</source>
+        <translation>WebGPU (任意のグラフィックカード)</translation>
     </message>
     <message>
         <source>Could not open that file.</source>
@@ -87,11 +99,11 @@
     </message>
     <message>
         <source>This is not a Drift addon, a .driftfx or a Drift Forge zip.</source>
-        <translation type="unfinished"></translation>
+        <translation>これは Drift のアドオン、.driftfx、Drift Forge の zip ではありません。</translation>
     </message>
     <message>
         <source>Drift cannot use this file: %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift はこのファイルを使用できません (%1)。</translation>
     </message>
 </context>
 <context>
@@ -748,7 +760,7 @@
     </message>
     <message>
         <source>Curve</source>
-        <translation type="unfinished">カーブ</translation>
+        <translation>カーブ</translation>
     </message>
     <message>
         <source>Done</source>
@@ -1073,6 +1085,10 @@
     <message>
         <source>Custom</source>
         <translation>カスタム</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">お気に入り</translation>
     </message>
     <message>
         <source>Template</source>
@@ -1417,11 +1433,11 @@
     </message>
     <message>
         <source>Dissolve composite</source>
-        <translation type="unfinished"></translation>
+        <translation>コンポジットを解除</translation>
     </message>
     <message>
         <source>Release the clips inside back onto the timeline</source>
-        <translation type="unfinished"></translation>
+        <translation>内部のクリップをタイムラインに戻します</translation>
     </message>
     <message>
         <source>Make composite</source>
@@ -1565,11 +1581,11 @@
     </message>
     <message>
         <source>Delete with effects</source>
-        <translation type="unfinished"></translation>
+        <translation>エフェクトごと削除</translation>
     </message>
     <message>
         <source>Remove the clip and its effects together</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップとそのエフェクトをまとめて削除します</translation>
     </message>
     <message>
         <source>Trim &amp; timing</source>
@@ -2363,7 +2379,7 @@
     <name>AndroidTransitionPickerSheet</name>
     <message>
         <source>Transitions</source>
-        <translation type="unfinished">トランジション</translation>
+        <translation>トランジション</translation>
     </message>
 </context>
 <context>
@@ -2528,7 +2544,7 @@
     </message>
     <message>
         <source>Delete selection with its effects</source>
-        <translation type="unfinished"></translation>
+        <translation>選択範囲をエフェクトごと削除</translation>
     </message>
     <message>
         <source>Undo</source>
@@ -2677,6 +2693,14 @@
     <message>
         <source>Clip moved</source>
         <translation>クリップを移動しました</translation>
+    </message>
+    <message>
+        <source>Select a clip to split first</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The playhead isn&apos;t over a selected clip</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing to split here — move to a clip first</source>
@@ -2985,8 +3009,12 @@
         <translation>属性を貼り付け…</translation>
     </message>
     <message>
-        <source>Add transition at playhead</source>
+        <source>Split selected clip at current time</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add transition at playhead</source>
+        <translation>再生ヘッド位置にトランジションを追加</translation>
     </message>
     <message>
         <source>Go to previous cut point</source>
@@ -3046,7 +3074,7 @@
     </message>
     <message>
         <source>Hide/show selected clip&apos;s track</source>
-        <translation type="unfinished"></translation>
+        <translation>選択中のクリップのトラックを表示/非表示</translation>
     </message>
     <message>
         <source>3D gizmo: move / Tracker tool</source>
@@ -3062,7 +3090,7 @@
     </message>
     <message>
         <source>3D gizmo: cycle world/local/view axes</source>
-        <translation type="unfinished"></translation>
+        <translation>3D ギズモ : ワールド/ローカル/ビュー軸の切り替え</translation>
     </message>
     <message>
         <source>Cut tool / Brush mask</source>
@@ -3202,15 +3230,47 @@
     </message>
     <message>
         <source>Track is locked</source>
+        <translation>トラックはロックされています</translation>
+    </message>
+    <message>
+        <source>The gap stays open: a linked track is locked</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: a clip is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: &quot;%1&quot; is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip inserted</source>
+        <translation>クリップを挿入しました</translation>
     </message>
     <message>
         <source>A clip can&apos;t completely cover another</source>
         <translation>クリップを別のクリップの上に完全に重ねることはできません</translation>
     </message>
     <message>
+        <source>Ripple trim</source>
+        <translation>リップルトリム</translation>
+    </message>
+    <message>
+        <source>Gaps closed</source>
+        <translation>ギャップを埋めました</translation>
+    </message>
+    <message>
+        <source>Clips swapped</source>
+        <translation>クリップを入れ替えました</translation>
+    </message>
+    <message>
+        <source>Set sequence</source>
+        <translation>シーケンスを設定</translation>
+    </message>
+    <message>
         <source>Replace clip</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップを置き換え</translation>
     </message>
     <message>
         <source>Clips moved</source>
@@ -3297,6 +3357,22 @@
         <translation>調整のリンクを解除しました</translation>
     </message>
     <message>
+        <source>Hide effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer hidden</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer shown</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Link adjustment to clip</source>
         <translation>調整をクリップにリンク</translation>
     </message>
@@ -3310,19 +3386,19 @@
     </message>
     <message>
         <source>Aim camera at target</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラをターゲットに向ける</translation>
     </message>
     <message>
         <source>Free camera</source>
-        <translation type="unfinished"></translation>
+        <translation>フリーカメラ</translation>
     </message>
     <message>
         <source>Camera aims at its point of interest</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラが目標点を向きます</translation>
     </message>
     <message>
         <source>Camera uses its own rotation</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラは自身の回転を使用します</translation>
     </message>
     <message>
         <source>Edit clip</source>
@@ -3537,6 +3613,26 @@
         <translation>クリップを順再生に</translation>
     </message>
     <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop on</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop off</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip not looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>A clip is already being reversed</source>
         <translation>クリップは既に逆再生中です</translation>
     </message>
@@ -3594,23 +3690,31 @@
     </message>
     <message>
         <source>Composites that are ramped, reversed or not at normal speed cannot be dissolved</source>
-        <translation type="unfinished"></translation>
+        <translation>スピードランプ、逆再生、通常速度以外のコンポジットは解除できません</translation>
     </message>
     <message>
         <source>Dissolve composite</source>
-        <translation type="unfinished"></translation>
+        <translation>コンポジットを解除</translation>
     </message>
     <message>
         <source>Composite effects and transform were discarded</source>
-        <translation type="unfinished"></translation>
+        <translation>コンポジットのエフェクトと変形は破棄されました</translation>
     </message>
     <message>
         <source>Composite dissolved</source>
-        <translation type="unfinished"></translation>
+        <translation>コンポジットを解除しました</translation>
     </message>
     <message>
         <source>Composite</source>
         <translation>コンポジット</translation>
+    </message>
+    <message>
+        <source>Timeline %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Timeline created</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Flattening composite…</source>
@@ -3694,39 +3798,39 @@
     </message>
     <message>
         <source>unknown procedural package</source>
-        <translation type="unfinished"></translation>
+        <translation>不明なプロシージャルパッケージ</translation>
     </message>
     <message>
         <source>unknown param &quot;%1&quot;</source>
-        <translation type="unfinished"></translation>
+        <translation>不明なパラメーター &quot;%1&quot;</translation>
     </message>
     <message>
         <source>Procedural clip added</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルクリップを追加しました</translation>
     </message>
     <message>
         <source>Change procedural</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルを変更</translation>
     </message>
     <message>
         <source>Procedural changed</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルを変更しました</translation>
     </message>
     <message>
         <source>Edit procedural</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルを編集</translation>
     </message>
     <message>
         <source>Procedural updated</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルを更新しました</translation>
     </message>
     <message>
         <source>Change seed</source>
-        <translation type="unfinished"></translation>
+        <translation>シードを変更</translation>
     </message>
     <message>
         <source>Seed changed</source>
-        <translation type="unfinished"></translation>
+        <translation>シードを変更しました</translation>
     </message>
     <message>
         <source>3D model replaced</source>
@@ -3801,6 +3905,10 @@
         <translation>バー</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">分割</translation>
+    </message>
+    <message>
         <source>Freeform</source>
         <translation>フリーフォーム</translation>
     </message>
@@ -3842,19 +3950,15 @@
     </message>
     <message>
         <source>Apply transition to cuts</source>
-        <translation type="unfinished"></translation>
+        <translation>カットにトランジションを適用</translation>
     </message>
     <message>
         <source>Transitions updated</source>
-        <translation type="unfinished"></translation>
+        <translation>トランジションを更新しました</translation>
     </message>
     <message>
         <source>No cut between two clips to add a transition to</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Change look</source>
-        <translation>ルックを変更</translation>
+        <translation>トランジションを追加できる、2 つのクリップ間のカットがありません</translation>
     </message>
     <message>
         <source>Edit curve</source>
@@ -3978,7 +4082,7 @@
     </message>
     <message>
         <source>Align camera to view</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラをビューに合わせる</translation>
     </message>
     <message>
         <source>Audio effects go on the timeline.</source>
@@ -4166,15 +4270,15 @@
     </message>
     <message>
         <source>Linear</source>
-        <translation type="unfinished">リニア</translation>
+        <translation>リニア</translation>
     </message>
     <message>
         <source>Smooth</source>
-        <translation type="unfinished">スムーズ</translation>
+        <translation>スムーズ</translation>
     </message>
     <message>
         <source>Natural</source>
-        <translation type="unfinished">ナチュラル</translation>
+        <translation>ナチュラル</translation>
     </message>
     <message>
         <source>Custom</source>
@@ -4182,7 +4286,7 @@
     </message>
     <message>
         <source>Snappy</source>
-        <translation type="unfinished">スナッピー</translation>
+        <translation>スナッピー</translation>
     </message>
     <message>
         <source>Back</source>
@@ -4190,7 +4294,7 @@
     </message>
     <message>
         <source>Bounce</source>
-        <translation type="unfinished">バウンス</translation>
+        <translation>バウンス</translation>
     </message>
     <message>
         <source>Keyframe curve changed</source>
@@ -4213,6 +4317,14 @@
         <translation>キーフレームを補間</translation>
     </message>
     <message>
+        <source>Add keyframes</source>
+        <translation>キーフレームを追加</translation>
+    </message>
+    <message>
+        <source>Keyframes set</source>
+        <translation>キーフレームを設定しました</translation>
+    </message>
+    <message>
         <source>Reset camera</source>
         <translation>カメラをリセット</translation>
     </message>
@@ -4227,6 +4339,10 @@
     <message>
         <source>Transform reset</source>
         <translation>変形をリセットしました</translation>
+    </message>
+    <message>
+        <source>Motion blur follows one clip&apos;s movement, so it goes on a clip, not on an adjustment layer.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Depth effects read one clip&apos;s depth, so they go on a clip, not on an adjustment layer.</source>
@@ -4270,11 +4386,11 @@
     </message>
     <message>
         <source>Remove all effects</source>
-        <translation type="unfinished"></translation>
+        <translation>すべてのエフェクトを削除</translation>
     </message>
     <message>
         <source>All effects removed</source>
-        <translation type="unfinished"></translation>
+        <translation>すべてのエフェクトを削除しました</translation>
     </message>
     <message>
         <source>Enable effect</source>
@@ -4303,6 +4419,10 @@
     <message>
         <source>Effect updated</source>
         <translation>エフェクトを更新しました</translation>
+    </message>
+    <message>
+        <source>Change LUT</source>
+        <translation>LUT を変更</translation>
     </message>
     <message>
         <source>Could not read the selected file</source>
@@ -4535,16 +4655,28 @@
         <translation>トラックを表示しました</translation>
     </message>
     <message>
-        <source>Track lock</source>
+        <source>Exclude from export</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track left out of export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track included in export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track lock</source>
+        <translation>トラックのロック</translation>
     </message>
     <message>
         <source>Track locked</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックをロックしました</translation>
     </message>
     <message>
         <source>Track unlocked</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックのロックを解除しました</translation>
     </message>
     <message>
         <source>Move track</source>
@@ -4564,11 +4696,11 @@
     </message>
     <message>
         <source>Delete empty tracks</source>
-        <translation type="unfinished"></translation>
+        <translation>空のトラックを削除</translation>
     </message>
     <message>
         <source>Empty tracks deleted</source>
-        <translation type="unfinished"></translation>
+        <translation>空のトラックを削除しました</translation>
     </message>
     <message>
         <source>Add track</source>
@@ -4856,6 +4988,22 @@
         <source>Video size cropped to %1×%2</source>
         <translation>ビデオサイズを %1×%2 にクロップしました</translation>
     </message>
+    <message>
+        <source>Clear clip label</source>
+        <translation>クリップのラベルをクリア</translation>
+    </message>
+    <message>
+        <source>Label clip</source>
+        <translation>クリップにラベルを付ける</translation>
+    </message>
+    <message>
+        <source>Clip label cleared</source>
+        <translation>クリップのラベルをクリアしました</translation>
+    </message>
+    <message>
+        <source>Clip labelled</source>
+        <translation>クリップにラベルを付けました</translation>
+    </message>
 </context>
 <context>
     <name>AppSettingsMenu</name>
@@ -4884,7 +5032,7 @@
     </message>
     <message>
         <source>Recent</source>
-        <translation type="unfinished"></translation>
+        <translation>最近使用</translation>
     </message>
 </context>
 <context>
@@ -4903,6 +5051,10 @@
     <message>
         <source>Media files (%1)</source>
         <translation>メディアファイル (%1)</translation>
+    </message>
+    <message>
+        <source>The proxy could not be made</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 s</source>
@@ -4926,6 +5078,17 @@
     <message>
         <source>Add to timeline</source>
         <translation>タイムラインに追加</translation>
+    </message>
+</context>
+<context>
+    <name>AssetSearchBar</name>
+    <message>
+        <source>Clear search</source>
+        <translation type="unfinished">検索をクリア</translation>
+    </message>
+    <message>
+        <source>Remove from history</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -5054,16 +5217,16 @@
     </message>
     <message>
         <source>Relink other missing files?</source>
-        <translation type="unfinished"></translation>
+        <translation>他の見つからないファイルも再リンクしますか?</translation>
     </message>
     <message>
         <source>Relink</source>
-        <translation type="unfinished"></translation>
+        <translation>再リンク</translation>
     </message>
     <message numerus="yes">
         <source>%n other missing files from the same folder were found in “%1” with the same name and size. Relink them too?</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>同じフォルダー内で見つからなかった他のファイル %n 個が、同じ名前とサイズで「%1」に見つかりました。これらも再リンクしますか?</numerusform>
         </translation>
     </message>
     <message>
@@ -5234,6 +5397,14 @@
         <source>Create a new folder here</source>
         <translation>ここに新しいフォルダーを作成</translation>
     </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Create an empty timeline and open it</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>AssetsPanelImportMenu</name>
@@ -5284,95 +5455,95 @@
     <name>AudioAlignController</name>
     <message>
         <source>Audio analysis already in progress</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオ分析は既に進行中です</translation>
     </message>
     <message>
         <source>Select a clip with audio</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオ付きのクリップを選択してください</translation>
     </message>
     <message>
         <source>Finding silence…</source>
-        <translation type="unfinished"></translation>
+        <translation>無音部分を検出中…</translation>
     </message>
     <message>
         <source>Silence removal cancelled</source>
-        <translation type="unfinished"></translation>
+        <translation>無音部分の削除をキャンセルしました</translation>
     </message>
     <message>
         <source>The clip changed while it was analysed</source>
-        <translation type="unfinished"></translation>
+        <translation>分析中にクリップが変更されました</translation>
     </message>
     <message>
         <source>No silence found</source>
-        <translation type="unfinished"></translation>
+        <translation>無音部分は見つかりませんでした</translation>
     </message>
     <message>
         <source>Could not remove the silence</source>
-        <translation type="unfinished"></translation>
+        <translation>無音部分を削除できませんでした</translation>
     </message>
     <message>
         <source>Remove silence</source>
-        <translation type="unfinished">無音部分を削除</translation>
+        <translation>無音部分を削除</translation>
     </message>
     <message>
         <source>Removed %1 s of silence</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 秒の無音部分を削除しました</translation>
     </message>
     <message>
         <source>Select exactly two clips with audio to sync</source>
-        <translation type="unfinished"></translation>
+        <translation>同期するには、オーディオ付きのクリップをちょうど 2 つ選択してください</translation>
     </message>
     <message>
         <source>Clips with changed speed or reversed playback can&apos;t be synced. Reset their speed and direction first.</source>
-        <translation type="unfinished"></translation>
+        <translation>速度が変更されたクリップや逆再生のクリップは同期できません。先に速度と方向をリセットしてください。</translation>
     </message>
     <message>
         <source>Matching audio…</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオを照合中…</translation>
     </message>
     <message>
         <source>Correlating…</source>
-        <translation type="unfinished"></translation>
+        <translation>相関を計算中…</translation>
     </message>
     <message>
         <source>Audio sync cancelled</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオ同期をキャンセルしました</translation>
     </message>
     <message>
         <source>One of the clips is silent, so there is nothing to match</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップの 1 つが無音のため、照合できるものがありません</translation>
     </message>
     <message>
         <source>The clips are too short to match by audio</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップが短すぎて、オーディオで照合できません</translation>
     </message>
     <message>
         <source>No clear match between the clips&apos; audio. Nothing was moved.</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップのオーディオに明確な一致が見つかりませんでした。何も移動していません。</translation>
     </message>
     <message>
         <source>The clips changed while they were analysed</source>
-        <translation type="unfinished"></translation>
+        <translation>分析中にクリップが変更されました</translation>
     </message>
     <message>
         <source>The clips are already in sync</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップは既に同期しています</translation>
     </message>
     <message>
         <source>Syncing would move the clip before the start of the timeline</source>
-        <translation type="unfinished"></translation>
+        <translation>同期するとクリップがタイムラインの開始位置より前に移動してしまいます</translation>
     </message>
     <message>
         <source>There is no room to move the clip there</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップをそこに移動する余地がありません</translation>
     </message>
     <message>
         <source>Sync by audio</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオで同期</translation>
     </message>
     <message>
         <source>Moved the second clip %1 s to match the first</source>
-        <translation type="unfinished"></translation>
+        <translation>最初のクリップに合わせて、2 つ目のクリップを %1 秒移動しました</translation>
     </message>
 </context>
 <context>
@@ -5395,15 +5566,15 @@
     </message>
     <message>
         <source>Install a custom audio effect or effect from a .driftfx or zip made in Drift Forge</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift Forge で作成した .driftfx または zip から、カスタムオーディオエフェクトまたはエフェクトをインストールします</translation>
     </message>
     <message>
         <source>Nothing here yet. Import a .driftfx or a Drift Forge zip to add your own.</source>
-        <translation type="unfinished"></translation>
+        <translation>まだ何もありません。.driftfx または Drift Forge の zip をインポートして、独自のものを追加できます。</translation>
     </message>
     <message>
         <source>Import a .driftfx or zip made in Drift Forge to add your own.</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift Forge で作成した .driftfx または zip をインポートして、独自のものを追加できます。</translation>
     </message>
     <message>
         <source>My Audio Effects</source>
@@ -5993,180 +6164,180 @@
     <name>BakeController</name>
     <message>
         <source>Set a work area to bake</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクするワークエリアを設定してください</translation>
     </message>
     <message>
         <source>Could not open the bake cache</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクキャッシュを開けませんでした</translation>
     </message>
     <message>
         <source>Baking…</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク中…</translation>
     </message>
     <message>
         <source>Bake cancelled</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクをキャンセルしました</translation>
     </message>
     <message>
         <source>Bake failed</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクに失敗しました</translation>
     </message>
     <message>
         <source>Bake complete</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクが完了しました</translation>
     </message>
     <message>
         <source>Set work area to bake</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクするワークエリアを設定</translation>
     </message>
     <message>
         <source>Work area set</source>
-        <translation type="unfinished"></translation>
+        <translation>ワークエリアを設定しました</translation>
     </message>
 </context>
 <context>
     <name>BakesDialog</name>
     <message>
         <source>Bakes</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク</translation>
     </message>
     <message>
         <source>Close</source>
-        <translation type="unfinished">閉じる</translation>
+        <translation>閉じる</translation>
     </message>
     <message>
         <source>Compact</source>
-        <translation type="unfinished"></translation>
+        <translation>コンパクト</translation>
     </message>
     <message>
         <source>Balanced</source>
-        <translation type="unfinished"></translation>
+        <translation>バランス</translation>
     </message>
     <message>
         <source>High</source>
-        <translation type="unfinished">高</translation>
+        <translation>高</translation>
     </message>
     <message>
         <source>%1m %2s</source>
-        <translation type="unfinished"></translation>
+        <translation>%1m %2s</translation>
     </message>
     <message>
         <source>%1s</source>
-        <translation type="unfinished"></translation>
+        <translation>%1s</translation>
     </message>
     <message>
         <source>Baking %1%</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク中 %1%</translation>
     </message>
     <message>
         <source>Stale</source>
-        <translation type="unfinished"></translation>
+        <translation>古い</translation>
     </message>
     <message>
         <source>Fresh</source>
-        <translation type="unfinished"></translation>
+        <translation>最新</translation>
     </message>
     <message>
         <source>Delete all bakes?</source>
-        <translation type="unfinished"></translation>
+        <translation>すべてのベイクを削除しますか?</translation>
     </message>
     <message>
         <source>Delete</source>
-        <translation type="unfinished">削除</translation>
+        <translation>削除</translation>
     </message>
     <message>
         <source>Playback and export will render these ranges live again. Your project is not changed.</source>
-        <translation type="unfinished"></translation>
+        <translation>再生とエクスポートでは、これらの範囲が再びリアルタイムでレンダリングされます。プロジェクトは変更されません。</translation>
     </message>
     <message>
         <source>Re-bake at current quality</source>
-        <translation type="unfinished"></translation>
+        <translation>現在の品質で再ベイク</translation>
     </message>
     <message>
         <source>Set work area to bake</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクするワークエリアを設定</translation>
     </message>
     <message>
         <source>Quality for new bakes</source>
-        <translation type="unfinished"></translation>
+        <translation>新しいベイクの品質</translation>
     </message>
     <message>
         <source>≈ %1 per minute</source>
-        <translation type="unfinished"></translation>
+        <translation>≈ 1 分あたり %1</translation>
     </message>
     <message>
         <source>Cancel</source>
-        <translation type="unfinished">キャンセル</translation>
+        <translation>キャンセル</translation>
     </message>
     <message>
         <source>Bake work area</source>
-        <translation type="unfinished"></translation>
+        <translation>ワークエリアをベイク</translation>
     </message>
     <message>
         <source>Set a work area on the timeline first</source>
-        <translation type="unfinished"></translation>
+        <translation>先にタイムラインでワークエリアを設定してください</translation>
     </message>
     <message>
         <source>I</source>
-        <translation type="unfinished"></translation>
+        <translation>I</translation>
     </message>
     <message>
         <source>O</source>
-        <translation type="unfinished"></translation>
+        <translation>O</translation>
     </message>
     <message>
         <source>Bake a finished part of your timeline to play and export it smoothly. Set a work area with %1 and %2, then press Bake.</source>
-        <translation type="unfinished"></translation>
+        <translation>タイムラインの完成した部分をベイクすると、スムーズに再生・エクスポートできます。%1 と %2 でワークエリアを設定し、「ベイク」を押してください。</translation>
     </message>
     <message>
         <source>Range</source>
-        <translation type="unfinished">範囲</translation>
+        <translation>範囲</translation>
     </message>
     <message>
         <source>Duration</source>
-        <translation type="unfinished">長さ</translation>
+        <translation>長さ</translation>
     </message>
     <message>
         <source>Quality</source>
-        <translation type="unfinished">品質</translation>
+        <translation>品質</translation>
     </message>
     <message>
         <source>Size</source>
-        <translation type="unfinished">サイズ</translation>
+        <translation>サイズ</translation>
     </message>
     <message>
         <source>State</source>
-        <translation type="unfinished"></translation>
+        <translation>状態</translation>
     </message>
     <message>
         <source>Re-bake</source>
-        <translation type="unfinished"></translation>
+        <translation>再ベイク</translation>
     </message>
     <message>
         <source>More</source>
-        <translation type="unfinished">その他</translation>
+        <translation>その他</translation>
     </message>
     <message>
         <source>Delete bake</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクを削除</translation>
     </message>
     <message numerus="yes">
         <source>%n bake(s) · %1</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 個のベイク · %1</numerusform>
         </translation>
     </message>
     <message>
         <source>0 B</source>
-        <translation type="unfinished"></translation>
+        <translation>0 B</translation>
     </message>
     <message>
         <source>Re-bake all stale</source>
-        <translation type="unfinished"></translation>
+        <translation>古いベイクをすべて再ベイク</translation>
     </message>
     <message>
         <source>Delete all bakes</source>
-        <translation type="unfinished"></translation>
+        <translation>すべてのベイクを削除</translation>
     </message>
 </context>
 <context>
@@ -6180,119 +6351,119 @@
     <name>BlendModes</name>
     <message>
         <source>Normal</source>
-        <translation type="unfinished">ノーマル</translation>
+        <translation>ノーマル</translation>
     </message>
     <message>
         <source>Darken</source>
-        <translation type="unfinished">比較 (暗)</translation>
+        <translation>比較 (暗)</translation>
     </message>
     <message>
         <source>Multiply</source>
-        <translation type="unfinished">乗算</translation>
+        <translation>乗算</translation>
     </message>
     <message>
         <source>Color Burn</source>
-        <translation type="unfinished"></translation>
+        <translation>焼き込みカラー</translation>
     </message>
     <message>
         <source>Linear Burn</source>
-        <translation type="unfinished"></translation>
+        <translation>焼き込み (リニア)</translation>
     </message>
     <message>
         <source>Darker Color</source>
-        <translation type="unfinished"></translation>
+        <translation>カラー比較 (暗)</translation>
     </message>
     <message>
         <source>Lighten</source>
-        <translation type="unfinished">比較 (明)</translation>
+        <translation>比較 (明)</translation>
     </message>
     <message>
         <source>Screen</source>
-        <translation type="unfinished">スクリーン</translation>
+        <translation>スクリーン</translation>
     </message>
     <message>
         <source>Color Dodge</source>
-        <translation type="unfinished"></translation>
+        <translation>覆い焼きカラー</translation>
     </message>
     <message>
         <source>Add</source>
-        <translation type="unfinished">加算</translation>
+        <translation>加算</translation>
     </message>
     <message>
         <source>Lighter Color</source>
-        <translation type="unfinished"></translation>
+        <translation>カラー比較 (明)</translation>
     </message>
     <message>
         <source>Contrast</source>
-        <translation type="unfinished">コントラスト</translation>
+        <translation>コントラスト</translation>
     </message>
     <message>
         <source>Overlay</source>
-        <translation type="unfinished">オーバーレイ</translation>
+        <translation>オーバーレイ</translation>
     </message>
     <message>
         <source>Soft Light</source>
-        <translation type="unfinished"></translation>
+        <translation>ソフトライト</translation>
     </message>
     <message>
         <source>Hard Light</source>
-        <translation type="unfinished"></translation>
+        <translation>ハードライト</translation>
     </message>
     <message>
         <source>Vivid Light</source>
-        <translation type="unfinished"></translation>
+        <translation>ビビッドライト</translation>
     </message>
     <message>
         <source>Linear Light</source>
-        <translation type="unfinished"></translation>
+        <translation>リニアライト</translation>
     </message>
     <message>
         <source>Pin Light</source>
-        <translation type="unfinished"></translation>
+        <translation>ピンライト</translation>
     </message>
     <message>
         <source>Hard Mix</source>
-        <translation type="unfinished"></translation>
+        <translation>ハードミックス</translation>
     </message>
     <message>
         <source>Inversion</source>
-        <translation type="unfinished"></translation>
+        <translation>反転</translation>
     </message>
     <message>
         <source>Difference</source>
-        <translation type="unfinished"></translation>
+        <translation>差の絶対値</translation>
     </message>
     <message>
         <source>Exclusion</source>
-        <translation type="unfinished"></translation>
+        <translation>除外</translation>
     </message>
     <message>
         <source>Subtract</source>
-        <translation type="unfinished">減算</translation>
+        <translation>減算</translation>
     </message>
     <message>
         <source>Divide</source>
-        <translation type="unfinished"></translation>
+        <translation>除算</translation>
     </message>
     <message>
         <source>Component</source>
-        <translation type="unfinished"></translation>
+        <translation>コンポーネント</translation>
     </message>
     <message>
         <source>Hue</source>
-        <translation type="unfinished">色相</translation>
+        <translation>色相</translation>
     </message>
     <message>
         <source>Saturation</source>
-        <translation type="unfinished">彩度</translation>
+        <translation>彩度</translation>
     </message>
     <message>
         <source>Color</source>
-        <translation type="unfinished">カラー</translation>
+        <translation>カラー</translation>
     </message>
     <message>
         <source>Luminosity</source>
-        <translation type="unfinished"></translation>
+        <translation>輝度</translation>
     </message>
 </context>
 <context>
@@ -6314,82 +6485,82 @@
     <name>Camera3dPanel</name>
     <message>
         <source>Camera</source>
-        <translation type="unfinished">カメラ</translation>
+        <translation>カメラ</translation>
     </message>
     <message>
         <source>Add camera</source>
-        <translation type="unfinished">カメラを追加</translation>
+        <translation>カメラを追加</translation>
     </message>
     <message>
         <source>Add a camera clip at the playhead, for a camera cut</source>
-        <translation type="unfinished"></translation>
+        <translation>再生ヘッド位置にカメラクリップを追加します (カメラの切り替え用)</translation>
     </message>
     <message>
         <source>Add a camera track with a camera clip over the sequence</source>
-        <translation type="unfinished"></translation>
+        <translation>シーケンス全体にカメラクリップを持つカメラトラックを追加します</translation>
     </message>
     <message>
         <source>Lock camera to view: navigating while looking through the camera moves the camera</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラをビューにロック : カメラ越しに見ながら操作すると、カメラが移動します</translation>
     </message>
     <message>
         <source>Align the scene camera to the 3D viewport&apos;s view</source>
-        <translation type="unfinished"></translation>
+        <translation>シーンカメラを 3D ビューポートの視点に合わせます</translation>
     </message>
     <message>
         <source>No camera yet. Without one every clip is seen through its own Perspective.</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラがまだありません。カメラがない場合、各クリップは自身のパースペクティブで表示されます。</translation>
     </message>
     <message>
         <source> (active)</source>
-        <translation type="unfinished"></translation>
+        <translation> (アクティブ)</translation>
     </message>
     <message>
         <source>Select this camera and look through it</source>
-        <translation type="unfinished"></translation>
+        <translation>このカメラを選択して、カメラ越しに見ます</translation>
     </message>
 </context>
 <context>
     <name>CameraInspector</name>
     <message>
         <source>Position X</source>
-        <translation type="unfinished"></translation>
+        <translation>位置 X</translation>
     </message>
     <message>
         <source>Position Y</source>
-        <translation type="unfinished"></translation>
+        <translation>位置 Y</translation>
     </message>
     <message>
         <source>Position Z</source>
-        <translation type="unfinished"></translation>
+        <translation>位置 Z</translation>
     </message>
     <message>
         <source>Rotation X</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 X</translation>
     </message>
     <message>
         <source>Rotation Y</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 Y</translation>
     </message>
     <message>
         <source>Rotation Z</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 Z</translation>
     </message>
     <message>
         <source>Point of Interest X</source>
-        <translation type="unfinished"></translation>
+        <translation>目標点 X</translation>
     </message>
     <message>
         <source>Point of Interest Y</source>
-        <translation type="unfinished"></translation>
+        <translation>目標点 Y</translation>
     </message>
     <message>
         <source>Point of Interest Z</source>
-        <translation type="unfinished"></translation>
+        <translation>目標点 Z</translation>
     </message>
     <message>
         <source>Zoom</source>
-        <translation type="unfinished">ズーム</translation>
+        <translation>ズーム</translation>
     </message>
     <message>
         <source>Select a camera clip to frame the shot.</source>
@@ -6397,43 +6568,43 @@
     </message>
     <message>
         <source>Everything on the timeline is seen through this camera while the clip lasts. Position is the camera&apos;s eye in the same 3D space as the clips; a camera at rest looks exactly like no camera at all.</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップが続く間、タイムライン上のすべてはこのカメラを通して表示されます。位置は、クリップと同じ 3D 空間におけるカメラの視点です。静止状態のカメラは、カメラがない場合とまったく同じ見え方になります。</translation>
     </message>
     <message>
         <source>Camera rotation</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラの回転</translation>
     </message>
     <message>
         <source>Aim at target</source>
-        <translation type="unfinished"></translation>
+        <translation>ターゲットに向ける</translation>
     </message>
     <message>
         <source>Keep the camera facing its point of interest. Rotation then turns the camera relative to that aim.</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラを常に目標点に向けます。この場合、回転はその向きを基準にカメラを回転させます。</translation>
     </message>
     <message>
         <source>Camera zoom</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラのズーム</translation>
     </message>
     <message>
         <source>Focal length</source>
-        <translation type="unfinished"></translation>
+        <translation>焦点距離</translation>
     </message>
     <message>
         <source>Field of view</source>
-        <translation type="unfinished"></translation>
+        <translation>視野角</translation>
     </message>
     <message>
         <source>Zoom, focal length (36 × 24 mm film) and field of view are one setting in three units. Zooming does not move the camera. While this camera is running it replaces each clip&apos;s own Perspective value, because a scene has one viewer.</source>
-        <translation type="unfinished"></translation>
+        <translation>ズーム、焦点距離 (36 × 24 mm フィルム)、視野角は、1 つの設定を 3 つの単位で表したものです。ズームしてもカメラは移動しません。このカメラが動作している間は、シーンに視聴者が 1 人しかいないため、各クリップ自身のパースペクティブ値が置き換えられます。</translation>
     </message>
     <message>
         <source>Reset camera</source>
-        <translation type="unfinished">カメラをリセット</translation>
+        <translation>カメラをリセット</translation>
     </message>
     <message>
         <source>Back to rest: the default position, no rotation, no target and the default zoom, framing the canvas head on.</source>
-        <translation type="unfinished"></translation>
+        <translation>初期状態に戻します。既定の位置、回転なし、ターゲットなし、既定のズームで、キャンバスを正面からとらえます。</translation>
     </message>
     <message>
         <source>Camera position</source>
@@ -6504,16 +6675,8 @@
         <translation>なし</translation>
     </message>
     <message>
-        <source>Missing look</source>
-        <translation>見つからないルック</translation>
-    </message>
-    <message>
         <source>Adjust color</source>
         <translation>カラーを調整</translation>
-    </message>
-    <message>
-        <source>Set look</source>
-        <translation>ルックを設定</translation>
     </message>
     <message>
         <source>Reset %1</source>
@@ -6523,37 +6686,45 @@
         <source>Reset grade</source>
         <translation>グレーディングをリセット</translation>
     </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation>LUT が見つかりません</translation>
+    </message>
+    <message>
+        <source>Set LUT</source>
+        <translation>LUT を設定</translation>
+    </message>
     <message numerus="yes">
-        <source>Imported %n look(s)</source>
+        <source>Imported %n LUT(s)</source>
         <translation>
-            <numerusform>%n 個のルックをインポートしました</numerusform>
+            <numerusform>%n 個の LUT をインポートしました</numerusform>
         </translation>
     </message>
     <message numerus="yes">
-        <source>Imported %n look(s), %1 failed</source>
+        <source>Imported %n LUT(s), %1 failed</source>
         <translation>
-            <numerusform>%n 個のルックをインポートしました (%1 個失敗)</numerusform>
+            <numerusform>%n 個の LUT をインポートしました (%1 個は失敗)</numerusform>
         </translation>
     </message>
     <message>
-        <source>Could not import that look</source>
-        <translation>そのルックをインポートできませんでした</translation>
+        <source>Could not import that LUT</source>
+        <translation>その LUT をインポートできませんでした</translation>
     </message>
     <message>
-        <source>Could not remove the look</source>
-        <translation>ルックを削除できませんでした</translation>
+        <source>Could not remove the LUT</source>
+        <translation>LUT を削除できませんでした</translation>
     </message>
     <message>
-        <source>Look removed</source>
-        <translation>ルックを削除しました</translation>
+        <source>LUT removed</source>
+        <translation>LUT を削除しました</translation>
     </message>
     <message>
-        <source>Could not rename the look</source>
-        <translation>ルックの名前を変更できませんでした</translation>
+        <source>Could not rename the LUT</source>
+        <translation>LUT の名前を変更できませんでした</translation>
     </message>
     <message>
-        <source>Look renamed</source>
-        <translation>ルックの名前を変更しました</translation>
+        <source>LUT renamed</source>
+        <translation>LUT の名前を変更しました</translation>
     </message>
     <message>
         <source>Grade this clip before applying it to others</source>
@@ -6820,18 +6991,6 @@
         <translation>カラー</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation>ルック</translation>
-    </message>
-    <message>
-        <source>None. Choose a look in the Looks panel.</source>
-        <translation>なし。ルックパネルでルックを選択してください。</translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>ルックの強度</translation>
-    </message>
-    <message>
         <source>Color wheels</source>
         <translation>カラーホイール</translation>
     </message>
@@ -6872,6 +7031,18 @@
         <translation>すべてのクリップに適用</translation>
     </message>
     <message>
+        <source>LUT</source>
+        <translation>LUT</translation>
+    </message>
+    <message>
+        <source>None. Choose one in the Color Grading LUTs panel.</source>
+        <translation>なし。カラーグレーディング LUT パネルで選択してください。</translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation>LUT の強度</translation>
+    </message>
+    <message>
         <source>Apply</source>
         <translation>適用</translation>
     </message>
@@ -6909,7 +7080,7 @@
     </message>
     <message>
         <source>Edit colour</source>
-        <translation type="unfinished"></translation>
+        <translation>色の編集</translation>
     </message>
 </context>
 <context>
@@ -7074,7 +7245,7 @@
     </message>
     <message>
         <source>Bezier</source>
-        <translation type="unfinished">ベジェ</translation>
+        <translation>ベジェ</translation>
     </message>
 </context>
 <context>
@@ -7752,7 +7923,7 @@
     </message>
     <message>
         <source>Styles</source>
-        <translation type="unfinished"></translation>
+        <translation>スタイル</translation>
     </message>
     <message>
         <source>In</source>
@@ -7768,11 +7939,11 @@
     </message>
     <message>
         <source>My curves</source>
-        <translation type="unfinished"></translation>
+        <translation>マイカーブ</translation>
     </message>
     <message>
         <source>+ New curve</source>
-        <translation type="unfinished"></translation>
+        <translation>+ 新しいカーブ</translation>
     </message>
     <message>
         <source>My easing</source>
@@ -8143,11 +8314,11 @@
     <name>EditorHeaderVideoButton</name>
     <message>
         <source>Video</source>
-        <translation type="unfinished">ビデオ</translation>
+        <translation>ビデオ</translation>
     </message>
     <message>
         <source>Bakes, crop and video layout</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク、クロップ、ビデオレイアウト</translation>
     </message>
 </context>
 <context>
@@ -8174,15 +8345,15 @@
     </message>
     <message>
         <source>Install a custom effect or transition from a .driftfx or zip made in Drift Forge</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift Forge で作成した .driftfx または zip から、カスタムエフェクトまたはトランジションをインストールします</translation>
     </message>
     <message>
         <source>Nothing here yet. Import a .driftfx or a Drift Forge zip to add your own.</source>
-        <translation type="unfinished"></translation>
+        <translation>まだ何もありません。.driftfx または Drift Forge の zip をインポートして、独自のものを追加できます。</translation>
     </message>
     <message>
         <source>Import a .driftfx or zip made in Drift Forge to add your own.</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift Forge で作成した .driftfx または zip をインポートして、独自のものを追加できます。</translation>
     </message>
     <message>
         <source>Import</source>
@@ -8754,16 +8925,16 @@
         <translation>インポート…</translation>
     </message>
     <message>
-        <source>Import looks</source>
-        <translation>ルックをインポート</translation>
+        <source>Import LUTs</source>
+        <translation>LUT をインポート</translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation>LUT が見つかりません</translation>
     </message>
     <message>
         <source>LUT files (*.cube)</source>
         <translation>LUT ファイル (*.cube)</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>見つからないルック</translation>
     </message>
 </context>
 <context>
@@ -8882,41 +9053,41 @@
     </message>
     <message>
         <source>Some bakes are out of date</source>
-        <translation type="unfinished"></translation>
+        <translation>古くなっているベイクがあります</translation>
     </message>
     <message numerus="yes">
         <source>%n baked range(s) no longer match your edits. Exporting them as is uses the old pictures.</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 個のベイク済み範囲が編集内容と一致しなくなっています。そのままエクスポートすると、古い映像が使用されます。</numerusform>
         </translation>
     </message>
     <message>
         <source>Re-bake first</source>
-        <translation type="unfinished"></translation>
+        <translation>先に再ベイク</translation>
     </message>
     <message>
         <source>Re-baking. Export again when it finishes.</source>
-        <translation type="unfinished"></translation>
+        <translation>再ベイク中です。完了したら、もう一度エクスポートしてください。</translation>
     </message>
     <message>
         <source>Render them live</source>
-        <translation type="unfinished"></translation>
+        <translation>リアルタイムでレンダリング</translation>
     </message>
     <message>
         <source>Export as is</source>
-        <translation type="unfinished"></translation>
+        <translation>そのままエクスポート</translation>
     </message>
     <message>
         <source>Cancel</source>
-        <translation type="unfinished">キャンセル</translation>
+        <translation>キャンセル</translation>
     </message>
     <message>
         <source>Use baked ranges</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク済み範囲を使用</translation>
     </message>
     <message>
         <source>Read pre-rendered ranges instead of compositing them again</source>
-        <translation type="unfinished"></translation>
+        <translation>再度コンポジットする代わりに、事前レンダリング済みの範囲を読み込みます</translation>
     </message>
 </context>
 <context>
@@ -9109,6 +9280,10 @@
         <translation>ビデオをエクスポート中</translation>
     </message>
     <message>
+        <source>Exporting audio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Export</source>
         <translation>エクスポート</translation>
     </message>
@@ -9123,6 +9298,10 @@
     <message>
         <source>Rendering your video. Close to keep editing, or cancel to stop.</source>
         <translation>ビデオをレンダリング中です。閉じて編集を続けるか、キャンセルして停止します。</translation>
+    </message>
+    <message>
+        <source>Rendering your audio. Close to keep editing, or cancel to stop.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Export finished.</source>
@@ -9963,6 +10142,18 @@
         <translation>終了</translation>
     </message>
     <message>
+        <source>Loop</source>
+        <translation type="unfinished">ループ</translation>
+    </message>
+    <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Repeat the trimmed part for as long as the clip runs. Drag the clip&apos;s edges past the end to add repeats. Turn it off to change the trim.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rename</source>
         <translation>名前の変更</translation>
     </message>
@@ -10001,6 +10192,26 @@
     <message>
         <source>File</source>
         <translation>ファイル</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>ラベル</translation>
+    </message>
+    <message>
+        <source>Clip label</source>
+        <translation>クリップのラベル</translation>
+    </message>
+    <message>
+        <source>No label</source>
+        <translation>ラベルなし</translation>
+    </message>
+    <message>
+        <source>Edit label</source>
+        <translation>ラベルを編集</translation>
+    </message>
+    <message>
+        <source>e.g. intro (empty clears it)</source>
+        <translation>例 : イントロ (空にするとクリア)</translation>
     </message>
 </context>
 <context>
@@ -10097,6 +10308,10 @@
     <message>
         <source>Presets</source>
         <translation>プリセット</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">お気に入り</translation>
     </message>
     <message>
         <source>Type</source>
@@ -10589,63 +10804,67 @@
     </message>
     <message>
         <source>Rotation Z</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 Z</translation>
     </message>
     <message>
         <source>Rotation X</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 X</translation>
     </message>
     <message>
         <source>Rotation Y</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 Y</translation>
     </message>
     <message>
         <source>Position Z</source>
-        <translation type="unfinished"></translation>
+        <translation>位置 Z</translation>
     </message>
     <message>
         <source>Camera</source>
-        <translation type="unfinished">カメラ</translation>
+        <translation>カメラ</translation>
     </message>
     <message>
         <source>Position X</source>
-        <translation type="unfinished"></translation>
+        <translation>位置 X</translation>
     </message>
     <message>
         <source>Position Y</source>
-        <translation type="unfinished"></translation>
+        <translation>位置 Y</translation>
     </message>
     <message>
         <source>Point of Interest X</source>
-        <translation type="unfinished"></translation>
+        <translation>目標点 X</translation>
     </message>
     <message>
         <source>Point of Interest Y</source>
-        <translation type="unfinished"></translation>
+        <translation>目標点 Y</translation>
     </message>
     <message>
         <source>Point of Interest Z</source>
-        <translation type="unfinished"></translation>
+        <translation>目標点 Z</translation>
     </message>
     <message>
         <source>Zoom</source>
-        <translation type="unfinished">ズーム</translation>
+        <translation>ズーム</translation>
     </message>
     <message>
         <source>Anchor X</source>
-        <translation type="unfinished"></translation>
+        <translation>アンカー X</translation>
     </message>
     <message>
         <source>Anchor Y</source>
-        <translation type="unfinished"></translation>
+        <translation>アンカー Y</translation>
     </message>
     <message>
         <source>Anchor Z</source>
-        <translation type="unfinished"></translation>
+        <translation>アンカー Z</translation>
     </message>
     <message>
         <source>Feather</source>
         <translation>ぼかし</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -10746,31 +10965,31 @@
     <name>KeyframeGraph</name>
     <message>
         <source>Position X</source>
-        <translation type="unfinished"></translation>
+        <translation>位置 X</translation>
     </message>
     <message>
         <source>Position Y</source>
-        <translation type="unfinished"></translation>
+        <translation>位置 Y</translation>
     </message>
     <message>
         <source>Rotation Z</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 Z</translation>
     </message>
     <message>
         <source>Point of Interest X</source>
-        <translation type="unfinished"></translation>
+        <translation>目標点 X</translation>
     </message>
     <message>
         <source>Point of Interest Y</source>
-        <translation type="unfinished"></translation>
+        <translation>目標点 Y</translation>
     </message>
     <message>
         <source>Point of Interest Z</source>
-        <translation type="unfinished"></translation>
+        <translation>目標点 Z</translation>
     </message>
     <message>
         <source>Zoom</source>
-        <translation type="unfinished">ズーム</translation>
+        <translation>ズーム</translation>
     </message>
     <message>
         <source>X position</source>
@@ -10794,27 +11013,27 @@
     </message>
     <message>
         <source>Rotation X</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 X</translation>
     </message>
     <message>
         <source>Rotation Y</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 Y</translation>
     </message>
     <message>
         <source>Position Z</source>
-        <translation type="unfinished"></translation>
+        <translation>位置 Z</translation>
     </message>
     <message>
         <source>Anchor X</source>
-        <translation type="unfinished"></translation>
+        <translation>アンカー X</translation>
     </message>
     <message>
         <source>Anchor Y</source>
-        <translation type="unfinished"></translation>
+        <translation>アンカー Y</translation>
     </message>
     <message>
         <source>Anchor Z</source>
-        <translation type="unfinished"></translation>
+        <translation>アンカー Z</translation>
     </message>
     <message>
         <source>Perspective</source>
@@ -10933,7 +11152,7 @@
     </message>
     <message>
         <source>More keyframe tools</source>
-        <translation type="unfinished"></translation>
+        <translation>その他のキーフレームツール</translation>
     </message>
 </context>
 <context>
@@ -11235,6 +11454,10 @@
         <translation>カテゴリを選択し、テンプレートと品質を選択します。これはいつでも設定 → レイアウトを選択 で変更できます。</translation>
     </message>
     <message>
+        <source>Favorites</source>
+        <translation type="unfinished">お気に入り</translation>
+    </message>
+    <message>
         <source>Template</source>
         <translation>テンプレート</translation>
     </message>
@@ -11365,60 +11588,56 @@
 <context>
     <name>LooksPanel</name>
     <message>
-        <source>Looks</source>
-        <translation>ルック</translation>
-    </message>
-    <message>
-        <source>My Looks</source>
-        <translation>マイルック</translation>
-    </message>
-    <message>
-        <source>Import looks</source>
-        <translation>ルックをインポート</translation>
-    </message>
-    <message>
         <source>LUT files (*.cube)</source>
         <translation>LUT ファイル (*.cube)</translation>
-    </message>
-    <message>
-        <source>Search looks</source>
-        <translation>ルックを検索</translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>ルックの強度</translation>
     </message>
     <message>
         <source>Adjust %1</source>
         <translation>%1 を調整</translation>
     </message>
     <message>
-        <source>Get free looks</source>
-        <translation>無料のルックを取得</translation>
-    </message>
-    <message>
         <source>Rename…</source>
         <translation>名前の変更…</translation>
-    </message>
-    <message>
-        <source>Import .cube looks</source>
-        <translation>.cube ルックをインポート</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>見つからないルック</translation>
     </message>
     <message>
         <source>Remove</source>
         <translation>削除</translation>
     </message>
     <message>
-        <source>No looks match “%1”.</source>
-        <translation>「%1」に一致するルックはありません。</translation>
+        <source>Color Grading LUTs</source>
+        <translation>カラーグレーディング LUT</translation>
     </message>
     <message>
-        <source>No favorites yet. Star looks to save them here.</source>
-        <translation>お気に入りはまだありません。ルックに星を付けるとここに保存されます。</translation>
+        <source>Import LUTs</source>
+        <translation>LUT をインポート</translation>
+    </message>
+    <message>
+        <source>Search LUTs</source>
+        <translation>LUT を検索</translation>
+    </message>
+    <message>
+        <source>Import .cube LUTs</source>
+        <translation>.cube LUT をインポート</translation>
+    </message>
+    <message>
+        <source>My LUTs</source>
+        <translation>マイ LUT</translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation>LUT が見つかりません</translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation>LUT の強度</translation>
+    </message>
+    <message>
+        <source>No LUTs match “%1”.</source>
+        <translation>「%1」に一致する LUT はありません。</translation>
+    </message>
+    <message>
+        <source>No favorites yet. Star LUTs to save them here.</source>
+        <translation>お気に入りはまだありません。LUT に星を付けると、ここに保存されます。</translation>
     </message>
     <message>
         <source>Nothing in this category.</source>
@@ -11437,30 +11656,34 @@
         <translation>インポート</translation>
     </message>
     <message>
-        <source>No looks</source>
-        <translation>ルックなし</translation>
+        <source>No LUTs</source>
+        <translation>LUT はありません</translation>
     </message>
     <message>
-        <source>Download a free pack of ready-made looks, or import your own .cube files.</source>
-        <translation>無料の既成ルックパックをダウンロードするか、独自の .cube ファイルをインポートしてください。</translation>
+        <source>Download a free pack of ready-made color grading LUTs, or import your own .cube files.</source>
+        <translation>作成済みのカラーグレーディング LUT の無料パックをダウンロードするか、独自の .cube ファイルをインポートしてください。</translation>
     </message>
     <message>
-        <source>Select a clip to try looks on it</source>
-        <translation>ルックを試すクリップを選択してください</translation>
+        <source>Get free LUTs</source>
+        <translation>無料の LUT を入手</translation>
     </message>
     <message>
-        <source>Remove this look?</source>
-        <translation>このルックを削除しますか?</translation>
+        <source>Select a clip to try LUTs on it</source>
+        <translation>クリップを選択すると、LUT を試せます</translation>
+    </message>
+    <message>
+        <source>Remove this LUT?</source>
+        <translation>この LUT を削除しますか?</translation>
+    </message>
+    <message>
+        <source>Rename LUT</source>
+        <translation>LUT の名前を変更</translation>
     </message>
     <message numerus="yes">
         <source>“%1” is used by %n clip(s). They will show it as missing until it is imported again.</source>
         <translation>
             <numerusform>「%1」は %n 個のクリップで使用されています。再度インポートされるまで、それらのクリップでは見つからないルックとして表示されます。</numerusform>
         </translation>
-    </message>
-    <message>
-        <source>Rename look</source>
-        <translation>ルックの名前を変更</translation>
     </message>
     <message>
         <source>Rename</source>
@@ -11764,37 +11987,37 @@
     <name>MarketCustomEffectsSection</name>
     <message>
         <source>Effects</source>
-        <translation type="unfinished">エフェクト</translation>
+        <translation>エフェクト</translation>
     </message>
     <message>
         <source>Transitions</source>
-        <translation type="unfinished">トランジション</translation>
+        <translation>トランジション</translation>
     </message>
     <message>
         <source>Audio effects</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオエフェクト</translation>
     </message>
     <message numerus="yes">
         <source>%n custom effect(s)</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 個のカスタムエフェクト</numerusform>
         </translation>
     </message>
     <message>
         <source>No custom effects</source>
-        <translation type="unfinished"></translation>
+        <translation>カスタムエフェクトはありません</translation>
     </message>
     <message>
         <source>Refresh</source>
-        <translation type="unfinished"></translation>
+        <translation>更新</translation>
     </message>
     <message>
         <source>No custom effects yet</source>
-        <translation type="unfinished"></translation>
+        <translation>カスタムエフェクトはまだありません</translation>
     </message>
     <message>
         <source>Install a .driftfx or a zip made in Drift Forge, or copy its folder into the custom effects folder and refresh.</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift Forge で作成した .driftfx または zip をインストールするか、そのフォルダーをカスタムエフェクトフォルダーにコピーして更新してください。</translation>
     </message>
     <message>
         <source>Install from file…</source>
@@ -11806,19 +12029,19 @@
     </message>
     <message>
         <source>Remove “%1”?</source>
-        <translation type="unfinished"></translation>
+        <translation>「%1」を削除しますか?</translation>
     </message>
     <message>
         <source>Removed “%1”</source>
-        <translation type="unfinished"></translation>
+        <translation>「%1」を削除しました</translation>
     </message>
     <message>
         <source>Could not remove “%1”</source>
-        <translation type="unfinished"></translation>
+        <translation>「%1」を削除できませんでした</translation>
     </message>
     <message>
         <source>Its folder is deleted. Clips that use it will play without it.</source>
-        <translation type="unfinished"></translation>
+        <translation>フォルダーは削除されます。これを使用しているクリップは、これなしで再生されます。</translation>
     </message>
 </context>
 <context>
@@ -11927,8 +12150,8 @@
         <translation>テーマ</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation>ルック</translation>
+        <source>LUT</source>
+        <translation>LUT</translation>
     </message>
     <message>
         <source>Effect template</source>
@@ -12207,7 +12430,7 @@
     <name>MarketplaceView</name>
     <message>
         <source>Custom effects</source>
-        <translation type="unfinished"></translation>
+        <translation>カスタムエフェクト</translation>
     </message>
     <message>
         <source>Downloads</source>
@@ -12219,35 +12442,35 @@
     </message>
     <message>
         <source>Install a .driftfx or a zip made in Drift Forge, or an addon</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift Forge で作成した .driftfx または zip、あるいはアドオンをインストールします</translation>
     </message>
     <message>
         <source>Open custom effects folder</source>
-        <translation type="unfinished"></translation>
+        <translation>カスタムエフェクトフォルダーを開く</translation>
     </message>
     <message>
         <source>Copy an effect&apos;s folder here, then refresh</source>
-        <translation type="unfinished"></translation>
+        <translation>エフェクトのフォルダーをここにコピーしてから、更新してください</translation>
     </message>
     <message>
         <source>Effects</source>
-        <translation type="unfinished">エフェクト</translation>
+        <translation>エフェクト</translation>
     </message>
     <message>
         <source>Transitions</source>
-        <translation type="unfinished">トランジション</translation>
+        <translation>トランジション</translation>
     </message>
     <message>
         <source>Audio effects</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオエフェクト</translation>
     </message>
     <message>
         <source>Refresh custom effects</source>
-        <translation type="unfinished"></translation>
+        <translation>カスタムエフェクトを更新</translation>
     </message>
     <message>
         <source>Custom effects refreshed</source>
-        <translation type="unfinished"></translation>
+        <translation>カスタムエフェクトを更新しました</translation>
     </message>
     <message>
         <source>Browse more online</source>
@@ -12384,6 +12607,14 @@
 <context>
     <name>MaskOverlay</name>
     <message>
+        <source>Unlock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Drag points to reshape · Tap ○ on an edge to add a point · Hold a point to delete</source>
         <translation>ポイントをドラッグして形状を変更 · 辺上の ○ をタップしてポイントを追加 · ポイントを長押しして削除</translation>
     </message>
@@ -12405,6 +12636,28 @@
     <message>
         <source>Select a clip at the playhead to edit its masks</source>
         <translation>再生ヘッドにあるクリップを選択して、そのマスクを編集します</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayFeatherHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">%1 を編集</translation>
+    </message>
+    <message>
+        <source>Feather</source>
+        <translation type="unfinished">ぼかし</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayRoundnessHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">%1 を編集</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -12459,6 +12712,18 @@
     <message>
         <source>Clip converted to mask</source>
         <translation>クリップをマスクに変換しました</translation>
+    </message>
+    <message>
+        <source>Clip</source>
+        <translation type="unfinished">クリップ</translation>
+    </message>
+    <message>
+        <source>%1 mask</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips used as mask</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Cutouts can&apos;t be moved yet</source>
@@ -12601,8 +12866,16 @@
         <translation>バー</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">分割</translation>
+    </message>
+    <message>
         <source>Matte</source>
         <translation>マット</translation>
+    </message>
+    <message>
+        <source>Sequence matte</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -12610,27 +12883,27 @@
     </message>
     <message>
         <source>Set clip shape</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップの形状を設定</translation>
     </message>
     <message>
         <source>Shape changed</source>
-        <translation type="unfinished"></translation>
+        <translation>形状を変更しました</translation>
     </message>
     <message>
         <source>Reframe clip</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップのフレーミングを調整</translation>
     </message>
     <message>
         <source>Reframed</source>
-        <translation type="unfinished"></translation>
+        <translation>フレーミングを調整しました</translation>
     </message>
     <message>
         <source>Show whole video</source>
-        <translation type="unfinished"></translation>
+        <translation>ビデオ全体を表示</translation>
     </message>
     <message>
         <source>Showing whole video</source>
-        <translation type="unfinished"></translation>
+        <translation>ビデオ全体を表示しています</translation>
     </message>
 </context>
 <context>
@@ -13069,6 +13342,10 @@
             <numerusform>%n 個のシェイプキー</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>MasksInspector</name>
@@ -13101,6 +13378,10 @@
         <translation>バー</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">分割</translation>
+    </message>
+    <message>
         <source>Combine</source>
         <translation>結合</translation>
     </message>
@@ -13123,6 +13404,10 @@
     <message>
         <source>Remove mask</source>
         <translation>マスクを削除</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Center X</source>
@@ -13151,6 +13436,38 @@
     <message>
         <source>Polygon</source>
         <translation>多角形</translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Matte channel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Alpha (transparency)</source>
+        <translation type="unfinished">アルファ (透明度)</translation>
+    </message>
+    <message>
+        <source>Luma (brightness)</source>
+        <translation type="unfinished">ルマ (輝度)</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation type="unfinished">フィット</translation>
+    </message>
+    <message>
+        <source>Stretch</source>
+        <translation type="unfinished">ストレッチ</translation>
+    </message>
+    <message>
+        <source>Fill</source>
+        <translation type="unfinished">フィル</translation>
+    </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Invert</source>
@@ -13214,6 +13531,13 @@
     <message>
         <source>All files (*)</source>
         <translation>すべてのファイル (*)</translation>
+    </message>
+</context>
+<context>
+    <name>McpController</name>
+    <message>
+        <source>Relink media</source>
+        <translation type="unfinished">メディアを再リンク</translation>
     </message>
 </context>
 <context>
@@ -13676,14 +14000,26 @@
         <translation>%1 (%2)</translation>
     </message>
     <message>
-        <source>Relink media</source>
+        <source>The project was closed before the replace landed</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The project was closed before the edit landed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Relink media</source>
+        <translation>メディアを再リンク</translation>
     </message>
     <message numerus="yes">
         <source>Relinked %n file(s)</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n 個のファイルを再リンクしました</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Track is locked</source>
+        <translation type="unfinished">トラックはロックされています</translation>
     </message>
     <message>
         <source>Sub-clip added</source>
@@ -13774,7 +14110,7 @@
     </message>
     <message numerus="yes">
         <source>%n clip(s) may play back slowly. A proxy makes previewing smoother; export still uses the original. Settings › Preview can do this automatically or stop asking.</source>
-        <translation type="unfinished">
+        <translation>
             <numerusform>%n 個のクリップで再生が遅くなる可能性があります。プロキシを使用するとプレビューが滑らかになります。エクスポートには引き続き元のメディアが使用されます。</numerusform>
         </translation>
     </message>
@@ -13876,11 +14212,11 @@
     </message>
     <message>
         <source>Flip H</source>
-        <translation type="unfinished">左右反転</translation>
+        <translation>左右反転</translation>
     </message>
     <message>
         <source>Flip V</source>
-        <translation type="unfinished">上下反転</translation>
+        <translation>上下反転</translation>
     </message>
     <message>
         <source>Original: %1×%2 • Crop: %3×%4</source>
@@ -14201,74 +14537,74 @@
     </message>
     <message>
         <source>Position, size, rotation, anchor point and depth occlusion are on the Transform tab.</source>
-        <translation type="unfinished"></translation>
+        <translation>位置、サイズ、回転、アンカーポイント、深度オクルージョンは「トランスフォーム」タブにあります。</translation>
     </message>
     <message>
         <source>Model scale</source>
-        <translation type="unfinished"></translation>
+        <translation>モデルのスケール</translation>
     </message>
     <message>
         <source>Scale</source>
-        <translation type="unfinished">スケール</translation>
+        <translation>スケール</translation>
     </message>
     <message>
         <source>Depth scale</source>
-        <translation type="unfinished"></translation>
+        <translation>深度スケール</translation>
     </message>
 </context>
 <context>
     <name>Model3DLighting</name>
     <message>
         <source>Lighting</source>
-        <translation type="unfinished">ライティング</translation>
+        <translation>ライティング</translation>
     </message>
     <message>
         <source>Drag the lights in the 3D view, or set them here. They move and scale with the clip; turning the model turns it under them.</source>
-        <translation type="unfinished">3D ビューでライトをドラッグするか、ここで設定します。ライトはクリップとともに移動・拡大縮小し、モデルを回転させるとライトの下でモデルが回転します。</translation>
+        <translation>3D ビューでライトをドラッグするか、ここで設定します。ライトはクリップとともに移動・拡大縮小し、モデルを回転させるとライトの下でモデルが回転します。</translation>
     </message>
     <message>
         <source>Ambient</source>
-        <translation type="unfinished">環境光</translation>
+        <translation>環境光</translation>
     </message>
     <message>
         <source>Light %1</source>
-        <translation type="unfinished">ライト %1</translation>
+        <translation>ライト %1</translation>
     </message>
     <message>
         <source>Light %1 colour</source>
-        <translation type="unfinished">ライト %1 の色</translation>
+        <translation>ライト %1 の色</translation>
     </message>
     <message>
         <source>Left / right</source>
-        <translation type="unfinished">左 / 右</translation>
+        <translation>左 / 右</translation>
     </message>
     <message>
         <source>Up / down</source>
-        <translation type="unfinished">上 / 下</translation>
+        <translation>上 / 下</translation>
     </message>
     <message>
         <source>Near / far</source>
-        <translation type="unfinished">手前 / 奥</translation>
+        <translation>手前 / 奥</translation>
     </message>
     <message>
         <source>Brightness</source>
-        <translation type="unfinished">明るさ</translation>
+        <translation>明るさ</translation>
     </message>
     <message>
         <source>Reach</source>
-        <translation type="unfinished">到達距離</translation>
+        <translation>到達距離</translation>
     </message>
     <message>
         <source>Spot angle</source>
-        <translation type="unfinished">スポット角度</translation>
+        <translation>スポット角度</translation>
     </message>
     <message>
         <source>Aim left / right</source>
-        <translation type="unfinished">照射方向 左 / 右</translation>
+        <translation>照射方向 左 / 右</translation>
     </message>
     <message>
         <source>Aim up / down</source>
-        <translation type="unfinished">照射方向 上 / 下</translation>
+        <translation>照射方向 上 / 下</translation>
     </message>
 </context>
 <context>
@@ -14279,11 +14615,11 @@
     </message>
     <message>
         <source>Model scale</source>
-        <translation type="unfinished"></translation>
+        <translation>モデルのスケール</translation>
     </message>
     <message>
         <source>Model depth scale</source>
-        <translation type="unfinished"></translation>
+        <translation>モデルの深度スケール</translation>
     </message>
     <message>
         <source>left / right</source>
@@ -14510,31 +14846,31 @@
     <name>Outliner3dPanel</name>
     <message>
         <source>3D Outliner</source>
-        <translation type="unfinished"></translation>
+        <translation>3D アウトライナー</translation>
     </message>
     <message>
         <source>Cameras</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラ</translation>
     </message>
     <message>
         <source>Models</source>
-        <translation type="unfinished"></translation>
+        <translation>モデル</translation>
     </message>
     <message>
         <source>Layers</source>
-        <translation type="unfinished">レイヤー</translation>
+        <translation>レイヤー</translation>
     </message>
     <message>
         <source>No cameras, models or 3D layers at the playhead.</source>
-        <translation type="unfinished"></translation>
+        <translation>再生ヘッド位置に、カメラ、モデル、3D レイヤーはありません。</translation>
     </message>
     <message>
         <source>Show this clip&apos;s track</source>
-        <translation type="unfinished"></translation>
+        <translation>このクリップのトラックを表示</translation>
     </message>
     <message>
         <source>Hide this clip&apos;s track</source>
-        <translation type="unfinished"></translation>
+        <translation>このクリップのトラックを非表示</translation>
     </message>
 </context>
 <context>
@@ -15140,11 +15476,11 @@ If playback stutters, try another.</source>
     <name>PreviewStatusLayer</name>
     <message>
         <source>Stale bake</source>
-        <translation type="unfinished"></translation>
+        <translation>古いベイク</translation>
     </message>
     <message>
         <source>Baked</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク済み</translation>
     </message>
     <message>
         <source>Nothing to preview yet</source>
@@ -15271,287 +15607,287 @@ If playback stutters, try another.</source>
     <name>ProceduralConsolePanel</name>
     <message>
         <source>Procedural console</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルコンソール</translation>
     </message>
     <message>
         <source>Console</source>
-        <translation type="unfinished"></translation>
+        <translation>コンソール</translation>
     </message>
     <message>
         <source>Clear the Apply output</source>
-        <translation type="unfinished"></translation>
+        <translation>適用の出力をクリア</translation>
     </message>
     <message>
         <source>Apply or Check a package to see its output here</source>
-        <translation type="unfinished"></translation>
+        <translation>パッケージを適用またはチェックすると、その出力がここに表示されます</translation>
     </message>
     <message>
         <source>Selected clip</source>
-        <translation type="unfinished">選択中のクリップ</translation>
+        <translation>選択中のクリップ</translation>
     </message>
     <message>
         <source>No errors or output</source>
-        <translation type="unfinished"></translation>
+        <translation>エラーや出力はありません</translation>
     </message>
 </context>
 <context>
     <name>ProceduralEditorController</name>
     <message>
         <source>procedural.json is not valid JSON: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>procedural.json は有効な JSON ではありません : %1</translation>
     </message>
     <message>
         <source>expected an object</source>
-        <translation type="unfinished"></translation>
+        <translation>オブジェクトが必要です</translation>
     </message>
     <message>
         <source>%1: ok - %2 meshes, %3 vertices, %4 instances (%5 ms)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 : OK - メッシュ %2 個、頂点 %3 個、インスタンス %4 個 (%5 ms)</translation>
     </message>
     <message>
         <source>%1 failed: %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 に失敗しました : %2</translation>
     </message>
     <message>
         <source>shader %1 compiled</source>
-        <translation type="unfinished"></translation>
+        <translation>シェーダー %1 をコンパイルしました</translation>
     </message>
     <message>
         <source>Shaders were not compiled: no OpenGL context</source>
-        <translation type="unfinished"></translation>
+        <translation>シェーダーはコンパイルされませんでした : OpenGL コンテキストがありません</translation>
     </message>
     <message>
         <source>%1 is read-only. Duplicate it to edit.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 は読み取り専用です。編集するには複製してください。</translation>
     </message>
     <message>
         <source>Apply</source>
-        <translation type="unfinished">適用</translation>
+        <translation>適用</translation>
     </message>
     <message>
         <source>Check</source>
-        <translation type="unfinished"></translation>
+        <translation>チェック</translation>
     </message>
     <message>
         <source>%1 copy</source>
-        <translation type="unfinished">%1 をコピー</translation>
+        <translation>%1 をコピー</translation>
     </message>
     <message>
         <source>Duplicate</source>
-        <translation type="unfinished">複製</translation>
+        <translation>複製</translation>
     </message>
     <message>
         <source>Use 1-48 letters, digits or underscores for the name</source>
-        <translation type="unfinished"></translation>
+        <translation>名前には 1-48 文字の英字、数字、アンダースコアを使用してください</translation>
     </message>
     <message>
         <source>Radius</source>
-        <translation type="unfinished">半径</translation>
+        <translation>半径</translation>
     </message>
     <message>
         <source>Speed</source>
-        <translation type="unfinished">速度</translation>
+        <translation>速度</translation>
     </message>
     <message>
         <source>Tint</source>
-        <translation type="unfinished">色合い</translation>
+        <translation>色合い</translation>
     </message>
     <message>
         <source>Create</source>
-        <translation type="unfinished">作成</translation>
+        <translation>作成</translation>
     </message>
     <message>
         <source>Use letters, digits or underscores for a new shader name, not an existing one</source>
-        <translation type="unfinished"></translation>
+        <translation>新しいシェーダー名には、既存のものではなく、英字、数字、アンダースコアを使用してください</translation>
     </message>
 </context>
 <context>
     <name>ProceduralEditorPanel</name>
     <message>
         <source>Procedural code editor</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルコードエディター</translation>
     </message>
     <message>
         <source>%1 (read-only)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (読み取り専用)</translation>
     </message>
     <message>
         <source>Pick a package</source>
-        <translation type="unfinished"></translation>
+        <translation>パッケージを選択</translation>
     </message>
     <message>
         <source>The package to edit. Selecting a procedural clip opens its package.</source>
-        <translation type="unfinished"></translation>
+        <translation>編集するパッケージ。プロシージャルクリップを選択すると、そのパッケージが開きます。</translation>
     </message>
     <message>
         <source>New</source>
-        <translation type="unfinished">新規</translation>
+        <translation>新規</translation>
     </message>
     <message>
         <source>Apply or revert your edits first</source>
-        <translation type="unfinished"></translation>
+        <translation>先に編集を適用するか元に戻してください</translation>
     </message>
     <message>
         <source>Create a minimal procedural package</source>
-        <translation type="unfinished"></translation>
+        <translation>最小限のプロシージャルパッケージを作成</translation>
     </message>
     <message>
         <source>New procedural package</source>
-        <translation type="unfinished"></translation>
+        <translation>新しいプロシージャルパッケージ</translation>
     </message>
     <message>
         <source>Duplicate to edit</source>
-        <translation type="unfinished"></translation>
+        <translation>複製して編集</translation>
     </message>
     <message>
         <source>Copy this package to your own procedurals and edit the copy</source>
-        <translation type="unfinished"></translation>
+        <translation>このパッケージを自分のプロシージャルにコピーして、そのコピーを編集します</translation>
     </message>
     <message>
         <source>Duplicate procedural to edit</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルを複製して編集</translation>
     </message>
     <message>
         <source>Apply</source>
-        <translation type="unfinished">適用</translation>
+        <translation>適用</translation>
     </message>
     <message>
         <source>Validate and install the package, then refresh the preview (Ctrl+S)</source>
-        <translation type="unfinished"></translation>
+        <translation>パッケージを検証してインストールし、プレビューを更新します (Ctrl+S)</translation>
     </message>
     <message>
         <source>Apply procedural code</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルコードを適用</translation>
     </message>
     <message>
         <source>Check</source>
-        <translation type="unfinished"></translation>
+        <translation>チェック</translation>
     </message>
     <message>
         <source>Validate the edits without installing them</source>
-        <translation type="unfinished"></translation>
+        <translation>インストールせずに編集内容を検証します</translation>
     </message>
     <message>
         <source>Revert</source>
-        <translation type="unfinished">元に戻す</translation>
+        <translation>元に戻す</translation>
     </message>
     <message>
         <source>Discard edits and reload the package from disk</source>
-        <translation type="unfinished"></translation>
+        <translation>編集を破棄して、ディスクからパッケージを再読み込みします</translation>
     </message>
     <message>
         <source>Add clip</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップを追加</translation>
     </message>
     <message>
         <source>Add a clip using this package at the playhead</source>
-        <translation type="unfinished"></translation>
+        <translation>このパッケージを使用するクリップを再生ヘッド位置に追加します</translation>
     </message>
     <message>
         <source>Discard unapplied edits?</source>
-        <translation type="unfinished"></translation>
+        <translation>未適用の編集を破棄しますか?</translation>
     </message>
     <message>
         <source>Discard</source>
-        <translation type="unfinished">破棄</translation>
+        <translation>破棄</translation>
     </message>
     <message>
         <source>Keep editing</source>
-        <translation type="unfinished">編集を続ける</translation>
+        <translation>編集を続ける</translation>
     </message>
     <message>
         <source>Package name</source>
-        <translation type="unfinished"></translation>
+        <translation>パッケージ名</translation>
     </message>
     <message>
         <source>Create</source>
-        <translation type="unfinished">作成</translation>
+        <translation>作成</translation>
     </message>
     <message>
         <source>Cancel</source>
-        <translation type="unfinished">キャンセル</translation>
+        <translation>キャンセル</translation>
     </message>
     <message>
         <source>Add a shader pair</source>
-        <translation type="unfinished"></translation>
+        <translation>シェーダーペアを追加</translation>
     </message>
     <message>
         <source>Shader name</source>
-        <translation type="unfinished"></translation>
+        <translation>シェーダー名</translation>
     </message>
     <message>
         <source>Add</source>
-        <translation type="unfinished">加算</translation>
+        <translation>加算</translation>
     </message>
     <message>
         <source>%1 is read-only</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 は読み取り専用です</translation>
     </message>
     <message>
         <source>%1 - unapplied edits</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 - 未適用の編集</translation>
     </message>
     <message>
         <source>No package open</source>
-        <translation type="unfinished"></translation>
+        <translation>開いているパッケージはありません</translation>
     </message>
     <message>
         <source>Select a procedural clip, pick a package above, or create a new one.</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルクリップを選択するか、上でパッケージを選択するか、新しく作成してください。</translation>
     </message>
 </context>
 <context>
     <name>ProceduralInspector</name>
     <message>
         <source>Package &quot;%1&quot; is not installed; the clip renders nothing until it returns.</source>
-        <translation type="unfinished"></translation>
+        <translation>パッケージ &quot;%1&quot; はインストールされていないため、戻るまでクリップは何も表示されません。</translation>
     </message>
     <message>
         <source>Package</source>
-        <translation type="unfinished"></translation>
+        <translation>パッケージ</translation>
     </message>
     <message>
         <source>Procedural package</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルパッケージ</translation>
     </message>
     <message>
         <source>The package that builds this clip&apos;s scene. Changing it resets the parameters.</source>
-        <translation type="unfinished"></translation>
+        <translation>このクリップのシーンを構築するパッケージ。変更するとパラメーターがリセットされます。</translation>
     </message>
     <message>
         <source>Could not change the package</source>
-        <translation type="unfinished"></translation>
+        <translation>パッケージを変更できませんでした</translation>
     </message>
     <message>
         <source>Seed</source>
-        <translation type="unfinished">シード</translation>
+        <translation>シード</translation>
     </message>
     <message>
         <source>Procedural seed</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルシード</translation>
     </message>
     <message>
         <source>Parameters</source>
-        <translation type="unfinished"></translation>
+        <translation>パラメーター</translation>
     </message>
     <message>
         <source>Procedural parameters</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルパラメーター</translation>
     </message>
 </context>
 <context>
     <name>ProceduralParamsPanel</name>
     <message>
         <source>Procedural parameters panel</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルパラメーターパネル</translation>
     </message>
     <message>
         <source>Select a procedural clip</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルクリップを選択</translation>
     </message>
     <message>
         <source>Pick a Procedural 3D clip on the timeline to edit its parameters here.</source>
-        <translation type="unfinished"></translation>
+        <translation>タイムライン上のプロシージャル 3D クリップを選択すると、ここでパラメーターを編集できます。</translation>
     </message>
 </context>
 <context>
@@ -15637,7 +15973,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>compressed block is too large</source>
-        <translation type="unfinished"></translation>
+        <translation>圧縮ブロックが大きすぎます</translation>
     </message>
     <message>
         <source>cannot compress %1</source>
@@ -16057,7 +16393,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Procedural</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャル</translation>
     </message>
     <message>
         <source>Subtitles</source>
@@ -16494,15 +16830,15 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Compact</source>
-        <translation type="unfinished"></translation>
+        <translation>コンパクト</translation>
     </message>
     <message>
         <source>High</source>
-        <translation type="unfinished">高</translation>
+        <translation>高</translation>
     </message>
     <message>
         <source>Balanced</source>
-        <translation type="unfinished"></translation>
+        <translation>バランス</translation>
     </message>
 </context>
 <context>
@@ -16558,8 +16894,8 @@ If playback stutters, try another.</source>
         <translation>必須アドオンをインストール</translation>
     </message>
     <message>
-        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and looks come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
-        <translation>Drift の基本エフェクト、トランジション、オーディオエフェクト、フォント、ルックはアドオンとして提供されます。これらがないと、エディターで期待される機能の大部分が欠けるため、今インストールします。</translation>
+        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and color grading LUTs come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
+        <translation>Drift の基本的なエフェクト、トランジション、オーディオエフェクト、フォント、カラーグレーディング LUT はアドオンとして提供されます。これらがないと、エディターに期待される機能のほとんどが欠けてしまうため、今インストールします。</translation>
     </message>
     <message>
         <source>Needs a newer version of Drift.</source>
@@ -16664,7 +17000,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Windows</source>
-        <translation type="unfinished"></translation>
+        <translation>Windows</translation>
     </message>
     <message>
         <source>Recommended</source>
@@ -16740,8 +17076,8 @@ If playback stutters, try another.</source>
         <translation>トランジション</translation>
     </message>
     <message>
-        <source>Looks</source>
-        <translation>ルック</translation>
+        <source>LUTs</source>
+        <translation>LUTs</translation>
     </message>
     <message>
         <source>Fonts</source>
@@ -16823,12 +17159,12 @@ If playback stutters, try another.</source>
         <translation>エクストラでさらに入手</translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
-        <translation>その他のエフェクト、トランジション、ルック、フォント、ステッカー、AI モデルは、トップバーの「エクストラ」からインストールされます。</translation>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
+        <translation>エフェクト、トランジション、カラーグレーディング LUT、フォント、ステッカー、AI モデルは、上部バーの「拡張機能」から追加でインストールできます。</translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the header.</source>
-        <translation>その他のエフェクト、トランジション、ルック、フォント、ステッカー、AI モデルは、ヘッダーの「エクストラ」からインストールされます。</translation>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the header.</source>
+        <translation>エフェクト、トランジション、カラーグレーディング LUT、フォント、ステッカー、AI モデルは、ヘッダーの「拡張機能」から追加でインストールできます。</translation>
     </message>
     <message>
         <source>Use your fingers</source>
@@ -17527,11 +17863,11 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Bakes</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク</translation>
     </message>
     <message>
         <source>Crop video</source>
-        <translation type="unfinished">ビデオを切り抜き</translation>
+        <translation>ビデオを切り抜き</translation>
     </message>
     <message>
         <source>Switch to mobile layout…</source>
@@ -17941,23 +18277,23 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Notifications for agent actions</source>
-        <translation type="unfinished"></translation>
+        <translation>エージェント操作の通知</translation>
     </message>
     <message>
         <source>Which pop-ups an agent&apos;s own edits show you. Errors always show.</source>
-        <translation type="unfinished"></translation>
+        <translation>エージェント自身の編集時に表示するポップアップを選択します。エラーは常に表示されます。</translation>
     </message>
     <message>
         <source>All</source>
-        <translation type="unfinished">すべて</translation>
+        <translation>すべて</translation>
     </message>
     <message>
         <source>Problems only</source>
-        <translation type="unfinished"></translation>
+        <translation>問題のみ</translation>
     </message>
     <message>
         <source>None (errors still show)</source>
-        <translation type="unfinished"></translation>
+        <translation>なし (エラーは引き続き表示)</translation>
     </message>
     <message>
         <source>Cloud</source>
@@ -18135,7 +18471,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Follows your Windows display scale.</source>
-        <translation type="unfinished"></translation>
+        <translation>Windows の表示スケールに従います。</translation>
     </message>
     <message>
         <source>100% fits a 1080p screen, whatever your Windows display scale is.</source>
@@ -18143,7 +18479,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Makes buttons, text, and icons larger or smaller, on top of your display settings.</source>
-        <translation type="unfinished"></translation>
+        <translation>表示設定に加えて、ボタン、テキスト、アイコンを大きくまたは小さくします。</translation>
     </message>
     <message>
         <source>100% (system)</source>
@@ -18151,7 +18487,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Windows display scale</source>
-        <translation type="unfinished"></translation>
+        <translation>Windows の表示スケール</translation>
     </message>
     <message>
         <source>Layout</source>
@@ -18406,47 +18742,47 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Undo history</source>
-        <translation type="unfinished"></translation>
+        <translation>元に戻す履歴</translation>
     </message>
     <message>
         <source>Where undo steps are kept. Saved with the project, they come back when you reopen it; long sessions use a lot of memory either way.</source>
-        <translation type="unfinished"></translation>
+        <translation>元に戻す操作の保存先です。プロジェクトと一緒に保存すると、再び開いたときに復元されます。どちらの場合も、長時間の作業では多くのメモリを使用します。</translation>
     </message>
     <message>
         <source>Saved with the project</source>
-        <translation type="unfinished"></translation>
+        <translation>プロジェクトと一緒に保存</translation>
     </message>
     <message>
         <source>This session only</source>
-        <translation type="unfinished"></translation>
+        <translation>このセッションのみ</translation>
     </message>
     <message>
         <source>Undo steps kept</source>
-        <translation type="unfinished"></translation>
+        <translation>保持する元に戻す回数</translation>
     </message>
     <message>
         <source>Older steps are dropped, and media only they used is no longer kept for them.</source>
-        <translation type="unfinished"></translation>
+        <translation>古い操作は破棄され、それらの操作でのみ使用されていたメディアも保持されなくなります。</translation>
     </message>
     <message>
         <source>Unlimited</source>
-        <translation type="unfinished">無制限</translation>
+        <translation>無制限</translation>
     </message>
     <message>
         <source>500 steps</source>
-        <translation type="unfinished"></translation>
+        <translation>500 ステップ</translation>
     </message>
     <message>
         <source>200 steps</source>
-        <translation type="unfinished"></translation>
+        <translation>200 ステップ</translation>
     </message>
     <message>
         <source>100 steps</source>
-        <translation type="unfinished"></translation>
+        <translation>100 ステップ</translation>
     </message>
     <message>
         <source>50 steps</source>
-        <translation type="unfinished"></translation>
+        <translation>50 ステップ</translation>
     </message>
     <message>
         <source>Extras</source>
@@ -18490,7 +18826,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>%1 used</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 使用中</translation>
     </message>
     <message>
         <source>Clear cache</source>
@@ -18498,19 +18834,19 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Cache location</source>
-        <translation type="unfinished"></translation>
+        <translation>キャッシュの場所</translation>
     </message>
     <message>
         <source>%1. Takes effect after restart.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1。再起動後に反映されます。</translation>
     </message>
     <message>
         <source>Reset</source>
-        <translation type="unfinished">リセット</translation>
+        <translation>リセット</translation>
     </message>
     <message>
         <source>Change…</source>
-        <translation type="unfinished"></translation>
+        <translation>変更…</translation>
     </message>
     <message>
         <source>Settings file</source>
@@ -19013,23 +19349,23 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Suggest proxies on import</source>
-        <translation type="unfinished"></translation>
+        <translation>インポート時にプロキシを提案</translation>
     </message>
     <message>
         <source>What to do when imported footage may preview slowly.</source>
-        <translation type="unfinished"></translation>
+        <translation>インポートした素材のプレビューが遅くなる可能性がある場合の動作。</translation>
     </message>
     <message>
         <source>Ask</source>
-        <translation type="unfinished"></translation>
+        <translation>確認する</translation>
     </message>
     <message>
         <source>Always create proxies</source>
-        <translation type="unfinished"></translation>
+        <translation>常にプロキシを作成</translation>
     </message>
     <message>
         <source>Never ask</source>
-        <translation type="unfinished"></translation>
+        <translation>確認しない</translation>
     </message>
     <message>
         <source>Proxy resolution</source>
@@ -19456,7 +19792,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Miter limit</source>
-        <translation type="unfinished"></translation>
+        <translation>マイター制限</translation>
     </message>
     <message>
         <source>Trim start</source>
@@ -19531,111 +19867,111 @@ If playback stutters, try another.</source>
     <name>ShapeCropSection</name>
     <message>
         <source>Original</source>
-        <translation type="unfinished">オリジナル</translation>
+        <translation>オリジナル</translation>
     </message>
     <message>
         <source>Circle</source>
-        <translation type="unfinished">円</translation>
+        <translation>円</translation>
     </message>
     <message>
         <source>Ellipse</source>
-        <translation type="unfinished">楕円</translation>
+        <translation>楕円</translation>
     </message>
     <message>
         <source>Triangle</source>
-        <translation type="unfinished">三角形</translation>
+        <translation>三角形</translation>
     </message>
     <message>
         <source>Square</source>
-        <translation type="unfinished">正方形</translation>
+        <translation>正方形</translation>
     </message>
     <message>
         <source>Diamond</source>
-        <translation type="unfinished">菱形</translation>
+        <translation>菱形</translation>
     </message>
     <message>
         <source>Pentagon</source>
-        <translation type="unfinished">五角形</translation>
+        <translation>五角形</translation>
     </message>
     <message>
         <source>Hexagon</source>
-        <translation type="unfinished">六角形</translation>
+        <translation>六角形</translation>
     </message>
     <message>
         <source>Octagon</source>
-        <translation type="unfinished">八角形</translation>
+        <translation>八角形</translation>
     </message>
     <message>
         <source>Star</source>
-        <translation type="unfinished">星</translation>
+        <translation>星</translation>
     </message>
     <message>
         <source>Heart</source>
-        <translation type="unfinished">ハート</translation>
+        <translation>ハート</translation>
     </message>
     <message>
         <source>Shape</source>
-        <translation type="unfinished">シェイプ</translation>
+        <translation>シェイプ</translation>
     </message>
     <message>
         <source>Content inside shape</source>
-        <translation type="unfinished"></translation>
+        <translation>シェイプ内のコンテンツ</translation>
     </message>
     <message>
         <source>Zoom out</source>
-        <translation type="unfinished">ズームアウト</translation>
+        <translation>ズームアウト</translation>
     </message>
     <message>
         <source>Zoom</source>
-        <translation type="unfinished">ズーム</translation>
+        <translation>ズーム</translation>
     </message>
     <message>
         <source>Reframe clip</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップのフレーミングを調整</translation>
     </message>
     <message>
         <source>Zoom in</source>
-        <translation type="unfinished">ズームイン</translation>
+        <translation>ズームイン</translation>
     </message>
     <message>
         <source>Horizontal</source>
-        <translation type="unfinished">水平</translation>
+        <translation>水平</translation>
     </message>
     <message>
         <source>Horizontal position</source>
-        <translation type="unfinished"></translation>
+        <translation>水平位置</translation>
     </message>
     <message>
         <source>Vertical</source>
-        <translation type="unfinished">垂直</translation>
+        <translation>垂直</translation>
     </message>
     <message>
         <source>Vertical position</source>
-        <translation type="unfinished"></translation>
+        <translation>垂直位置</translation>
     </message>
     <message>
         <source>Nudge content left</source>
-        <translation type="unfinished"></translation>
+        <translation>コンテンツを左に微調整</translation>
     </message>
     <message>
         <source>Nudge content up</source>
-        <translation type="unfinished"></translation>
+        <translation>コンテンツを上に微調整</translation>
     </message>
     <message>
         <source>Nudge content down</source>
-        <translation type="unfinished"></translation>
+        <translation>コンテンツを下に微調整</translation>
     </message>
     <message>
         <source>Nudge content right</source>
-        <translation type="unfinished"></translation>
+        <translation>コンテンツを右に微調整</translation>
     </message>
     <message>
         <source>Center</source>
-        <translation type="unfinished"></translation>
+        <translation>中央</translation>
     </message>
     <message>
         <source>Show whole video</source>
-        <translation type="unfinished"></translation>
+        <translation>ビデオ全体を表示</translation>
     </message>
 </context>
 <context>
@@ -22685,55 +23021,55 @@ If playback stutters, try another.</source>
     <name>TeleprompterPanel</name>
     <message>
         <source>Teleprompter</source>
-        <translation type="unfinished"></translation>
+        <translation>テレプロンプター</translation>
     </message>
     <message>
         <source>Edit script</source>
-        <translation type="unfinished"></translation>
+        <translation>スクリプトを編集</translation>
     </message>
     <message>
         <source>Read mode</source>
-        <translation type="unfinished"></translation>
+        <translation>読み取りモード</translation>
     </message>
     <message>
         <source>Pause scrolling</source>
-        <translation type="unfinished"></translation>
+        <translation>スクロールを一時停止</translation>
     </message>
     <message>
         <source>Start scrolling</source>
-        <translation type="unfinished"></translation>
+        <translation>スクロールを開始</translation>
     </message>
     <message>
         <source>Back to top</source>
-        <translation type="unfinished"></translation>
+        <translation>先頭に戻る</translation>
     </message>
     <message>
         <source>Speed</source>
-        <translation type="unfinished">速度</translation>
+        <translation>速度</translation>
     </message>
     <message>
         <source>lines/s</source>
-        <translation type="unfinished"></translation>
+        <translation>行/秒</translation>
     </message>
     <message>
         <source>Size</source>
-        <translation type="unfinished">サイズ</translation>
+        <translation>サイズ</translation>
     </message>
     <message>
         <source>Follow recording</source>
-        <translation type="unfinished"></translation>
+        <translation>録画に連動</translation>
     </message>
     <message>
         <source>Scrolling starts, pauses and stops with recording</source>
-        <translation type="unfinished"></translation>
+        <translation>スクロールは録画に合わせて開始、一時停止、停止します</translation>
     </message>
     <message>
         <source>Show over preview</source>
-        <translation type="unfinished"></translation>
+        <translation>プレビュー上に表示</translation>
     </message>
     <message>
         <source>Paste or type your script</source>
-        <translation type="unfinished"></translation>
+        <translation>スクリプトを貼り付けるか入力してください</translation>
     </message>
 </context>
 <context>
@@ -22987,6 +23323,10 @@ If playback stutters, try another.</source>
 </context>
 <context>
     <name>TextInspectorAnimCategoryStrip</name>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">お気に入り</translation>
+    </message>
     <message>
         <source>All</source>
         <translation>すべて</translation>
@@ -23751,42 +24091,42 @@ If playback stutters, try another.</source>
     <name>TimelineBakeContextMenu</name>
     <message>
         <source>Re-bake</source>
-        <translation type="unfinished"></translation>
+        <translation>再ベイク</translation>
     </message>
     <message>
         <source>Set work area to bake</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクするワークエリアを設定</translation>
     </message>
     <message>
         <source>Delete bake</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクを削除</translation>
     </message>
     <message>
         <source>Manage bakes…</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクを管理…</translation>
     </message>
 </context>
 <context>
     <name>TimelineBakeStrip</name>
     <message>
         <source>Baking %1%</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク中 %1%</translation>
     </message>
     <message>
         <source>Stale</source>
-        <translation type="unfinished"></translation>
+        <translation>古い</translation>
     </message>
     <message>
         <source>Fresh</source>
-        <translation type="unfinished"></translation>
+        <translation>最新</translation>
     </message>
     <message>
         <source>%1 – %2 · %3 · %4%5</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 – %2 · %3 · %4%5</translation>
     </message>
     <message>
         <source>%1 · %2×%3</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 · %2×%3</translation>
     </message>
 </context>
 <context>
@@ -23808,7 +24148,7 @@ If playback stutters, try another.</source>
     <name>TimelineClipContextMenu</name>
     <message>
         <source>Move to track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックに移動</translation>
     </message>
     <message>
         <source>Properties</source>
@@ -23828,7 +24168,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Dissolve composite</source>
-        <translation type="unfinished"></translation>
+        <translation>コンポジットを解除</translation>
     </message>
     <message>
         <source>Make composite</source>
@@ -23871,20 +24211,36 @@ If playback stutters, try another.</source>
         <translation>すべてのオーディオトラックを分離</translation>
     </message>
     <message>
+        <source>Stop looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop</source>
+        <translation type="unfinished">ループ</translation>
+    </message>
+    <message>
         <source>Remove silence</source>
-        <translation type="unfinished">無音部分を削除</translation>
+        <translation>無音部分を削除</translation>
     </message>
     <message>
         <source>Sync by audio</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオで同期</translation>
     </message>
     <message>
         <source>Cancel audio analysis</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオ分析をキャンセル</translation>
     </message>
     <message>
         <source>Convert to mask</source>
         <translation>マスクに変換</translation>
+    </message>
+    <message>
+        <source>Use as mask (nested timeline)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Convert to edit-friendly format</source>
@@ -23944,7 +24300,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Replace with…</source>
-        <translation type="unfinished"></translation>
+        <translation>置き換え…</translation>
     </message>
     <message>
         <source>Copy effects</source>
@@ -23964,7 +24320,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Blur area…</source>
-        <translation type="unfinished"></translation>
+        <translation>ブラー領域…</translation>
     </message>
     <message>
         <source>Edit keyframes…</source>
@@ -23988,7 +24344,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Delete with effects</source>
-        <translation type="unfinished"></translation>
+        <translation>エフェクトごと削除</translation>
     </message>
 </context>
 <context>
@@ -24002,7 +24358,7 @@ If playback stutters, try another.</source>
     <name>TimelineCutButton</name>
     <message>
         <source>Add transition</source>
-        <translation type="unfinished">トランジションを追加</translation>
+        <translation>トランジションを追加</translation>
     </message>
 </context>
 <context>
@@ -24046,19 +24402,19 @@ If playback stutters, try another.</source>
     <name>TimelineLaneRibbons</name>
     <message>
         <source>Audio FX</source>
-        <translation type="unfinished">オーディオ FX</translation>
+        <translation>オーディオ FX</translation>
     </message>
     <message>
         <source>Mask</source>
-        <translation type="unfinished">マスク</translation>
+        <translation>マスク</translation>
     </message>
     <message>
         <source>Effects</source>
-        <translation type="unfinished">エフェクト</translation>
+        <translation>エフェクト</translation>
     </message>
     <message>
         <source>%1 — click to expand</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 — クリックして展開</translation>
     </message>
 </context>
 <context>
@@ -24119,15 +24475,63 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Shrink all tracks</source>
-        <translation type="unfinished"></translation>
+        <translation>すべてのトラックを縮小</translation>
     </message>
     <message>
         <source>Grow all tracks</source>
-        <translation type="unfinished"></translation>
+        <translation>すべてのトラックを拡大</translation>
     </message>
     <message>
         <source>Fit tracks to panel</source>
+        <translation>トラックをパネルに合わせる</translation>
+    </message>
+    <message>
+        <source>Paste here</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add bookmark here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips after here on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select all clips</source>
+        <translation type="unfinished">すべてのクリップを選択</translation>
+    </message>
+    <message>
+        <source>Unmute track</source>
+        <translation type="unfinished">トラックのミュートを解除</translation>
+    </message>
+    <message>
+        <source>Mute track</source>
+        <translation type="unfinished">トラックをミュート</translation>
+    </message>
+    <message>
+        <source>Show track</source>
+        <translation type="unfinished">トラックを表示</translation>
+    </message>
+    <message>
+        <source>Hide track</source>
+        <translation type="unfinished">トラックを非表示</translation>
+    </message>
+    <message>
+        <source>Unlock track</source>
+        <translation type="unfinished">トラックのロックを解除</translation>
+    </message>
+    <message>
+        <source>Lock track</source>
+        <translation type="unfinished">トラックをロック</translation>
+    </message>
+    <message>
+        <source>Remove empty tracks</source>
+        <translation type="unfinished">空のトラックを削除</translation>
     </message>
     <message>
         <source>Rename bookmark</source>
@@ -24186,7 +24590,7 @@ If playback stutters, try another.</source>
     <name>TimelineReplaceClipDialog</name>
     <message>
         <source>Replace with…</source>
-        <translation type="unfinished"></translation>
+        <translation>置き換え…</translation>
     </message>
     <message>
         <source>Cancel</source>
@@ -24194,11 +24598,11 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Search media</source>
-        <translation type="unfinished">メディアを検索</translation>
+        <translation>メディアを検索</translation>
     </message>
     <message>
         <source>No matching media</source>
-        <translation type="unfinished"></translation>
+        <translation>一致するメディアがありません</translation>
     </message>
 </context>
 <context>
@@ -24212,7 +24616,11 @@ If playback stutters, try another.</source>
     <name>TimelineSequenceTabs</name>
     <message>
         <source>Main</source>
-        <translation type="unfinished">メイン</translation>
+        <translation>メイン</translation>
+    </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -24264,7 +24672,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Toggle keyframe strip</source>
-        <translation type="unfinished"></translation>
+        <translation>キーフレームストリップを切り替え</translation>
     </message>
     <message>
         <source>Timeline overview — a minimap of the whole project; click or drag it to jump the view</source>
@@ -24502,7 +24910,7 @@ If playback stutters, try another.</source>
     <name>TimelineTrackItem</name>
     <message>
         <source>Procedural package not found. The clip renders nothing until it is installed again.</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルパッケージが見つかりません。再インストールされるまで、クリップは何も表示されません。</translation>
     </message>
     <message>
         <source>Audio adjustment</source>
@@ -24525,12 +24933,24 @@ If playback stutters, try another.</source>
         <translation>字幕</translation>
     </message>
     <message>
+        <source>Hide the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1, track %2</source>
         <translation>%1, トラック %2</translation>
     </message>
 </context>
 <context>
     <name>TimelineTrimHandle</name>
+    <message>
+        <source>Drag to repeat the clip</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <source>Drag to trim the start</source>
         <translation>ドラッグして開始をトリム</translation>
@@ -24548,19 +24968,19 @@ If playback stutters, try another.</source>
     <name>TimelineWorkAreaBakeChip</name>
     <message>
         <source>Baking %1%</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク中 %1%</translation>
     </message>
     <message>
         <source>Bake</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク</translation>
     </message>
     <message>
         <source>Cancel baking</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイクをキャンセル</translation>
     </message>
     <message>
         <source>Pre-render the work area for smooth playback and export</source>
-        <translation type="unfinished"></translation>
+        <translation>スムーズな再生とエクスポートのために、ワークエリアを事前レンダリングします</translation>
     </message>
 </context>
 <context>
@@ -24697,11 +25117,11 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Expand child lanes</source>
-        <translation type="unfinished"></translation>
+        <translation>子レーンを展開</translation>
     </message>
     <message>
         <source>Collapse child lanes</source>
-        <translation type="unfinished"></translation>
+        <translation>子レーンを折りたたむ</translation>
     </message>
     <message>
         <source>Unmute track</source>
@@ -24713,27 +25133,27 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Unsolo track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックのソロを解除</translation>
     </message>
     <message>
         <source>Solo track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックをソロにする</translation>
     </message>
     <message>
         <source>Stop recording</source>
-        <translation type="unfinished">録音を停止</translation>
+        <translation>録音を停止</translation>
     </message>
     <message>
         <source>Record voiceover</source>
-        <translation type="unfinished">ボイスオーバーを録音</translation>
+        <translation>ボイスオーバーを録音</translation>
     </message>
     <message>
         <source>Show one combined waveform</source>
-        <translation type="unfinished">1つの合成波形を表示</translation>
+        <translation>1つの合成波形を表示</translation>
     </message>
     <message>
         <source>Show each channel separately</source>
-        <translation type="unfinished"></translation>
+        <translation>各チャンネルを個別に表示</translation>
     </message>
     <message>
         <source>Show track</source>
@@ -24745,10 +25165,18 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Unlock track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックのロックを解除</translation>
     </message>
     <message>
         <source>Lock track</source>
+        <translation>トラックをロック</translation>
+    </message>
+    <message>
+        <source>Include in export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exclude from export</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -24785,7 +25213,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Drag the bottom edge or scroll over the header to fine-tune</source>
-        <translation type="unfinished"></translation>
+        <translation>下端をドラッグするか、ヘッダー上でスクロールして微調整</translation>
     </message>
     <message>
         <source>Taller row</source>
@@ -24801,7 +25229,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Remove empty tracks</source>
-        <translation type="unfinished"></translation>
+        <translation>空のトラックを削除</translation>
     </message>
 </context>
 <context>
@@ -24854,37 +25282,37 @@ If playback stutters, try another.</source>
     <name>TrackHeaderLaneRow</name>
     <message>
         <source>Audio FX</source>
-        <translation type="unfinished">オーディオ FX</translation>
+        <translation>オーディオ FX</translation>
     </message>
     <message>
         <source>Mask</source>
-        <translation type="unfinished">マスク</translation>
+        <translation>マスク</translation>
     </message>
     <message>
         <source>Effects</source>
-        <translation type="unfinished">エフェクト</translation>
+        <translation>エフェクト</translation>
     </message>
 </context>
 <context>
     <name>TrackHeaderLaneToggle</name>
     <message>
         <source>Expand child lanes</source>
-        <translation type="unfinished"></translation>
+        <translation>子レーンを展開</translation>
     </message>
     <message>
         <source>Collapse child lanes</source>
-        <translation type="unfinished"></translation>
+        <translation>子レーンを折りたたむ</translation>
     </message>
 </context>
 <context>
     <name>TrackHeaderLockButton</name>
     <message>
         <source>Unlock track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックのロックを解除</translation>
     </message>
     <message>
         <source>Lock track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックをロック</translation>
     </message>
 </context>
 <context>
@@ -24922,10 +25350,21 @@ If playback stutters, try another.</source>
     </message>
 </context>
 <context>
+    <name>TrackHeaderName</name>
+    <message>
+        <source>not exported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shown while editing, left out of every export</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>TrackHeaderOverflowButton</name>
     <message>
         <source>More track actions</source>
-        <translation type="unfinished"></translation>
+        <translation>その他のトラック操作</translation>
     </message>
 </context>
 <context>
@@ -24974,15 +25413,15 @@ If playback stutters, try another.</source>
     <name>TrackHeaderSoloButton</name>
     <message>
         <source>Unsolo track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックのソロを解除</translation>
     </message>
     <message>
         <source>Solo track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックをソロにする</translation>
     </message>
     <message>
         <source>S</source>
-        <translation type="unfinished">S</translation>
+        <translation>S</translation>
     </message>
 </context>
 <context>
@@ -25560,154 +25999,154 @@ If playback stutters, try another.</source>
     <name>Transform3dInspector</name>
     <message>
         <source>Scale clip</source>
-        <translation type="unfinished">クリップを拡大縮小</translation>
+        <translation>クリップを拡大縮小</translation>
     </message>
     <message>
         <source>Remove the %1 keyframes at the playhead</source>
-        <translation type="unfinished"></translation>
+        <translation>再生ヘッド位置の %1 キーフレームを削除</translation>
     </message>
     <message>
         <source>Add %1 keyframes at the playhead</source>
-        <translation type="unfinished"></translation>
+        <translation>再生ヘッド位置に %1 キーフレームを追加</translation>
     </message>
     <message>
         <source>A camera has no transform of its own. Position, rotation and zoom are in the Camera panel.</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラ自体にはトランスフォームがありません。位置、回転、ズームはカメラパネルにあります。</translation>
     </message>
     <message>
         <source>This clip is flat. Make it a 3D layer to rotate it and move it in depth.</source>
-        <translation type="unfinished"></translation>
+        <translation>このクリップは平面です。3D レイヤーにすると、回転させたり奥行き方向に移動したりできます。</translation>
     </message>
     <message>
         <source>Select a 3D layer, a model or a splat.</source>
-        <translation type="unfinished"></translation>
+        <translation>3D レイヤー、モデル、またはスプラットを選択してください。</translation>
     </message>
     <message>
         <source>Make 3D layer</source>
-        <translation type="unfinished"></translation>
+        <translation>3D レイヤーにする</translation>
     </message>
     <message>
         <source>Move</source>
-        <translation type="unfinished">移動</translation>
+        <translation>移動</translation>
     </message>
     <message>
         <source>Rotate</source>
-        <translation type="unfinished">回転</translation>
+        <translation>回転</translation>
     </message>
     <message>
         <source>Scale</source>
-        <translation type="unfinished">スケール</translation>
+        <translation>スケール</translation>
     </message>
     <message>
         <source>World</source>
-        <translation type="unfinished"></translation>
+        <translation>ワールド</translation>
     </message>
     <message>
         <source>Gizmo axes follow the scene</source>
-        <translation type="unfinished"></translation>
+        <translation>ギズモの軸がシーンに追従します</translation>
     </message>
     <message>
         <source>Local</source>
-        <translation type="unfinished">ローカル</translation>
+        <translation>ローカル</translation>
     </message>
     <message>
         <source>Gizmo axes follow the selected object (scale always follows the object&apos;s own edges)</source>
-        <translation type="unfinished"></translation>
+        <translation>ギズモの軸が選択したオブジェクトに追従します (スケールは常にオブジェクト自身のエッジに追従します)</translation>
     </message>
     <message>
         <source>View</source>
-        <translation type="unfinished"></translation>
+        <translation>ビュー</translation>
     </message>
     <message>
         <source>Gizmo axes follow the screen</source>
-        <translation type="unfinished"></translation>
+        <translation>ギズモの軸が画面に追従します</translation>
     </message>
     <message>
         <source>World and local position</source>
-        <translation type="unfinished"></translation>
+        <translation>ワールド位置とローカル位置</translation>
     </message>
     <message>
         <source>%1  X %2  Y %3  Z %4</source>
-        <translation type="unfinished"></translation>
+        <translation>%1  X %2  Y %3  Z %4</translation>
     </message>
     <message>
         <source>Position (px)</source>
-        <translation type="unfinished">位置 (px)</translation>
+        <translation>位置 (px)</translation>
     </message>
     <message>
         <source>Reset position &amp; size</source>
-        <translation type="unfinished">位置とサイズをリセット</translation>
+        <translation>位置とサイズをリセット</translation>
     </message>
     <message>
         <source>3D position</source>
-        <translation type="unfinished"></translation>
+        <translation>3D 位置</translation>
     </message>
     <message>
         <source>Anchor point (px)</source>
-        <translation type="unfinished"></translation>
+        <translation>アンカーポイント (px)</translation>
     </message>
     <message>
         <source>Put the anchor point back at the centre of the clip</source>
-        <translation type="unfinished"></translation>
+        <translation>アンカーポイントをクリップの中心に戻します</translation>
     </message>
     <message>
         <source>3D anchor point</source>
-        <translation type="unfinished"></translation>
+        <translation>3D アンカーポイント</translation>
     </message>
     <message>
         <source>Reset anchor</source>
-        <translation type="unfinished"></translation>
+        <translation>アンカーをリセット</translation>
     </message>
     <message>
         <source>Rotation (°)</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 (°)</translation>
     </message>
     <message>
         <source>Reset rotation</source>
-        <translation type="unfinished"></translation>
+        <translation>回転をリセット</translation>
     </message>
     <message>
         <source>3D rotation</source>
-        <translation type="unfinished"></translation>
+        <translation>3D 回転</translation>
     </message>
     <message>
         <source>Scale / depth scale (%)</source>
-        <translation type="unfinished"></translation>
+        <translation>スケール / 深度スケール (%)</translation>
     </message>
     <message>
         <source>Scale (%)</source>
-        <translation type="unfinished"></translation>
+        <translation>スケール (%)</translation>
     </message>
     <message>
         <source>Reset scale to 100%</source>
-        <translation type="unfinished"></translation>
+        <translation>スケールを 100% にリセット</translation>
     </message>
     <message>
         <source>3D scale</source>
-        <translation type="unfinished"></translation>
+        <translation>3D スケール</translation>
     </message>
     <message>
         <source>Occlude by depth</source>
-        <translation type="unfinished">深度によるオクルージョン</translation>
+        <translation>深度によるオクルージョン</translation>
     </message>
     <message>
         <source>Let depth decide what covers this clip, instead of its track position. Only clips with this on sort against each other; everything else still draws in track order.</source>
-        <translation type="unfinished">このクリップを何が覆うかを、トラック位置ではなく深度で決定します。これがオンのクリップ同士のみが互いに前後を判定し、それ以外はすべてトラック順で描画されます。</translation>
+        <translation>このクリップを何が覆うかを、トラック位置ではなく深度で決定します。これがオンのクリップ同士のみが互いに前後を判定し、それ以外はすべてトラック順で描画されます。</translation>
     </message>
     <message>
         <source>Needs the Normal blend mode — the others read the canvas behind the clip, which depth cannot sort.</source>
-        <translation type="unfinished">「通常」ブレンドモードが必要です — 他のモードはクリップ背後のキャンバスを読み取るため、深度で前後を判定できません。</translation>
+        <translation>「通常」ブレンドモードが必要です — 他のモードはクリップ背後のキャンバスを読み取るため、深度で前後を判定できません。</translation>
     </message>
     <message>
         <source>Perspective</source>
-        <translation type="unfinished">パースペクティブ</translation>
+        <translation>パースペクティブ</translation>
     </message>
 </context>
 <context>
     <name>Transform3dPanel</name>
     <message>
         <source>3D Transform</source>
-        <translation type="unfinished"></translation>
+        <translation>3D トランスフォーム</translation>
     </message>
 </context>
 <context>
@@ -25770,11 +26209,19 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Rotation Z</source>
-        <translation type="unfinished"></translation>
+        <translation>回転 Z</translation>
     </message>
     <message>
         <source>Position</source>
         <translation>位置</translation>
+    </message>
+    <message>
+        <source>Reset position</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset size</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Edit width and height separately</source>
@@ -25817,20 +26264,32 @@ If playback stutters, try another.</source>
         <translation>不透明度 / 回転</translation>
     </message>
     <message>
-        <source>Rotate the whole group as one flat card</source>
+        <source>Reset opacity</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset rotation</source>
+        <translation type="unfinished">回転をリセット</translation>
+    </message>
+    <message>
+        <source>Rotate the whole group as one flat card</source>
+        <translation>グループ全体を 1 枚の平面カードとして回転します</translation>
     </message>
     <message>
         <source>Rotate the clip in 3D and move it in depth, with 3D grips on the preview. Turning it off flattens the clip again.</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップを 3D で回転させ、奥行き方向に移動します。プレビュー上に 3D グリップが表示されます。オフにするとクリップは再び平面になります。</translation>
     </message>
     <message>
         <source>Open 3D workspace</source>
-        <translation type="unfinished"></translation>
+        <translation>3D ワークスペースを開く</translation>
     </message>
     <message>
         <source>Position, rotation, anchor point and depth occlusion are in the 3D workspace&apos;s 3D Transform panel</source>
-        <translation type="unfinished"></translation>
+        <translation>位置、回転、アンカーポイント、深度オクルージョンは、3D ワークスペースの 3D トランスフォームパネルにあります</translation>
+    </message>
+    <message>
+        <source>Reset all</source>
+        <translation type="unfinished">すべてリセット</translation>
     </message>
     <message>
         <source>Rotation</source>
@@ -25842,7 +26301,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Corrects the source&apos;s own rotation losslessly — unlike Rotation above, this changes decoding, not just the on-screen box.</source>
-        <translation type="unfinished"></translation>
+        <translation>ソース自体の回転を劣化なしで補正します — 上の回転とは異なり、画面上のボックスだけでなくデコードも変更します。</translation>
     </message>
     <message>
         <source>Flip</source>
@@ -25855,10 +26314,6 @@ If playback stutters, try another.</source>
     <message>
         <source>Flip V</source>
         <translation>上下反転</translation>
-    </message>
-    <message>
-        <source>Reset position &amp; size</source>
-        <translation>位置とサイズをリセット</translation>
     </message>
     <message>
         <source>Fix orientation</source>
@@ -26018,7 +26473,7 @@ If playback stutters, try another.</source>
     <name>TransitionInspector</name>
     <message>
         <source>Hover the cut between two clips and click + to add a transition.</source>
-        <translation type="unfinished"></translation>
+        <translation>2 つのクリップ間のカットにカーソルを合わせて + をクリックすると、トランジションを追加できます。</translation>
     </message>
     <message>
         <source>Transitions work between two clips on a video, shape, or text track.</source>
@@ -26030,7 +26485,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Add transition…</source>
-        <translation type="unfinished"></translation>
+        <translation>トランジションを追加…</translation>
     </message>
     <message>
         <source>Overlap transition. Drag another kind from Transitions to replace it.</source>
@@ -26085,77 +26540,77 @@ If playback stutters, try another.</source>
     <name>TransitionPickerGrid</name>
     <message>
         <source>Search transitions</source>
-        <translation type="unfinished">トランジションを検索</translation>
+        <translation>トランジションを検索</translation>
     </message>
     <message>
         <source>My Transitions</source>
-        <translation type="unfinished">マイトランジション</translation>
+        <translation>マイトランジション</translation>
     </message>
     <message numerus="yes">
         <source>Apply to %n selected cuts</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>選択した %n 個のカットに適用</numerusform>
         </translation>
     </message>
     <message>
         <source>Apply to all cuts on track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラック上のすべてのカットに適用</translation>
     </message>
     <message>
         <source>No transitions available</source>
-        <translation type="unfinished">利用可能なトランジションがありません</translation>
+        <translation>利用可能なトランジションがありません</translation>
     </message>
     <message>
         <source>Install a transitions pack to add more.</source>
-        <translation type="unfinished">トランジションパックをインストールして追加してください。</translation>
+        <translation>トランジションパックをインストールして追加してください。</translation>
     </message>
     <message>
         <source>Get extras</source>
-        <translation type="unfinished">拡張機能を入手</translation>
+        <translation>拡張機能を入手</translation>
     </message>
     <message>
         <source>No transitions match “%1”</source>
-        <translation type="unfinished">「%1」に一致するトランジションはありません</translation>
+        <translation>「%1」に一致するトランジションはありません</translation>
     </message>
     <message>
         <source>No custom transitions yet</source>
-        <translation type="unfinished">カスタムトランジションはまだありません</translation>
+        <translation>カスタムトランジションはまだありません</translation>
     </message>
     <message>
         <source>No favorites yet</source>
-        <translation type="unfinished">お気に入りはまだありません</translation>
+        <translation>お気に入りはまだありません</translation>
     </message>
     <message>
         <source>No recent transitions</source>
-        <translation type="unfinished"></translation>
+        <translation>最近のトランジションはありません</translation>
     </message>
     <message>
         <source>Nothing in this category</source>
-        <translation type="unfinished">このカテゴリには何もありません</translation>
+        <translation>このカテゴリには何もありません</translation>
     </message>
     <message>
         <source>Try a different name.</source>
-        <translation type="unfinished">別の名前を試してください。</translation>
+        <translation>別の名前を試してください。</translation>
     </message>
     <message>
         <source>Import a .driftfx or zip made in Drift Forge to add your own.</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift Forge で作成した .driftfx または zip をインポートして、独自のものを追加できます。</translation>
     </message>
     <message>
         <source>Star transitions to save them here.</source>
-        <translation type="unfinished">トランジションにスターを付けてここに保存します。</translation>
+        <translation>トランジションにスターを付けてここに保存します。</translation>
     </message>
     <message>
         <source>Transitions you add show up here.</source>
-        <translation type="unfinished"></translation>
+        <translation>追加したトランジションがここに表示されます。</translation>
     </message>
     <message>
         <source>Pick another category.</source>
-        <translation type="unfinished">別のカテゴリを選択してください。</translation>
+        <translation>別のカテゴリを選択してください。</translation>
     </message>
     <message>
         <source>Import</source>
-        <translation type="unfinished">インポート</translation>
+        <translation>インポート</translation>
     </message>
 </context>
 <context>
@@ -26177,7 +26632,7 @@ If playback stutters, try another.</source>
     <name>TransitionsTab</name>
     <message>
         <source>Install a custom transition or effect from a .driftfx or zip made in Drift Forge</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift Forge で作成した .driftfx または zip から、カスタムトランジションまたはエフェクトをインストールします</translation>
     </message>
 </context>
 <context>
@@ -26447,15 +26902,15 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Drift addons and effects (*.driftpkg *.driftfx *.zip)</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift のアドオンとエフェクト (*.driftpkg *.driftfx *.zip)</translation>
     </message>
     <message>
         <source>Could not install this file</source>
-        <translation type="unfinished"></translation>
+        <translation>このファイルをインストールできませんでした</translation>
     </message>
     <message>
         <source>Could not install “%1”</source>
-        <translation type="unfinished"></translation>
+        <translation>「%1」をインストールできませんでした</translation>
     </message>
     <message>
         <source>Installed “%1”</source>
@@ -26511,22 +26966,22 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>OK</source>
-        <translation type="unfinished">OK</translation>
+        <translation>OK</translation>
     </message>
 </context>
 <context>
     <name>Vec2Param</name>
     <message>
         <source>Edit %1</source>
-        <translation type="unfinished">%1 を編集</translation>
+        <translation>%1 を編集</translation>
     </message>
     <message>
         <source>Reset %1</source>
-        <translation type="unfinished">%1 をリセット</translation>
+        <translation>%1 をリセット</translation>
     </message>
     <message>
         <source>Drag to tint. Shift for fine control. Double-click to reset the color.</source>
-        <translation type="unfinished">ドラッグで色合いを調整、Shift で微調整、ダブルクリックで色をリセットします。</translation>
+        <translation>ドラッグで色合いを調整、Shift で微調整、ダブルクリックで色をリセットします。</translation>
     </message>
 </context>
 <context>
@@ -26764,19 +27219,19 @@ If playback stutters, try another.</source>
     <name>VideoMenu</name>
     <message>
         <source>Bakes…</source>
-        <translation type="unfinished"></translation>
+        <translation>ベイク…</translation>
     </message>
     <message>
         <source>Cancel crop</source>
-        <translation type="unfinished">クロップをキャンセル</translation>
+        <translation>クロップをキャンセル</translation>
     </message>
     <message>
         <source>Crop video</source>
-        <translation type="unfinished">ビデオを切り抜き</translation>
+        <translation>ビデオを切り抜き</translation>
     </message>
     <message>
         <source>Adjust video layout…</source>
-        <translation type="unfinished"></translation>
+        <translation>ビデオレイアウトを調整…</translation>
     </message>
 </context>
 <context>
@@ -26833,118 +27288,118 @@ If playback stutters, try another.</source>
     <name>View3dPanel</name>
     <message>
         <source>View &amp; Lights</source>
-        <translation type="unfinished"></translation>
+        <translation>ビューとライト</translation>
     </message>
     <message>
         <source>Grid</source>
-        <translation type="unfinished">グリッド</translation>
+        <translation>グリッド</translation>
     </message>
     <message>
         <source>3D grid</source>
-        <translation type="unfinished"></translation>
+        <translation>3D グリッド</translation>
     </message>
     <message>
         <source>Show grid</source>
-        <translation type="unfinished"></translation>
+        <translation>グリッドを表示</translation>
     </message>
     <message>
         <source>The floor grid drawn under the scene in the 3D viewport</source>
-        <translation type="unfinished"></translation>
+        <translation>3D ビューポートのシーンの下に描画される床のグリッド</translation>
     </message>
     <message>
         <source>Grid size</source>
-        <translation type="unfinished"></translation>
+        <translation>グリッドのサイズ</translation>
     </message>
     <message>
         <source>Spacing between lines. 0 picks one from the canvas size.</source>
-        <translation type="unfinished"></translation>
+        <translation>線の間隔。0 にするとキャンバスのサイズから自動的に決まります。</translation>
     </message>
     <message>
         <source>Snapping</source>
-        <translation type="unfinished">スナッピング</translation>
+        <translation>スナッピング</translation>
     </message>
     <message>
         <source>3D snapping</source>
-        <translation type="unfinished"></translation>
+        <translation>3D スナップ</translation>
     </message>
     <message>
         <source>Move step</source>
-        <translation type="unfinished"></translation>
+        <translation>移動ステップ</translation>
     </message>
     <message>
         <source>Rotation step</source>
-        <translation type="unfinished"></translation>
+        <translation>回転ステップ</translation>
     </message>
     <message>
         <source>Gizmo drags move and turn in these steps; hold Ctrl for free movement. 0 turns a step off.</source>
-        <translation type="unfinished"></translation>
+        <translation>ギズモのドラッグはこのステップ単位で移動・回転します。Ctrl を押すと自由に動かせます。0 にするとステップをオフにします。</translation>
     </message>
     <message>
         <source>Navigation</source>
-        <translation type="unfinished"></translation>
+        <translation>ナビゲーション</translation>
     </message>
     <message>
         <source>3D navigation</source>
-        <translation type="unfinished"></translation>
+        <translation>3D ナビゲーション</translation>
     </message>
     <message>
         <source>Editor field of view</source>
-        <translation type="unfinished"></translation>
+        <translation>エディターの視野角</translation>
     </message>
     <message>
         <source>Navigation scheme</source>
-        <translation type="unfinished"></translation>
+        <translation>ナビゲーション方式</translation>
     </message>
     <message>
         <source>Blender</source>
-        <translation type="unfinished"></translation>
+        <translation>ブレンダー</translation>
     </message>
     <message>
         <source>Maya</source>
-        <translation type="unfinished"></translation>
+        <translation>Maya</translation>
     </message>
     <message>
         <source>Blender: middle-drag orbits, Shift pans, Ctrl dollies. Maya: Alt with the left, middle or right button orbits, pans or dollies.</source>
-        <translation type="unfinished"></translation>
+        <translation>Blender : 中ボタンドラッグでオービット、Shift でパン、Ctrl でドリー。Maya : Alt と左・中・右ボタンで、それぞれオービット、パン、ドリー。</translation>
     </message>
     <message>
         <source>Orbit around selection</source>
-        <translation type="unfinished"></translation>
+        <translation>選択対象を中心にオービット</translation>
     </message>
     <message>
         <source>Orbit about the selected clip&apos;s centre instead of the view&apos;s target</source>
-        <translation type="unfinished"></translation>
+        <translation>ビューのターゲットではなく、選択したクリップの中心を基準にオービットします</translation>
     </message>
     <message>
         <source>Orthographic</source>
-        <translation type="unfinished"></translation>
+        <translation>正投影</translation>
     </message>
     <message>
         <source>Draw the viewport without perspective (Numpad 5)</source>
-        <translation type="unfinished"></translation>
+        <translation>パースペクティブなしでビューポートを描画します (テンキー 5)</translation>
     </message>
     <message>
         <source>Lights</source>
-        <translation type="unfinished"></translation>
+        <translation>ライト</translation>
     </message>
     <message>
         <source>3D model lights</source>
-        <translation type="unfinished"></translation>
+        <translation>3D モデルのライト</translation>
     </message>
     <message>
         <source>Select a 3D model to edit its lights.</source>
-        <translation type="unfinished"></translation>
+        <translation>ライトを編集する 3D モデルを選択してください。</translation>
     </message>
 </context>
 <context>
     <name>Viewport3dPanel</name>
     <message>
         <source>Perspective</source>
-        <translation type="unfinished">パースペクティブ</translation>
+        <translation>パースペクティブ</translation>
     </message>
     <message>
         <source>Front</source>
-        <translation type="unfinished"></translation>
+        <translation>前</translation>
     </message>
     <message>
         <source>Back</source>
@@ -26952,23 +27407,23 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Left</source>
-        <translation type="unfinished">左</translation>
+        <translation>左</translation>
     </message>
     <message>
         <source>Right</source>
-        <translation type="unfinished">右</translation>
+        <translation>右</translation>
     </message>
     <message>
         <source>Top</source>
-        <translation type="unfinished">上</translation>
+        <translation>上</translation>
     </message>
     <message>
         <source>Bottom</source>
-        <translation type="unfinished">下</translation>
+        <translation>下</translation>
     </message>
     <message>
         <source>Scene camera</source>
-        <translation type="unfinished"></translation>
+        <translation>シーンカメラ</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
@@ -26976,95 +27431,95 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>View</source>
-        <translation type="unfinished"></translation>
+        <translation>ビュー</translation>
     </message>
     <message>
         <source>Look at the scene from a preset side, or through the scene camera</source>
-        <translation type="unfinished"></translation>
+        <translation>定義済みの側面からシーンを見るか、シーンカメラ越しに見ます</translation>
     </message>
     <message>
         <source>Ortho</source>
-        <translation type="unfinished"></translation>
+        <translation>正投影</translation>
     </message>
     <message>
         <source>Orthographic projection</source>
-        <translation type="unfinished"></translation>
+        <translation>正投影</translation>
     </message>
     <message>
         <source>Numpad 5</source>
-        <translation type="unfinished"></translation>
+        <translation>テンキー 5</translation>
     </message>
     <message>
         <source>Move</source>
-        <translation type="unfinished">移動</translation>
+        <translation>移動</translation>
     </message>
     <message>
         <source>Rotate</source>
-        <translation type="unfinished">回転</translation>
+        <translation>回転</translation>
     </message>
     <message>
         <source>Scale</source>
-        <translation type="unfinished">スケール</translation>
+        <translation>スケール</translation>
     </message>
     <message>
         <source>World</source>
-        <translation type="unfinished"></translation>
+        <translation>ワールド</translation>
     </message>
     <message>
         <source>Local</source>
-        <translation type="unfinished">ローカル</translation>
+        <translation>ローカル</translation>
     </message>
     <message>
         <source>Which axes the gizmo follows: the scene&apos;s, the selected object&apos;s or the screen&apos;s</source>
-        <translation type="unfinished"></translation>
+        <translation>ギズモが追従する軸 : シーン、選択したオブジェクト、画面のいずれか</translation>
     </message>
     <message>
         <source>Fly (WASD to move, Q/E down/up, steer toward the pointer)</source>
-        <translation type="unfinished">フライ (WASD で移動、Q/E で下降/上昇、ポインター方向に操縦)</translation>
+        <translation>フライ (WASD で移動、Q/E で下降/上昇、ポインター方向に操縦)</translation>
     </message>
     <message>
         <source>Shift+F</source>
-        <translation type="unfinished"></translation>
+        <translation>Shift+F</translation>
     </message>
     <message>
         <source>Look through the scene camera</source>
-        <translation type="unfinished"></translation>
+        <translation>シーンカメラ越しに見る</translation>
     </message>
     <message>
         <source>Numpad 0</source>
-        <translation type="unfinished">テンキー 0</translation>
+        <translation>テンキー 0</translation>
     </message>
     <message>
         <source>Lock camera to view: navigating while looking through the camera moves the camera</source>
-        <translation type="unfinished"></translation>
+        <translation>カメラをビューにロック : カメラ越しに見ながら操作すると、カメラが移動します</translation>
     </message>
     <message>
         <source>Align the scene camera to this view</source>
-        <translation type="unfinished"></translation>
+        <translation>シーンカメラをこのビューに合わせる</translation>
     </message>
     <message>
         <source>Frame the selection</source>
-        <translation type="unfinished">選択対象をフレームに収める</translation>
+        <translation>選択対象をフレームに収める</translation>
     </message>
     <message>
         <source>F</source>
-        <translation type="unfinished"></translation>
+        <translation>F</translation>
     </message>
     <message>
         <source>Frame everything</source>
-        <translation type="unfinished"></translation>
+        <translation>すべてをフレームに収める</translation>
     </message>
     <message>
         <source>Home</source>
-        <translation type="unfinished">ホーム</translation>
+        <translation>ホーム</translation>
     </message>
     <message>
         <source>Reset the view</source>
-        <translation type="unfinished">ビューをリセット</translation>
+        <translation>ビューをリセット</translation>
     </message>
     <message>
         <source>Shift+Home</source>
-        <translation type="unfinished"></translation>
+        <translation>Shift+Home</translation>
     </message>
 </context>
 <context>
@@ -27437,7 +27892,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Teleprompter</source>
-        <translation type="unfinished"></translation>
+        <translation>テレプロンプター</translation>
     </message>
     <message>
         <source>Noise Removal</source>
@@ -27446,10 +27901,6 @@ If playback stutters, try another.</source>
     <message>
         <source>Color</source>
         <translation>カラー</translation>
-    </message>
-    <message>
-        <source>Looks</source>
-        <translation>ルック</translation>
     </message>
     <message>
         <source>Scopes</source>
@@ -27469,31 +27920,31 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>3D Viewport</source>
-        <translation type="unfinished"></translation>
+        <translation>3D ビューポート</translation>
     </message>
     <message>
         <source>3D Outliner</source>
-        <translation type="unfinished"></translation>
+        <translation>3D アウトライナー</translation>
     </message>
     <message>
         <source>3D Transform</source>
-        <translation type="unfinished"></translation>
+        <translation>3D トランスフォーム</translation>
     </message>
     <message>
         <source>View &amp; Lights</source>
-        <translation type="unfinished"></translation>
+        <translation>ビューとライト</translation>
     </message>
     <message>
         <source>Procedural Code</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルコード</translation>
     </message>
     <message>
         <source>Procedural Parameters</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルパラメーター</translation>
     </message>
     <message>
         <source>Procedural Console</source>
-        <translation type="unfinished"></translation>
+        <translation>プロシージャルコンソール</translation>
     </message>
     <message>
         <source>Media</source>
@@ -27566,6 +28017,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Camera</source>
         <translation>カメラ</translation>
+    </message>
+    <message>
+        <source>Color Grading LUTs</source>
+        <translation>カラーグレーディング LUT</translation>
     </message>
     <message>
         <source>Stabilization</source>

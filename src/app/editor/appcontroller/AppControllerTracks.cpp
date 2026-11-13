@@ -125,6 +125,7 @@ QHash<QString, QString> defaultShortcuts()
         {QStringLiteral("pasteAttributes"), QStringLiteral("Ctrl+Alt+V")},
         {QStringLiteral("addTransitionAtPlayhead"), QStringLiteral("Ctrl+Shift+D")},
         {QStringLiteral("split"), QStringLiteral("S")},
+        {QStringLiteral("splitSelection"), QStringLiteral("Shift+S")},
         {QStringLiteral("merge"), QStringLiteral("Ctrl+M")},
         {QStringLiteral("unlink"), QStringLiteral("Ctrl+Shift+U")},
         {QStringLiteral("link"), QStringLiteral("Ctrl+Shift+L")},
@@ -276,6 +277,26 @@ bool AppController::trackHidden(int trackIndex) const
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
         return false;
     return m_project.tracks().at(trackIndex).hidden;
+}
+
+void AppController::setTrackExcludedFromExport(int trackIndex, bool excluded)
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return;
+    if (m_project.tracks()[trackIndex].excludeFromExport == excluded)
+        return;
+
+    const drift::Project before = m_project;
+    m_project.tracks()[trackIndex].excludeFromExport = excluded;
+    pushProjectEdit(before, tr("Exclude from export"));
+    finishEdit(excluded ? tr("Track left out of export") : tr("Track included in export"));
+}
+
+bool AppController::trackExcludedFromExport(int trackIndex) const
+{
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size())
+        return false;
+    return m_project.tracks().at(trackIndex).excludeFromExport;
 }
 
 void AppController::setTrackSolo(int trackIndex, bool solo)
@@ -545,20 +566,32 @@ int AppController::trackRowHeight(int trackIndex, const QVariantMap &metrics) co
     }
 
     const double scale = track.heightScale > 0 ? track.heightScale : 1.0;
-    const int laneCount = drift::adjustmentLaneIndexes(m_project, trackIndex).size();
+    const int laneCount = visibleAdjustmentLanes(trackIndex).size();
     const double lanes = laneCount * (track.lanesCollapsed ? metric("ribbon", 3.0) : metric("lane", 20.0));
     return qRound(qMax(20.0, base * scale + lanes));
 }
 
+QList<int> AppController::visibleAdjustmentLanes(int trackIndex) const
+{
+    QList<int> lanes = drift::adjustmentLaneIndexes(m_project, trackIndex);
+    lanes.removeIf([this](int laneIndex) {
+        const QList<drift::Clip> &clips = m_project.tracks().at(laneIndex).clips;
+        return !clips.isEmpty()
+               && std::all_of(clips.cbegin(), clips.cend(),
+                              [](const drift::Clip &clip) { return clip.hiddenInLane; });
+    });
+    return lanes;
+}
+
 int AppController::adjustmentLaneCount(int trackIndex) const
 {
-    return drift::adjustmentLaneIndexes(m_project, trackIndex).size();
+    return visibleAdjustmentLanes(trackIndex).size();
 }
 
 QVariantList AppController::adjustmentLanes(int trackIndex) const
 {
     QVariantList out;
-    for (const int laneIndex : drift::adjustmentLaneIndexes(m_project, trackIndex))
+    for (const int laneIndex : visibleAdjustmentLanes(trackIndex))
         out.append(laneIndex);
     return out;
 }
@@ -585,7 +618,7 @@ QString AppController::adjustmentLaneKind(int laneIndex) const
 QVariantList AppController::adjustmentLaneSpans(int parentIndex) const
 {
     QVariantList out;
-    for (const int laneIndex : drift::adjustmentLaneIndexes(m_project, parentIndex)) {
+    for (const int laneIndex : visibleAdjustmentLanes(parentIndex)) {
         const drift::Track &lane = m_project.tracks().at(laneIndex);
         QVariantList spans;
         for (const drift::Clip &clip : lane.clips) {
@@ -1764,6 +1797,8 @@ void AppController::triggerAction(const QString &actionId)
         requestPasteAttributes();
     else if (actionId == QStringLiteral("split"))
         splitAtPlayhead();
+    else if (actionId == QStringLiteral("splitSelection"))
+        splitSelectionAtPlayhead();
     else if (actionId == QStringLiteral("addTransitionAtPlayhead"))
         addTransitionAtPlayhead();
     else if (actionId == QStringLiteral("merge"))
@@ -1861,7 +1896,7 @@ void AppController::undo()
     captureSelectionClipIds();
     m_undoStack.undo();
     m_undoSelectionCaptured = false;
-    m_mcpController->bumpEditRevision();
+    m_mcpController->bumpEditRevision(McpController::ChangeKind::Undo);
 }
 
 QStringList AppController::undoHistory() const
@@ -1890,7 +1925,7 @@ void AppController::redo()
     captureSelectionClipIds();
     m_undoStack.redo();
     m_undoSelectionCaptured = false;
-    m_mcpController->bumpEditRevision();
+    m_mcpController->bumpEditRevision(McpController::ChangeKind::Redo);
 }
 namespace {
 
@@ -2439,6 +2474,27 @@ void AppController::clearBeatAnalysis()
     // would mean a full mix render on every clip nudge.
     m_beatGridVisible = false;
     m_onsetsVisible = false;
+    emit beatAnalysisChanged();
+}
+
+AppController::BeatState AppController::beatState() const
+{
+    return {m_beatAnalysisRaw, m_beatAnalysis, m_beatSnapTargets, m_beatAudioFingerprint, m_beatGridVisible,
+            m_onsetsVisible};
+}
+
+void AppController::restoreBeatState(const BeatState &state)
+{
+    // A newer analysis started since wins; so does one still running.
+    if (m_beatAnalysisRunning || !m_beatAnalysis.isEmpty() || state.analysis.isEmpty())
+        return;
+    ++m_beatAnalysisGeneration;
+    m_beatAnalysisRaw = state.raw;
+    m_beatAnalysis = state.analysis;
+    m_beatSnapTargets = state.snapTargets;
+    m_beatAudioFingerprint = state.fingerprint;
+    m_beatGridVisible = state.gridVisible;
+    m_onsetsVisible = state.onsetsVisible;
     emit beatAnalysisChanged();
 }
 

@@ -74,6 +74,14 @@ QJsonObject AppController::sessionJson() const
     // predate the tree mode.
     root.insert(QStringLiteral("mediaGridMode"), mediaGridMode());
     root.insert(QStringLiteral("loopWorkArea"), m_loopWorkAreaEnabled);
+    if (hasProjectHistorySettings()) {
+        QJsonObject history;
+        if (m_projectHistorySteps != kProjectHistoryUnset)
+            history.insert(QStringLiteral("steps"), m_projectHistorySteps);
+        if (m_projectHistoryPersist >= 0)
+            history.insert(QStringLiteral("persist"), m_projectHistoryPersist == 1);
+        root.insert(QStringLiteral("undoHistorySettings"), history);
+    }
     QJsonArray guideSets;
     for (const QString &id : m_activeGuideSets) {
         const drift::GuideSet *set = findGuideSet(id);
@@ -90,6 +98,12 @@ QJsonObject AppController::sessionJson() const
 
 void AppController::resetSessionState()
 {
+    // A replace whose probe the bin is about to drop would leave its row busy for good.
+    if (m_bin)
+        m_bin->dropPendingReplace();
+    ++m_documentGeneration;
+    m_projectHistorySteps = kProjectHistoryUnset;
+    m_projectHistoryPersist = -1;
     // These end up editing the project, so they have to run while it is still the one they were
     // opened against.
     m_speedCurve->end();
@@ -111,7 +125,6 @@ void AppController::resetSessionState()
     // several projects in turn would otherwise hold the peaks of every source in all of them.
     m_waveformBlocks.clear();
 
-    m_bin->m_replacingAssetId.clear();
     m_sequencePlayheads.clear();
     m_pendingEffectTemplate.reset();
     m_previewDragActive = false;
@@ -287,6 +300,16 @@ void AppController::applyParsedProject(ParsedProject parsed)
     // With history kept per session (or off), a history saved earlier is not brought back: it
     // would only be dropped on the next save, after costing the memory this setting avoids. A
     // recovery file's history is the crashed session's own, so "session" restores it.
+    {
+        // Before the history itself: the project's own setting decides whether it is restored.
+        const QJsonObject history = root.value(QStringLiteral("undoHistorySettings")).toObject();
+        m_projectHistorySteps = history.contains(QStringLiteral("steps"))
+                                    ? qMax(-1, history.value(QStringLiteral("steps")).toInt())
+                                    : kProjectHistoryUnset;
+        m_projectHistoryPersist = history.contains(QStringLiteral("persist"))
+                                      ? (history.value(QStringLiteral("persist")).toBool() ? 1 : 0)
+                                      : -1;
+    }
     const bool restoreHistory =
         parsed.fromRecovery ? undoHistoryCap() != 0 : persistsUndoHistory();
     if (parsed.history && restoreHistory) {
@@ -540,8 +563,32 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
         ? settings.value(QStringLiteral("bakes"), QStringLiteral("all")).toString()
         : QStringLiteral("none");
     exportSettings.useBakes = bakeMode != QLatin1String("none");
-    if (exportSettings.useBakes)
-        exportSettings.bakes = m_bakes->exportPool(bakeMode != QLatin1String("fresh"));
+    if (exportSettings.useBakes) {
+        // Where a review track (excludeFromExport) shows on the main timeline, directly or inside
+        // a composite clip: a bake there has it burnt in.
+        QList<QPair<drift::TimeUs, drift::TimeUs>> reviewSpans;
+        if (m_project.hasExportExcludedTracks()) {
+            for (const drift::Track &track : m_project.rootTracks()) {
+                for (const drift::Clip &clip : track.clips) {
+                    bool review = track.excludeFromExport;
+                    if (!review && clip.type == drift::ClipType::Composite) {
+                        for (const drift::Track &inner : m_project.sequenceTracks(clip.sequenceId))
+                            review = review || inner.excludeFromExport;
+                    }
+                    if (!review)
+                        continue;
+                    // A transition draws the clip up to its duration past its own edges.
+                    drift::TimeUs pad = 0;
+                    for (const drift::Transition &transition : track.transitions) {
+                        if (transition.fromClipId == clip.id || transition.toClipId == clip.id)
+                            pad = qMax(pad, transition.durationUs);
+                    }
+                    reviewSpans.append({clip.timelineStart - pad, clip.timelineEnd() + pad});
+                }
+            }
+        }
+        exportSettings.bakes = m_bakes->exportPool(bakeMode != QLatin1String("fresh"), reviewSpans);
+    }
 
     // The muxer is chosen from the output file's extension, and a created document's URI has
     // none — so the staging file the encoder writes is given the one the settings imply.
@@ -584,12 +631,14 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
     emit exportProgressChanged();
     m_exportInProgress = true;
     m_exportByAgent = m_exportRequestedByAgent;
+    m_exportAudioOnly = exportSettings.audioOnly && !exportSettings.gifExport;
     emit exportInProgressChanged();
     setLastMessage(tr("Exporting…"));
 
     // Snapshot the project so edits during export can't race the encoder. Always the main
     // timeline, even while a composite's tab is open.
-    const drift::Project snapshot = m_project.sequenceView({});
+    // Review tracks (excludeFromExport) are hidden and muted in what gets rendered.
+    const drift::Project snapshot = m_project.exportView({});
 
     const bool disposable = writeTargetIsDisposable(outputUrl);
 
@@ -654,7 +703,15 @@ void AppController::exportWithSettings(const QUrl &outputUrl, const QVariantMap 
                     thumbnail = thumbPath;
             }
         }
-        const double durationSeconds = drift::usToSeconds(snapshot.durationUs());
+        // What was rendered: hidden tracks (review tracks among them) don't stretch it.
+        drift::TimeUs renderedEndUs = 0;
+        for (const drift::Track &track : snapshot.tracks()) {
+            if (track.hidden || (track.type == drift::TrackType::Audio && track.muted))
+                continue;
+            for (const drift::Clip &clip : track.clips)
+                renderedEndUs = qMax(renderedEndUs, clip.timelineEnd());
+        }
+        const double durationSeconds = drift::usToSeconds(renderedEndUs > 0 ? renderedEndUs : snapshot.durationUs());
 
         QMetaObject::invokeMethod(
             this,
@@ -1053,6 +1110,19 @@ QString AppController::historyHashAt(int stackIndex) const
     return cmd ? cmd->afterHash() : QString();
 }
 
+std::optional<drift::Project> AppController::historyProjectAt(int stackIndex) const
+{
+    if (stackIndex < 0 || stackIndex > m_undoStack.count())
+        return std::nullopt;
+    // The recorded states, as historyHashAt hashes them; "head" is the live project.
+    if (m_undoStack.count() == 0)
+        return m_project;
+    const auto *cmd = historyCommand(m_undoStack, stackIndex == 0 ? 0 : stackIndex - 1);
+    if (!cmd)
+        return std::nullopt;
+    return stackIndex == 0 ? cmd->before() : cmd->after();
+}
+
 int AppController::historyIndexForHash(const QString &prefix) const
 {
     const QString needle = prefix.trimmed().toLower();
@@ -1091,18 +1161,39 @@ QSet<QString> AppController::historyMediaPaths() const
     return paths;
 }
 
+QString AppController::effectiveUndoHistoryMode() const
+{
+    const QString global = m_preferences ? m_preferences->undoHistoryMode() : QStringLiteral("project");
+    if (m_projectHistorySteps == 0
+        || (m_projectHistorySteps == kProjectHistoryUnset && global == QLatin1String("off")))
+        return QStringLiteral("off");
+    // A project that turns history on while the app has it off keeps it for the session unless
+    // it asked to save it.
+    const bool persist = m_projectHistoryPersist >= 0 ? m_projectHistoryPersist == 1
+                                                      : global == QLatin1String("project");
+    return persist ? QStringLiteral("project") : QStringLiteral("session");
+}
+
+QSet<QString> AppController::historyOnlyMediaPaths() const
+{
+    QSet<QString> paths = historyMediaPaths();
+    for (const QString &path : stateMediaPaths(m_project))
+        paths.remove(path);
+    return paths;
+}
+
 bool AppController::persistsUndoHistory() const
 {
-    return !m_preferences || m_preferences->undoHistoryMode() == QLatin1String("project");
+    return effectiveUndoHistoryMode() == QLatin1String("project");
 }
 
 int AppController::undoHistoryCap() const
 {
-    if (!m_preferences)
-        return -1;
-    if (m_preferences->undoHistoryMode() == QLatin1String("off"))
+    if (effectiveUndoHistoryMode() == QLatin1String("off"))
         return 0;
-    const int limit = m_preferences->undoHistoryLimit();
+    if (m_projectHistorySteps != kProjectHistoryUnset)
+        return m_projectHistorySteps; // -1 (no limit) or N; 0 is "off", handled above
+    const int limit = m_preferences ? m_preferences->undoHistoryLimit() : 0;
     return limit > 0 ? limit : -1;
 }
 
@@ -1158,21 +1249,50 @@ void AppController::trimUndoHistory()
     const int drop = capture.index - cap;
     if (drop <= 0)
         return;
+    rebuildUndoStack(capture, drop, int(capture.steps.size()), capture.index - drop);
+}
+
+void AppController::rebuildUndoStack(const drift::HistoryCapture &capture, int first, int last,
+                                     int index)
+{
     const drift::Project current = m_project;
     {
         const QSignalBlocker blocker(&m_undoStack);
         m_undoStack.clear();
-        for (int i = drop; i < capture.steps.size(); ++i) {
+        for (int i = first; i < last; ++i) {
             const drift::HistoryCapture::Step &step = capture.steps.at(i);
             auto *command = new drift::ProjectSnapshotCommand(&m_project, step.before, step.after, step.text);
             command->adoptApplied();
             m_undoStack.push(command);
         }
-        m_undoStack.setIndex(capture.index - drop);
+        m_undoStack.setIndex(index);
     }
     m_project = current;
     emit undoHistoryChanged();
     emit undoStackChanged();
+}
+
+void AppController::foldEditIntoHistory()
+{
+    flushUndoHistoryTrim();
+    drift::HistoryCapture capture = drift::captureHistory(m_undoStack);
+    if (capture.steps.isEmpty())
+        return;
+    if (capture.index > 0)
+        capture.steps[capture.index - 1].after = std::make_shared<const drift::HistoryState>(m_project);
+    rebuildUndoStack(capture, 0, capture.index, capture.index);
+}
+
+int AppController::clearUndoHistory(int keepLast)
+{
+    flushUndoHistoryTrim();
+    const drift::HistoryCapture capture = drift::captureHistory(m_undoStack);
+    const int keep = qBound(0, keepLast, capture.index);
+    const int removed = int(capture.steps.size()) - keep;
+    if (removed <= 0)
+        return 0;
+    rebuildUndoStack(capture, capture.index - keep, capture.index, keep);
+    return removed;
 }
 
 QJsonObject AppController::historyJson(const drift::HistoryCapture &capture,

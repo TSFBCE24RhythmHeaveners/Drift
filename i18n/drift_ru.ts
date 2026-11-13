@@ -58,15 +58,27 @@
         <translation>Автоматически (рекомендуется)</translation>
     </message>
     <message>
-        <source>NVIDIA graphics (faster)</source>
-        <translation>Видеокарта NVIDIA (быстрее)</translation>
+        <source>Processor (CPU)</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>AMD graphics (faster)</source>
-        <translation>Видеокарта AMD (быстрее)</translation>
+        <source>NVIDIA CUDA</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>CPU</source>
+        <source>AMD MIGraphX (Windows ML)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>AMD ROCm (MIGraphX)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Windows ML (DirectX 12)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebGPU (any graphics card)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1075,6 +1087,10 @@
     <message>
         <source>Custom</source>
         <translation>Настраиваемый</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">Избранное</translation>
     </message>
     <message>
         <source>Template</source>
@@ -2565,6 +2581,10 @@
         <translation>Разделить в текущей точке</translation>
     </message>
     <message>
+        <source>Split selected clip at current time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add transition at playhead</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2739,6 +2759,14 @@
     <message>
         <source>Clip moved</source>
         <translation>Клип перемещён</translation>
+    </message>
+    <message>
+        <source>Select a clip to split first</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The playhead isn&apos;t over a selected clip</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing to split here — move to a clip first</source>
@@ -3221,6 +3249,38 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>The gap stays open: a linked track is locked</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: a clip is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The gap stays open: &quot;%1&quot; is in the way of closing it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip inserted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Ripple trim</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Gaps closed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips swapped</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Set sequence</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Replace clip</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3307,6 +3367,22 @@
     <message>
         <source>Adjustment unlinked</source>
         <translation>Коррекция отвязана</translation>
+    </message>
+    <message>
+        <source>Hide effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer hidden</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effects layer shown</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Link adjustment to clip</source>
@@ -3549,6 +3625,26 @@
         <translation>Клип воспроизводится в прямом направлении</translation>
     </message>
     <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop on</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop off</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip not looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>A clip is already being reversed</source>
         <translation>Клип уже преобразуется для обратного воспроизведения</translation>
     </message>
@@ -3623,6 +3719,14 @@
     <message>
         <source>Composite</source>
         <translation>Композиция</translation>
+    </message>
+    <message>
+        <source>Timeline %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Timeline created</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Flattening composite…</source>
@@ -3813,6 +3917,10 @@
         <translation>Полосы</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">Разделить</translation>
+    </message>
+    <message>
         <source>Freeform</source>
         <translation>Произвольная форма</translation>
     </message>
@@ -3863,10 +3971,6 @@
     <message>
         <source>No cut between two clips to add a transition to</source>
         <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Change look</source>
-        <translation>Изменить стиль</translation>
     </message>
     <message>
         <source>Edit curve</source>
@@ -4229,6 +4333,14 @@
         <translation>Ключевой кадр интерполирует значение</translation>
     </message>
     <message>
+        <source>Add keyframes</source>
+        <translation type="unfinished">Добавить ключевые кадры</translation>
+    </message>
+    <message>
+        <source>Keyframes set</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Reset camera</source>
         <translation>Сбросить камеру</translation>
     </message>
@@ -4243,6 +4355,10 @@
     <message>
         <source>Transform reset</source>
         <translation>Трансформация сброшена</translation>
+    </message>
+    <message>
+        <source>Motion blur follows one clip&apos;s movement, so it goes on a clip, not on an adjustment layer.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Depth effects read one clip&apos;s depth, so they go on a clip, not on an adjustment layer.</source>
@@ -4319,6 +4435,10 @@
     <message>
         <source>Effect updated</source>
         <translation>Эффект обновлён</translation>
+    </message>
+    <message>
+        <source>Change LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Could not read the selected file</source>
@@ -4555,6 +4675,18 @@
     <message>
         <source>Track shown</source>
         <translation>Дорожка показана</translation>
+    </message>
+    <message>
+        <source>Exclude from export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track left out of export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track included in export</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Track lock</source>
@@ -4884,6 +5016,22 @@
         <source>Video size cropped to %1×%2</source>
         <translation>Размер видео кадрирован до %1×%2</translation>
     </message>
+    <message>
+        <source>Clear clip label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Label clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip label cleared</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip labelled</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>AppSettingsMenu</name>
@@ -4933,6 +5081,10 @@
         <translation>Медиафайлы (%1)</translation>
     </message>
     <message>
+        <source>The proxy could not be made</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1 s</source>
         <translation>%1 с</translation>
     </message>
@@ -4954,6 +5106,17 @@
     <message>
         <source>Add to timeline</source>
         <translation>Добавить на таймлайн</translation>
+    </message>
+</context>
+<context>
+    <name>AssetSearchBar</name>
+    <message>
+        <source>Clear search</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove from history</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -5279,6 +5442,14 @@
     <message>
         <source>Create a new folder here</source>
         <translation>Создать здесь новую папку</translation>
+    </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Create an empty timeline and open it</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -6552,16 +6723,8 @@
         <translation>Нет</translation>
     </message>
     <message>
-        <source>Missing look</source>
-        <translation type="unfinished">Стиль отсутствует</translation>
-    </message>
-    <message>
         <source>Adjust color</source>
         <translation>Настроить цвет</translation>
-    </message>
-    <message>
-        <source>Set look</source>
-        <translation>Установить стиль</translation>
     </message>
     <message>
         <source>Reset %1</source>
@@ -6571,41 +6734,49 @@
         <source>Reset grade</source>
         <translation>Сбросить цветокоррекцию</translation>
     </message>
-    <message numerus="yes">
-        <source>Imported %n look(s)</source>
-        <translation>
-            <numerusform>Импортирован %n стиль</numerusform>
-            <numerusform>Импортировано %n стиля</numerusform>
-            <numerusform>Импортировано %n стилей</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>Imported %n look(s), %1 failed</source>
-        <translation>
-            <numerusform>Импортирован %n стиль, сбоев: %1</numerusform>
-            <numerusform>Импортировано %n стиля, сбоев: %1</numerusform>
-            <numerusform>Импортировано %n стилей, сбоев: %1</numerusform>
-        </translation>
-    </message>
     <message>
-        <source>Could not import that look</source>
+        <source>Missing LUT</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Could not remove the look</source>
-        <translation>Не удалось удалить стиль</translation>
+        <source>Set LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Imported %n LUT(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Imported %n LUT(s), %1 failed</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
     </message>
     <message>
-        <source>Look removed</source>
-        <translation>Стиль удалён</translation>
+        <source>Could not import that LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Could not rename the look</source>
-        <translation>Не удалось переименовать стиль</translation>
+        <source>Could not remove the LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Look renamed</source>
-        <translation>Стиль переименован</translation>
+        <source>LUT removed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not rename the LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT renamed</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Grade this clip before applying it to others</source>
@@ -6874,18 +7045,6 @@
         <translation>Цвет</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation>Стиль</translation>
-    </message>
-    <message>
-        <source>None. Choose a look in the Looks panel.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>Интенсивность стиля</translation>
-    </message>
-    <message>
         <source>Color wheels</source>
         <translation type="unfinished">Цветовые круги</translation>
     </message>
@@ -6924,6 +7083,18 @@
     <message>
         <source>Apply to all clips</source>
         <translation>Применить ко всем клипам</translation>
+    </message>
+    <message>
+        <source>LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>None. Choose one in the Color Grading LUTs panel.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Apply</source>
@@ -8822,16 +8993,16 @@
         <translation>Импорт…</translation>
     </message>
     <message>
-        <source>Import looks</source>
-        <translation>Импортировать стили</translation>
+        <source>Import LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>LUT files (*.cube)</source>
         <translation>Файлы LUT (*.cube)</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>Стиль отсутствует</translation>
     </message>
 </context>
 <context>
@@ -9179,6 +9350,10 @@
         <translation>Экспорт видео</translation>
     </message>
     <message>
+        <source>Exporting audio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Export</source>
         <translation>Экспорт</translation>
     </message>
@@ -9193,6 +9368,10 @@
     <message>
         <source>Rendering your video. Close to keep editing, or cancel to stop.</source>
         <translation>Видео обрабатывается. Закройте окно, чтобы продолжить редактирование, или отмените экспорт.</translation>
+    </message>
+    <message>
+        <source>Rendering your audio. Close to keep editing, or cancel to stop.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Export finished.</source>
@@ -10035,6 +10214,18 @@
         <translation>До</translation>
     </message>
     <message>
+        <source>Loop</source>
+        <translation type="unfinished">Зациклить</translation>
+    </message>
+    <message>
+        <source>A clip with a speed ramp can&apos;t loop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Repeat the trimmed part for as long as the clip runs. Drag the clip&apos;s edges past the end to add repeats. Turn it off to change the trim.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rename</source>
         <translation>Переименовать</translation>
     </message>
@@ -10073,6 +10264,26 @@
     <message>
         <source>File</source>
         <translation>Файл</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit label</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>e.g. intro (empty clears it)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -10169,6 +10380,10 @@
     <message>
         <source>Presets</source>
         <translation>Пресеты</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">Избранное</translation>
     </message>
     <message>
         <source>Type</source>
@@ -10724,6 +10939,10 @@
     <message>
         <source>Feather</source>
         <translation>Растушёвка</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -11319,6 +11538,10 @@
         <translation>Выберите категорию, затем шаблон и качество. Позже это можно изменить через «Настройки» → «Выбрать формат».</translation>
     </message>
     <message>
+        <source>Favorites</source>
+        <translation type="unfinished">Избранное</translation>
+    </message>
+    <message>
         <source>Template</source>
         <translation>Шаблон</translation>
     </message>
@@ -11449,60 +11672,56 @@
 <context>
     <name>LooksPanel</name>
     <message>
-        <source>Looks</source>
-        <translation>Стили</translation>
-    </message>
-    <message>
-        <source>My Looks</source>
-        <translation>Мои стили</translation>
-    </message>
-    <message>
-        <source>Import looks</source>
-        <translation>Импортировать стили</translation>
-    </message>
-    <message>
         <source>LUT files (*.cube)</source>
         <translation>Файлы LUT (*.cube)</translation>
-    </message>
-    <message>
-        <source>Search looks</source>
-        <translation>Поиск стилей</translation>
-    </message>
-    <message>
-        <source>Look Intensity</source>
-        <translation>Интенсивность стиля</translation>
     </message>
     <message>
         <source>Adjust %1</source>
         <translation>Настроить %1</translation>
     </message>
     <message>
-        <source>Get free looks</source>
-        <translation>Получить бесплатные стили</translation>
-    </message>
-    <message>
         <source>Rename…</source>
         <translation>Переименовать…</translation>
-    </message>
-    <message>
-        <source>Import .cube looks</source>
-        <translation>Импортировать стили .cube</translation>
-    </message>
-    <message>
-        <source>Missing look</source>
-        <translation>Стиль отсутствует</translation>
     </message>
     <message>
         <source>Remove</source>
         <translation>Удалить</translation>
     </message>
     <message>
-        <source>No looks match “%1”.</source>
-        <translation>Нет стилей, соответствующих «%1».</translation>
+        <source>Color Grading LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>No favorites yet. Star looks to save them here.</source>
-        <translation>Избранного пока нет. Отмечайте стили звёздочкой, чтобы сохранить их здесь.</translation>
+        <source>Import LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Import .cube LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>My LUTs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing LUT</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>LUT Intensity</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No LUTs match “%1”.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No favorites yet. Star LUTs to save them here.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing in this category.</source>
@@ -11521,20 +11740,28 @@
         <translation>Импорт</translation>
     </message>
     <message>
-        <source>No looks</source>
-        <translation>Нет стилей</translation>
+        <source>No LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Download a free pack of ready-made looks, or import your own .cube files.</source>
-        <translation>Загрузите бесплатный набор готовых стилей или импортируйте свои файлы .cube.</translation>
+        <source>Download a free pack of ready-made color grading LUTs, or import your own .cube files.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Select a clip to try looks on it</source>
-        <translation>Выберите клип, чтобы примерить стили</translation>
+        <source>Get free LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Remove this look?</source>
-        <translation>Удалить этот стиль?</translation>
+        <source>Select a clip to try LUTs on it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove this LUT?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message numerus="yes">
         <source>“%1” is used by %n clip(s). They will show it as missing until it is imported again.</source>
@@ -11543,10 +11770,6 @@
             <numerusform>«%1» используется %n клипами. Он будет отображаться как отсутствующий, пока не будет импортирован снова.</numerusform>
             <numerusform>«%1» используется %n клипами. Он будет отображаться как отсутствующий, пока не будет импортирован снова.</numerusform>
         </translation>
-    </message>
-    <message>
-        <source>Rename look</source>
-        <translation>Переименовать стиль</translation>
     </message>
     <message>
         <source>Rename</source>
@@ -12017,8 +12240,8 @@
         <translation type="unfinished">Тема</translation>
     </message>
     <message>
-        <source>Look</source>
-        <translation type="unfinished">Стиль</translation>
+        <source>LUT</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Effect template</source>
@@ -12480,6 +12703,14 @@
 <context>
     <name>MaskOverlay</name>
     <message>
+        <source>Unlock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Drag points to reshape · Tap ○ on an edge to add a point · Hold a point to delete</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12501,6 +12732,28 @@
     <message>
         <source>Select a clip at the playhead to edit its masks</source>
         <translation>Выберите клип под курсором воспроизведения, чтобы редактировать его маски</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayFeatherHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">Изменить %1</translation>
+    </message>
+    <message>
+        <source>Feather</source>
+        <translation type="unfinished">Растушёвка</translation>
+    </message>
+</context>
+<context>
+    <name>MaskOverlayRoundnessHandle</name>
+    <message>
+        <source>Edit %1</source>
+        <translation type="unfinished">Изменить %1</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -12555,6 +12808,18 @@
     <message>
         <source>Clip converted to mask</source>
         <translation>Клип преобразован в маску</translation>
+    </message>
+    <message>
+        <source>Clip</source>
+        <translation type="unfinished">Клип</translation>
+    </message>
+    <message>
+        <source>%1 mask</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips used as mask</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Cutouts can&apos;t be moved yet</source>
@@ -12697,8 +12962,16 @@
         <translation>Полосы</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">Разделить</translation>
+    </message>
+    <message>
         <source>Matte</source>
         <translation>Подложка</translation>
+    </message>
+    <message>
+        <source>Sequence matte</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Mask</source>
@@ -13171,6 +13444,10 @@
             <numerusform>%n ключей формы</numerusform>
         </translation>
     </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>MasksInspector</name>
@@ -13203,6 +13480,10 @@
         <translation>Полосы</translation>
     </message>
     <message>
+        <source>Split</source>
+        <translation type="unfinished">Разделить</translation>
+    </message>
+    <message>
         <source>Combine</source>
         <translation>Объединить</translation>
     </message>
@@ -13225,6 +13506,10 @@
     <message>
         <source>Remove mask</source>
         <translation>Удалить маску</translation>
+    </message>
+    <message>
+        <source>Roundness</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Center X</source>
@@ -13253,6 +13538,38 @@
     <message>
         <source>Polygon</source>
         <translation type="unfinished">Многоугольник</translation>
+    </message>
+    <message>
+        <source>Lock aspect ratio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Matte channel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Alpha (transparency)</source>
+        <translation type="unfinished">Альфа (прозрачность)</translation>
+    </message>
+    <message>
+        <source>Luma (brightness)</source>
+        <translation type="unfinished">Luma (яркость)</translation>
+    </message>
+    <message>
+        <source>Fit</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stretch</source>
+        <translation type="unfinished">Растянуть</translation>
+    </message>
+    <message>
+        <source>Fill</source>
+        <translation type="unfinished">Заливка</translation>
+    </message>
+    <message>
+        <source>Edit mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Invert</source>
@@ -13316,6 +13633,13 @@
     <message>
         <source>All files (*)</source>
         <translation>Все файлы (*)</translation>
+    </message>
+</context>
+<context>
+    <name>McpController</name>
+    <message>
+        <source>Relink media</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -13790,6 +14114,14 @@
         <translation>%1 (%2)</translation>
     </message>
     <message>
+        <source>The project was closed before the replace landed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The project was closed before the edit landed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Relink media</source>
         <translation type="unfinished"></translation>
     </message>
@@ -13800,6 +14132,10 @@
             <numerusform></numerusform>
             <numerusform></numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Track is locked</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Sub-clip added</source>
@@ -16699,7 +17035,7 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and looks come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
+        <source>Drift&apos;s basic effects, transitions, audio effects, fonts and color grading LUTs come as add-ons. Without them the editor will be missing most of what you expect, so they are installed now.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -16881,8 +17217,8 @@ If playback stutters, try another.</source>
         <translation type="unfinished">Переходы</translation>
     </message>
     <message>
-        <source>Looks</source>
-        <translation type="unfinished">Стили</translation>
+        <source>LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Fonts</source>
@@ -16964,11 +17300,11 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the top bar.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>More effects, transitions, looks, fonts, stickers and AI models are installed from Extras, in the header.</source>
+        <source>More effects, transitions, color grading LUTs, fonts, stickers and AI models are installed from Extras, in the header.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -23147,6 +23483,10 @@ If playback stutters, try another.</source>
 <context>
     <name>TextInspectorAnimCategoryStrip</name>
     <message>
+        <source>Favorites</source>
+        <translation type="unfinished">Избранное</translation>
+    </message>
+    <message>
         <source>All</source>
         <translation>Все</translation>
     </message>
@@ -24030,6 +24370,14 @@ If playback stutters, try another.</source>
         <translation>Разделить все звуковые дорожки</translation>
     </message>
     <message>
+        <source>Stop looping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop</source>
+        <translation type="unfinished">Зациклить</translation>
+    </message>
+    <message>
         <source>Remove silence</source>
         <translation type="unfinished">Убрать тишину</translation>
     </message>
@@ -24044,6 +24392,14 @@ If playback stutters, try another.</source>
     <message>
         <source>Convert to mask</source>
         <translation>Преобразовать в маску</translation>
+    </message>
+    <message>
+        <source>Use as mask (nested timeline)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open mask timeline</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Convert to edit-friendly format</source>
@@ -24289,6 +24645,54 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Paste here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add bookmark here</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select clips after here on track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select all clips</source>
+        <translation type="unfinished">Выбрать все клипы</translation>
+    </message>
+    <message>
+        <source>Unmute track</source>
+        <translation type="unfinished">Включить звук дорожки</translation>
+    </message>
+    <message>
+        <source>Mute track</source>
+        <translation type="unfinished">Отключить звук дорожки</translation>
+    </message>
+    <message>
+        <source>Show track</source>
+        <translation type="unfinished">Показать дорожку</translation>
+    </message>
+    <message>
+        <source>Hide track</source>
+        <translation type="unfinished">Скрыть дорожку</translation>
+    </message>
+    <message>
+        <source>Unlock track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lock track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove empty tracks</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rename bookmark</source>
         <translation>Переименовать закладку</translation>
     </message>
@@ -24372,6 +24776,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Main</source>
         <translation type="unfinished">Основной</translation>
+    </message>
+    <message>
+        <source>New timeline</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -24686,12 +25094,24 @@ If playback stutters, try another.</source>
         <translation>Субтитры</translation>
     </message>
     <message>
+        <source>Hide the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show the effects layer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1, track %2</source>
         <translation>%1, дорожка %2</translation>
     </message>
 </context>
 <context>
     <name>TimelineTrimHandle</name>
+    <message>
+        <source>Drag to repeat the clip</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <source>Drag to trim the start</source>
         <translation>Перетащите, чтобы обрезать начало</translation>
@@ -24915,6 +25335,14 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Include in export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exclude from export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add camera clip at playhead</source>
         <translation>Добавить клип камеры на позиции курсора</translation>
     </message>
@@ -25084,6 +25512,17 @@ If playback stutters, try another.</source>
     <message>
         <source>Mute track</source>
         <translation>Отключить звук дорожки</translation>
+    </message>
+</context>
+<context>
+    <name>TrackHeaderName</name>
+    <message>
+        <source>not exported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shown while editing, left out of every export</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -25944,6 +26383,14 @@ If playback stutters, try another.</source>
         <translation type="unfinished">Положение</translation>
     </message>
     <message>
+        <source>Reset position</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset size</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Edit width and height separately</source>
         <translation>Изменять ширину и высоту отдельно</translation>
     </message>
@@ -25984,6 +26431,14 @@ If playback stutters, try another.</source>
         <translation>Непрозрачность и поворот</translation>
     </message>
     <message>
+        <source>Reset opacity</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset rotation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Rotate the whole group as one flat card</source>
         <translation type="unfinished"></translation>
     </message>
@@ -25998,6 +26453,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Position, rotation, anchor point and depth occlusion are in the 3D workspace&apos;s 3D Transform panel</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset all</source>
+        <translation type="unfinished">Сбросить всё</translation>
     </message>
     <message>
         <source>Rotation</source>
@@ -26022,10 +26481,6 @@ If playback stutters, try another.</source>
     <message>
         <source>Flip V</source>
         <translation>Отразить по вертикали</translation>
-    </message>
-    <message>
-        <source>Reset position &amp; size</source>
-        <translation>Сбросить положение и размер</translation>
     </message>
     <message>
         <source>Fix orientation</source>
@@ -27627,10 +28082,6 @@ If playback stutters, try another.</source>
         <translation>Цвет</translation>
     </message>
     <message>
-        <source>Looks</source>
-        <translation>Стили</translation>
-    </message>
-    <message>
         <source>Scopes</source>
         <translation>Скопы</translation>
     </message>
@@ -27745,6 +28196,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Camera</source>
         <translation>Камера</translation>
+    </message>
+    <message>
+        <source>Color Grading LUTs</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Stabilization</source>

@@ -20,7 +20,8 @@ public:
     QJsonObject inspect(const QJsonObject &args) const;
     QJsonObject apply(const QJsonObject &args);
     // Validates against the op schema, then runs; appends ignored:[unknown keys] on success.
-    QJsonObject applyOne(const QString &tool, const QJsonObject &args);
+    // reportGeometry false: a batch's own ops, whose changes the batch reports once.
+    QJsonObject applyOne(const QString &tool, const QJsonObject &args, bool reportGeometry = true);
     QJsonObject applyOneUnchecked(const QString &tool, const QJsonObject &args);
     QJsonObject applyOneExtended(const QString &tool, const QJsonObject &args);
     QJsonObject capture(const QJsonObject &args);
@@ -47,7 +48,7 @@ private:
     // transitionKinds() rows carry their id under "kind"; the catalog helpers key on "id".
     QVariantList transitionCatalog() const;
     QJsonObject clipFeedback(const ClipRef &ref, const QJsonObject &extra = {}) const;
-    QJsonObject effectHost(const ClipRef &ref, QJsonObject extra) const;
+    QJsonObject effectHost(const QString &clipId, bool audio, QJsonObject extra) const;
     QJsonObject waitImport(const QStringList &ids);
     // Ids among `ids` an import or load re-probed because their file changed in place, read
     // before waiting on them (landing clears the mark).
@@ -56,6 +57,10 @@ private:
     // stale (refused, or still running), inserting each list into `result` when non-empty.
     void addRefreshOutcome(QJsonObject &result, const QStringList &refreshed);
     bool isUndoable(const QString &tool) const;
+    // applyOne's checks before an op runs: known op, args against its schema (ignored keys go to
+    // `ignored`), clip required where index means something else. Empty when the op may run.
+    QJsonObject checkOp(const QString &tool, QJsonObject *args, QStringList *ignored) const;
+    QJsonObject dryRunOp(const QString &tool, const QJsonObject &args) const;
     void moveClipToRequested(const ClipRef &ref, double at);
 
     QJsonObject opImportMedia(const QJsonObject &args);
@@ -73,12 +78,17 @@ private:
     QJsonObject opRemoveTrack(const QJsonObject &args);
     QJsonObject opSetTrack(const QJsonObject &args);
     QJsonObject opPlaceClip(const QJsonObject &args);
+    QJsonObject opInsertClip(const QJsonObject &args);
     QJsonObject opMoveClip(const QJsonObject &args);
+    QJsonObject opSwapClips(const QJsonObject &args);
+    QJsonObject opReplaceClip(const QJsonObject &args);
+    QJsonObject opSetSequence(const QJsonObject &args);
     QJsonObject opSetDuration(const QJsonObject &args);
     QJsonObject opSetTrim(const QJsonObject &args);
     QJsonObject opMoveToTrack(const QJsonObject &args);
     QJsonObject opSplitClip(const QJsonObject &args);
     QJsonObject opDeleteClip(const QJsonObject &args);
+    QJsonObject opDeleteClips(const QJsonObject &args);
     QJsonObject opDuplicateClip(const QJsonObject &args);
     QJsonObject opUndo();
     QJsonObject opRedo();
@@ -113,10 +123,12 @@ private:
     QJsonObject opListExportOptions() const;
     QJsonObject opExportVideo(const QJsonObject &args);
     QJsonObject opExportStatus() const;
+    QJsonObject opWaitIdle(const QJsonObject &args);
     QJsonObject opExport(const QJsonObject &args);
     QJsonObject opListAnimatedProperties(const QJsonObject &args) const;
     QJsonObject opListKeyframes(const QJsonObject &args) const;
     QJsonObject opSetKeyframe(const QJsonObject &args);
+    QJsonObject opSetKeyframes(const QJsonObject &args);
     QJsonObject opRemoveKeyframe(const QJsonObject &args);
     QJsonObject opSetKeyframeInterpolation(const QJsonObject &args);
     QJsonObject opSetKeyframeTangents(const QJsonObject &args);
@@ -133,6 +145,8 @@ private:
     QJsonObject opResetCamera(const QJsonObject &args);
     QJsonObject opCameraLookAt(const QJsonObject &args);
     QJsonObject opCameraMove(const QJsonObject &args);
+    // create_proxies, proxy_status, remove_proxies, cancel_proxies.
+    QJsonObject opProxies(const QString &tool, const QJsonObject &args);
     // The camera clip a camera tool acts on: the named one, else the one covering `at`. Fills
     // `state` (cameraStateAt) and returns an error object, or {} on success.
     QJsonObject resolveCamera(const QJsonObject &args, double at, QVariantMap *state);

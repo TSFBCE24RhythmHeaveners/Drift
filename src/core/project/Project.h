@@ -124,7 +124,7 @@ struct Sequence
 class Project
 {
 public:
-    static constexpr int kCurrentVersion = 24;
+    static constexpr int kCurrentVersion = 28;
 
     Project() { resetToDefaultTimeline(); }
 
@@ -178,6 +178,10 @@ public:
     QStringList sequenceIds() const { return m_sequences.keys(); }
     // A copy with `id` active, for rendering that timeline through code that reads tracks().
     Project sequenceView(const QString &id) const;
+    // sequenceView for an export: tracks marked excludeFromExport, in every timeline, are hidden
+    // and muted, so they draw nothing, play nothing and don't stretch the export range.
+    Project exportView(const QString &id) const;
+    bool hasExportExcludedTracks() const;
     QString addSequence(TrackList tracks);
     // Must not be the active sequence.
     void removeSequence(const QString &id);
@@ -314,5 +318,11 @@ private:
     QHash<QString, BinFolder> m_binFoldersById;
     QHash<QString, TranscriptPtr> m_transcripts;
 };
+
+// A clip as the project file stores it (without its id's owner track); for comparing clips.
+QJsonObject clipJson(const Clip &clip);
+// A media asset as the project file stores it; for comparing assets.
+QJsonObject assetJson(const MediaAsset &asset);
+QJsonObject transitionJson(const Transition &transition);
 
 } // namespace drift

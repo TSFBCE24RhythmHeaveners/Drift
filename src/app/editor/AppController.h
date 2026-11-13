@@ -287,6 +287,9 @@ class AppController : public QObject
     // True while (and after) an export an MCP agent started, until the next export begins.
     // The progress dialog closes itself when such an export ends: nobody at the desk asked for it.
     Q_PROPERTY(bool exportByAgent READ exportByAgent NOTIFY exportInProgressChanged)
+    // True while (and after) an audio-only export, until the next export begins, so the progress
+    // dialog says "audio" rather than "video".
+    Q_PROPERTY(bool exportAudioOnly READ exportAudioOnly NOTIFY exportInProgressChanged)
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY exportProgressChanged)
     Q_PROPERTY(bool canShareExport READ canShareExport NOTIFY canShareExportChanged)
     Q_PROPERTY(QVariantList exportHistory READ exportHistory NOTIFY exportHistoryChanged)
@@ -497,7 +500,10 @@ public:
     QStringList undoHistory() const;
     int undoIndex() const { return m_undoStack.index(); }
     bool exportInProgress() const { return m_exportInProgress; }
+    // Which document is open; see m_documentGeneration. MCP replies compare clips only within one.
+    quint64 documentGeneration() const { return m_documentGeneration; }
     bool exportByAgent() const { return m_exportByAgent; }
+    bool exportAudioOnly() const { return m_exportAudioOnly; }
     // Set by the MCP dispatcher around the call that starts an export, so the start
     // records who asked for it. Not invokable.
     void setExportRequestedByAgent(bool byAgent) { m_exportRequestedByAgent = byAgent; }
@@ -770,6 +776,13 @@ public:
     // Release an adjustment from the clip it is pinned to, leaving it where it is. Its edges
     // become draggable and it stops following the clip.
     Q_INVOKABLE void unlinkAdjustment(int trackIndex, int clipIndex);
+    // Reveal or tuck away the effects layer linked to a media clip (the fx button).
+    Q_INVOKABLE void toggleEffectsLayerRevealed(int trackIndex, int clipIndex);
+    // Tuck a revealed effects layer back behind its clip.
+    Q_INVOKABLE void hideEffectsLayer(int trackIndex, int clipIndex);
+    // The clip in `targetTrack` that a dragged effects layer would hide behind when held over it
+    // at `atSeconds`; -1 when it is not its own host there or the layer is not a linked one.
+    Q_INVOKABLE int effectsLayerHostClip(int fromTrack, int fromClip, int targetTrack, double atSeconds) const;
     Q_INVOKABLE void relinkAdjustment(int trackIndex, int clipIndex, int mediaTrack, int mediaClip);
     Q_INVOKABLE void addStickerClip(const QString &stickerId, double atSeconds,
                                     int trackIndex = -1);
@@ -881,6 +894,11 @@ public:
     // Runs a history-limit trim that is still queued, for readers of history indices (MCP
     // list_history, undo_to, inspect) that must not see the stack before and then after it.
     void flushUndoHistoryTrim();
+    // Makes the project as it is now the result of the newest applied step, so an edit made
+    // without its own undo step is undone together with that step (and redone with it), and
+    // drops undone (redo) steps, whose states no longer follow from it. With no applied step the
+    // edit becomes part of the starting state.
+    void foldEditIntoHistory();
     Q_INVOKABLE void duplicateSelectedClip();
     Q_INVOKABLE void moveClip(int trackIndex, int clipIndex, double newStart);
     Q_INVOKABLE void moveClipToTrack(int trackIndex, int clipIndex, int newTrackIndex, double newStart);
@@ -910,6 +928,8 @@ public:
     Q_INVOKABLE void splitSelectedClipLeft();
     Q_INVOKABLE void splitSelectedClipRight();
     Q_INVOKABLE void splitAtPlayhead();
+    // Only the selected clips under the playhead (and their linked partners), not every track's.
+    Q_INVOKABLE void splitSelectionAtPlayhead();
     Q_INVOKABLE void splitClipAt(int trackIndex, int clipIndex, double seconds);
     Q_INVOKABLE void splitClipLeftAt(int trackIndex, int clipIndex, double seconds);
     Q_INVOKABLE void splitClipRightAt(int trackIndex, int clipIndex, double seconds);
@@ -942,12 +962,132 @@ public:
     // has always been handed this return value; until the enum existed it was reading undefined.
     Q_INVOKABLE int trimClipLeft(int trackIndex, int clipIndex, double newStart);
     Q_INVOKABLE int trimClipRight(int trackIndex, int clipIndex, double newEnd);
+    // With `ripple`, the clip's linked partners take the same trim, and the clips after its old end
+    // (on its track and the tracks holding linked partners of those clips) move by the change in
+    // length, whatever the project's ripple setting. Returns the ids of the clips that moved.
     Q_INVOKABLE void setClipTrim(int trackIndex, int clipIndex, double inPoint, double outPoint);
+    QStringList setClipTrimRippled(int trackIndex, int clipIndex, double inPoint, double outPoint, QString *error = nullptr);
+    // Closes the gaps on `trackIndex` that lie within [fromUs, toUs] (toUs < 0: no end): the one
+    // before the first clip and those between clips, latest first, through closeRippleRanges so
+    // tracks joined by linked clips close together. A gap a clip on such a track sits in is left
+    // open and reported. One undo step. `error` is set (and nothing changes) for a bad track or a
+    // locked one in the group.
+    struct GapCloseResult
+    {
+        QList<QPair<drift::TimeUs, drift::TimeUs>> closed; // (start, width) as they were
+        // gap (as it was) and the clip in the way, or the clip that cannot move with the rest
+        QList<QPair<QPair<drift::TimeUs, drift::TimeUs>, QString>> skipped;
+        QStringList moved;
+        QString error;
+    };
+    GapCloseResult closeGapsRippled(int trackIndex, drift::TimeUs fromUs, drift::TimeUs toUs);
+    // Reordering on one track, one undo step each. moveClipNextTo moves a clip (with everything
+    // linked to it) to the start (`after` false) or end of another clip on its track; the clips
+    // in between move by its length so the track keeps its spacing. swapClips exchanges two
+    // clips' places; the clips between them move by the difference in length. Tracks joined by
+    // linked clips move together. Refused (nothing changes) when the clips are on different tracks,
+    // a track is locked or an adjustment track, the two are linked to each other or overlap, or a
+    // clip would land on another or before 0. Transitions whose clips stop touching are removed.
+    struct ReorderResult
+    {
+        QStringList moved;
+        QStringList removedTransitions;
+        QString error;
+        QString errorCode;
+    };
+    ReorderResult moveClipNextTo(const QString &clipId, const QString &neighbourId, bool after);
+    ReorderResult swapClips(const QString &firstId, const QString &secondId);
+    // setClipTrim's arithmetic on one clip: clamps the range to the source and re-derives the
+    // timeline duration from it and the speed.
+    void applyClipTrim(drift::Clip &clip, double inPoint, double outPoint) const;
+    // Puts another library asset under a clip in place, keeping its name (unless it was the old
+    // file's), transform, effects and keyframes; linked audio follows when the new file has sound
+    // (replaceClipMedia's rules). With a source range [srcInUs, srcOutUs) (either may be negative
+    // for the media's start or end) the clip takes that length; otherwise it keeps its length,
+    // shorter if the new file runs out. With `ripple` the clips after it (on every track joined to
+    // it by linked clips) move by the change in length; without, a longer clip must not land on
+    // the next one. One undo step; refused with errorCode not_found/type_mismatch/bad_args.
+    struct ReplaceResult
+    {
+        QStringList moved;
+        QStringList removedTransitions;
+        QString error;
+        QString errorCode;
+    };
+    ReplaceResult replaceClipRippled(int trackIndex, int clipIndex, int assetIndex, drift::TimeUs srcInUs,
+                                     drift::TimeUs srcOutUs, bool ripple);
+    bool canReplaceClipMedia(int trackIndex, int clipIndex, int assetIndex) const;
+    // insertClipFromAsset's clip, not yet placed: source, layout, the range (a negative end takes
+    // the bin trim, else the media's) and a fresh id. False with errorCode/error when the asset or
+    // range doesn't fit the track.
+    bool buildClipFromAsset(int assetIndex, int trackIndex, drift::TimeUs srcInUs, drift::TimeUs srcOutUs,
+                            drift::Clip *out, QString *errorCode, QString *error);
+    // Makes a track exactly `entries`, end to end from startUs, in one undo step. An entry reuses
+    // a clip already on the track (by id, keeping its settings; in/out retrim it) or makes one from
+    // an asset. Clips on the track that are not listed are deleted with their linked partners and
+    // pinned effects; listed clips' partners move (and retrim) with them. Refused, with nothing
+    // changed, for an empty list, a negative start, a locked or adjustment track, a clip from
+    // another track or listed twice, a range past the media, two listed clips linked to each
+    // other (or an unlisted one linked to a listed one), or a partner that would land on another
+    // clip or before 0.
+    struct SequenceEntry
+    {
+        QString clipId;
+        int assetIndex = -1;
+        drift::TimeUs srcInUs = -1;
+        drift::TimeUs srcOutUs = -1;
+        std::optional<QString> name;
+    };
+    struct SequenceResult
+    {
+        QStringList order; // the track's clips, in sequence
+        QStringList created;
+        QStringList removed;
+        QStringList removedTransitions;
+        QString error;
+        QString errorCode;
+    };
+    SequenceResult setTrackSequence(int trackIndex, const QList<SequenceEntry> &entries, drift::TimeUs startUs);
+    // replaceClipMedia without the undo step. With renameDefault (the UI), a clip still named
+    // after its old file takes the new file's name; the agent op keeps every name.
+    bool rebindClipMedia(int trackIndex, int clipIndex, int assetIndex, bool renameDefault = true);
+    // After a clip `id` (on trackIndex) changed length from oldEnd: with `ripple`, the clips after
+    // it on its ripple group move by the change (its synced partners aside); either way a new
+    // overlap refuses. On refusal the project is restored to `before`, `error` names the clip in
+    // the way (`verb` is the edit, for the hint) and false is returned.
+    bool rippleResizedClip(const drift::Project &before, int trackIndex, const QString &id, drift::TimeUs oldEnd,
+                           bool ripple, const QString &verb, QString *error);
+    static QStringList movedClipIds(const drift::Project &before, const drift::Project &after);
+    // Inserts a clip of `assetIndex` on `trackIndex` starting exactly at `atUs`, with source range
+    // [srcInUs, srcOutUs), in one undo step. A negative srcInUs/srcOutUs takes the asset's bin
+    // trim (else its whole length); an explicit range must lie within the media. With `ripple`,
+    // every later clip on the track first moves right by the new clip's length (rippleTracksFrom:
+    // their linked partners follow), and `atUs` must be at a clip boundary or in a gap, not inside
+    // a clip. Without it the space must already be free. Returns the new clip's id, or empty with
+    // `error` and `errorCode` (not_found, type_mismatch, bad_args) set. `moved` receives the ids
+    // the ripple moved; `removedTransitions` the ids of transitions dropped because their two
+    // clips no longer touch (one at the insertion cut).
+    struct InsertResult
+    {
+        QString id;
+        QString error;
+        QString errorCode;
+        QStringList moved;
+        QStringList removedTransitions;
+    };
+    // Deletes these clips (and their linked A/V partners) in one undo step, closing the space they
+    // leave when `ripple`, whatever the project's ripple setting. `withEffects` also removes the
+    // adjustments pinned to them. Unknown ids are skipped; returns how many of `ids` were found.
+    int deleteClipsById(const QStringList &ids, bool withEffects, bool ripple, QString *error = nullptr);
+    InsertResult insertClipFromAsset(int assetIndex, int trackIndex, drift::TimeUs atUs, drift::TimeUs srcInUs,
+                                     drift::TimeUs srcOutUs, bool ripple);
     Q_INVOKABLE void setClipStart(int trackIndex, int clipIndex, double start);
     Q_INVOKABLE void setClipDuration(int trackIndex, int clipIndex, double duration);
     Q_INVOKABLE void setClipTextContent(int trackIndex, int clipIndex, const QString &text);
     // Display label on the timeline / inspector. Does not rename the source file.
     Q_INVOKABLE void setClipName(int trackIndex, int clipIndex, const QString &name);
+    // A stable tag on the clip (empty clears it); splits and duplicates number their copies.
+    Q_INVOKABLE void setClipLabel(int trackIndex, int clipIndex, const QString &label);
     Q_INVOKABLE void commitTextEdit(int trackIndex, int clipIndex, const QString &text);
     bool inlineTextEditing() const { return m_inlineTextEditing; }
 
@@ -1045,6 +1185,10 @@ public:
     Q_INVOKABLE void setClipBlendMode(int trackIndex, int clipIndex, const QString &mode);
     Q_INVOKABLE bool setClipSpeed(int trackIndex, int clipIndex, double speed);
     Q_INVOKABLE void setClipReverse(int trackIndex, int clipIndex, bool reverse);
+    // Repeats the clip's In/Out range for as long as the clip runs (video and audio clips, not on a
+    // speed ramp). Switching it off cuts the clip back to one pass from its head.
+    // False when the clip can't loop (not video/audio, or ramped).
+    Q_INVOKABLE bool setClipLoop(int trackIndex, int clipIndex, bool loop);
     // Turns reverse on for a video clip and renders the proxy that makes it play back smoothly.
     // Reverse itself applies immediately; cancelling the render leaves the clip reversed on the
     // slow live-decode path, which is what clipHasReverseProxy reports.
@@ -1159,6 +1303,7 @@ public:
     QString activeSequenceId() const { return m_project.activeSequenceId(); }
     // Opens (or switches to) a composite's tab. "" switches to the main timeline.
     Q_INVOKABLE void openSequence(const QString &sequenceId);
+    Q_INVOKABLE void newTimeline();
     Q_INVOKABLE void openCompositeClip(int trackIndex, int clipIndex);
     Q_INVOKABLE void openCompositeAsset(const QString &assetId);
     Q_INVOKABLE void closeSequenceTab(const QString &sequenceId);
@@ -1295,7 +1440,8 @@ public:
     // one undo step. Clears every channel when the colour is invalid.
     Q_INVOKABLE void setClipColorKeyframe(int trackIndex, int clipIndex, const QString &prop,
                                           double atSeconds, const QColor &color);
-    Q_INVOKABLE void setClipKeyframe(int trackIndex, int clipIndex, const QString &prop, double atSeconds,
+    // False when nothing was written: a bad clip index or a property the clip does not have.
+    Q_INVOKABLE bool setClipKeyframe(int trackIndex, int clipIndex, const QString &prop, double atSeconds,
                                      double value);
     // A vec2 effect param ("fx.<i>.<key>") keys its two axis tracks (<prop>.x/.y) as one undo step.
     Q_INVOKABLE void setClipVec2Keyframe(int trackIndex, int clipIndex, const QString &prop,
@@ -1334,6 +1480,20 @@ public:
                                                 double outDx, double outDy, bool corner);
     Q_INVOKABLE void setKeyframeHold(int trackIndex, int clipIndex, const QString &prop,
                                      double atSeconds, bool hold);
+    // Catmull-Rom auto tangents on the key at atSeconds, or on every key when `all`. Never touches
+    // the other position axis. Returns false when the property has no such key.
+    bool setKeyframeSmooth(int trackIndex, int clipIndex, const QString &prop, double atSeconds,
+                           bool all);
+    struct KeyframeBatch
+    {
+        QString prop;
+        QList<QPointF> keys; // x = timeline seconds, y = value
+    };
+    // Writes many keys in one undo step. `interpolation` (linear, hold, ease, smooth; empty keeps
+    // the tangents) is applied to every key of each property afterwards. Returns the first prop
+    // the clip does not have, in which case nothing is changed; empty on success.
+    QString setClipKeyframes(int trackIndex, int clipIndex, const QList<KeyframeBatch> &batches,
+                             bool replace, const QString &interpolation);
     Q_INVOKABLE void setKeyframeInterpolation(int trackIndex, int clipIndex, const QString &prop,
                                               const QString &mode);
     Q_INVOKABLE void setKeyframeEasingAt(int trackIndex, int clipIndex, const QString &prop,
@@ -1359,6 +1519,7 @@ public:
     Q_INVOKABLE void copyEasingToClipboard(const QVariantMap &spec) const;
     Q_INVOKABLE QVariantMap easingFromClipboard() const;
     Q_INVOKABLE void resetClipTransform(int trackIndex, int clipIndex);
+    Q_INVOKABLE void resetClipTransformGroup(int trackIndex, int clipIndex, const QString &group);
     Q_INVOKABLE QVariantList effectCatalog() const;
     Q_INVOKABLE QVariantList effectCategories() const;
     Q_INVOKABLE QVariantList effectTemplateCatalog() const;
@@ -1477,6 +1638,9 @@ public:
     Q_INVOKABLE bool renameTrack(int trackIndex, const QString &name);
     Q_INVOKABLE bool trackMuted(int trackIndex) const;
     Q_INVOKABLE bool trackHidden(int trackIndex) const;
+    // A review track: shown and heard while editing, left out of every export.
+    Q_INVOKABLE void setTrackExcludedFromExport(int trackIndex, bool excluded);
+    Q_INVOKABLE bool trackExcludedFromExport(int trackIndex) const;
     // 0 = filmstrip only, 1 = filmstrip + waveform bar, 2 = waveform only (Track::ClipDisplay).
     Q_INVOKABLE void setTrackClipDisplay(int trackIndex, int mode);
     Q_INVOKABLE int trackClipDisplay(int trackIndex) const;
@@ -1507,6 +1671,8 @@ public:
     Q_INVOKABLE int trackRowHeight(int trackIndex, const QVariantMap &metrics) const;
 
     // How many nested lanes a track is carrying, so the delegate knows how many strips to draw.
+    // The nested lanes that take space: a lane holding only hidden effects layers takes none.
+    QList<int> visibleAdjustmentLanes(int trackIndex) const;
     Q_INVOKABLE int adjustmentLaneCount(int trackIndex) const;
     // Track indices of those lanes, topmost first.
     Q_INVOKABLE QVariantList adjustmentLanes(int trackIndex) const;
@@ -1556,6 +1722,7 @@ public:
     Q_INVOKABLE void copySelection();
     Q_INVOKABLE void cutSelection();
     Q_INVOKABLE void pasteAtPlayhead();
+    Q_INVOKABLE bool canPasteClips() const { return !m_clipboard.isEmpty(); }
     Q_INVOKABLE void nudgeSelection(double deltaSeconds);
     Q_INVOKABLE bool selectionContains(int trackIndex, int clipIndex) const;
     Q_INVOKABLE double selectionEarliestStartSeconds() const;
@@ -1877,7 +2044,8 @@ protected:
 
     // Records the edit for undo. The timeline and selection refresh is left to finishEdit; an
     // edit that does not call it calls settleUndoRefresh() instead.
-    void pushProjectEdit(const drift::Project &before, const QString &text);
+    // numberLabels: false for a push that only bundles edits which numbered themselves (a batch).
+    void pushProjectEdit(const drift::Project &before, const QString &text, bool numberLabels = true);
     void settleUndoRefresh();
 
     // Lifts one effect, one audio effect, or the whole stack off a clip. Every copy and
@@ -2059,6 +2227,9 @@ protected:
     void syncCompositeAssetDurations();
     // Drops sequences no composite bin item refers to any more, leaving their tab if open.
     void pruneOrphanSequences();
+    QSet<QString> clipIdsWithPartners(const QList<QPair<int, int>> &pairs) const;
+    // Returns the new sequence's id.
+    QString moveClipsToNewSequence(const QSet<QString> &ids, drift::TimeUs startUs);
     bool compositeAssetPlaceable(const QVariantMap &asset) const;
     void finishFlatten(const QString &clipId, const QString &sequenceId, const QString &path,
                        const QString &name, drift::TimeUs srcInUs, drift::TimeUs durationUs);
@@ -2106,8 +2277,15 @@ protected:
                                       const std::function<QList<drift::Clip>(const drift::Clip &)> &build,
                                       bool ripple, SegmentReplaceResult *out, QString *error);
     void trimClipGroupAt(int trackIndex, int clipIndex, drift::TimeUs atUs, bool dropLeft);
+    // Null splits every clip under the playhead.
+    void splitClipsAtPlayhead(const QSet<QString> *onlyClipIds);
     void autoCrossfadeNewOverlaps(const drift::Project &before);
-    void deleteSelection(bool withPinnedAdjustments);
+    // Without `ripple` the project's ripple setting applies, as for the UI's Delete. With it (agent
+    // ops), true closes the cleared ranges with closeRippleRanges, linked tracks once, and refuses
+    // (restoring the project, returning false with `error`) when a clip blocks a range or a track
+    // it would move is locked.
+    bool deleteSelection(bool withPinnedAdjustments, std::optional<bool> ripple = std::nullopt,
+                         QString *error = nullptr);
     void applyRippleShift(drift::Track &track, int fromClipIndex, drift::TimeUs delta);
     void restoreFilmstripsAfterLoad();
     void normalizeSelection();
@@ -2132,6 +2310,26 @@ protected:
     // auxiliary-window sessions. Called by both newProject and applyProjectJson, before the
     // document is replaced, so the two paths cannot drift apart again.
     void resetSessionState();
+    // Raised each time the open document is replaced by another (a load, crash recovery, a new or
+    // closed project), not by Save As, which keeps the document under a new id.
+    quint64 m_documentGeneration = 0;
+    // After the whole project was swapped for another state of itself (undo, redo, an atomic MCP
+    // batch rolled back): resync the bin, folders and Source Lab, restore the selection captured
+    // before, and refresh. Marks the project unsaved.
+    void syncAfterProjectSwap();
+    // The beat analysis an edit drops when it changes the mix (finishEdit), kept so an atomic MCP
+    // batch that is rolled back can put it back.
+    struct BeatState
+    {
+        AudioBeatAnalysis raw;
+        QVariantMap analysis;
+        QList<drift::TimeUs> snapTargets;
+        QByteArray fingerprint;
+        bool gridVisible = false;
+        bool onsetsVisible = false;
+    };
+    BeatState beatState() const;
+    void restoreBeatState(const BeatState &state);
 
     QByteArray serializeProjectJson() const;
     bool applyProjectJson(const QByteArray &data, QString *error);
@@ -2142,9 +2340,13 @@ protected:
     void rememberExportChoice(const QString &outputPath, const QVariantMap &settings);
     QJsonObject sessionJson() const;
     QString historyHashAt(int stackIndex) const;
+    // The project as it was at a history index (0 = Origin), or nullopt past the stack.
+    std::optional<drift::Project> historyProjectAt(int stackIndex) const;
     // Every file a project state reachable by undo/redo points at, so cleanup does not take
     // media the history still needs.
     QSet<QString> historyMediaPaths() const;
+    // Media that only undo history still points at: what dropping history lets go of.
+    QSet<QString> historyOnlyMediaPaths() const;
     // Whether undo history is saved into the project file (the "project" history mode).
     bool persistsUndoHistory() const;
     // Most steps that can be undone: -1 for no limit, 0 when history is off. Undone steps (redo)
@@ -2154,6 +2356,23 @@ protected:
     void scheduleUndoHistoryTrim();
     // Drops the oldest applied undo steps past undoHistoryCap(); with history off, every step.
     void trimUndoHistory();
+    // Keeps steps [first, last) of `capture` with `index` of them applied; the project is untouched.
+    void rebuildUndoStack(const drift::HistoryCapture &capture, int first, int last, int index);
+    // Drops all but the newest `keepLast` applied steps, and every undone (redo) one. Returns
+    // how many steps went.
+    int clearUndoHistory(int keepLast);
+    // This project's own history settings, saved with it, each overriding the app's when set.
+    // Steps: kProjectHistoryUnset, -1 = no limit, 0 = no history, N = most undoable steps.
+    // Persist: -1 unset, 0 = this session only, 1 = saved with the project. Kept apart so turning
+    // history off and on again does not lose the persistence choice.
+    static constexpr int kProjectHistoryUnset = -2;
+    int m_projectHistorySteps = kProjectHistoryUnset;
+    int m_projectHistoryPersist = -1;
+    bool hasProjectHistorySettings() const
+    {
+        return m_projectHistorySteps != kProjectHistoryUnset || m_projectHistoryPersist >= 0;
+    }
+    QString effectiveUndoHistoryMode() const;
 public:
     // The "undoHistory" member of a saved document: states as plain JSON, deduplicated, plus the
     // media they reference. Reads only the capture, so a worker can run it. `states` receives one
@@ -2234,6 +2453,7 @@ protected:
     int m_selectedSubtitleCue = -1;
     bool m_exportInProgress = false;
     bool m_exportByAgent = false;
+    bool m_exportAudioOnly = false;
     bool m_exportRequestedByAgent = false;
     double m_exportProgress = 0.0;
     QAtomicInt m_exportCancel = 0;

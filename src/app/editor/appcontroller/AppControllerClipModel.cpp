@@ -5,6 +5,7 @@
 #include "engine/packages/transitions/TransitionCatalog.h"
 #include "app/jobs/vision/StabilizeController.h"
 #include "app/editor/ProjectFileController.h"
+#include "app/mcp/McpController.h"
 #include "ui/preview/PreviewController.h"
 
 #include "engine/packages/audio/AudioEffectCatalog.h"
@@ -95,7 +96,8 @@ QStringList inspectorCaps(const drift::Clip &clip, drift::TrackType trackType)
     if (clip.type == ClipType::Adjustment) {
         switch (clip.adjustmentKind) {
         case drift::AdjustmentKind::VideoEffects:
-            caps << QStringLiteral("blendable") << QStringLiteral("maskable") << QStringLiteral("adj:videoEffects");
+            caps << QStringLiteral("blendable") << QStringLiteral("maskable") << QStringLiteral("adj:videoEffects")
+                 << QStringLiteral("effectable");
             break;
         case drift::AdjustmentKind::Mask:
             caps << QStringLiteral("blendable") << QStringLiteral("maskable") << QStringLiteral("adj:mask");
@@ -120,10 +122,12 @@ QStringList inspectorCaps(const drift::Clip &clip, drift::TrackType trackType)
     case ClipType::Video:
         caps << QStringLiteral("transformable") << QStringLiteral("blendable") << QStringLiteral("animatable")
              << QStringLiteral("audible") << QStringLiteral("retimable") << QStringLiteral("stabilizable");
+        caps << QStringLiteral("effectable");
         break;
     case ClipType::Composite:
         caps << QStringLiteral("transformable") << QStringLiteral("blendable") << QStringLiteral("animatable")
              << QStringLiteral("audible") << QStringLiteral("retimable");
+        caps << QStringLiteral("effectable");
         break;
     case ClipType::Audio:
         caps << QStringLiteral("animatable") << QStringLiteral("audible") << QStringLiteral("retimable");
@@ -131,6 +135,7 @@ QStringList inspectorCaps(const drift::Clip &clip, drift::TrackType trackType)
     case ClipType::Text:
         caps << QStringLiteral("transformable") << QStringLiteral("blendable") << QStringLiteral("animatable")
              << QStringLiteral("textStyled");
+        caps << QStringLiteral("effectable");
         break;
     case ClipType::Subtitle:
         caps << QStringLiteral("transformable") << QStringLiteral("blendable") << QStringLiteral("textStyled")
@@ -138,14 +143,17 @@ QStringList inspectorCaps(const drift::Clip &clip, drift::TrackType trackType)
         break;
     case ClipType::Image:
         caps << QStringLiteral("transformable") << QStringLiteral("blendable") << QStringLiteral("animatable");
+        caps << QStringLiteral("effectable");
         break;
     case ClipType::Shape:
         caps << QStringLiteral("transformable") << QStringLiteral("blendable") << QStringLiteral("animatable")
              << QStringLiteral("shape");
+        caps << QStringLiteral("effectable");
         break;
     case ClipType::Vector:
         caps << QStringLiteral("transformable") << QStringLiteral("blendable") << QStringLiteral("animatable")
              << QStringLiteral("vector");
+        caps << QStringLiteral("effectable");
         break;
     case ClipType::Pdf:
         caps << QStringLiteral("transformable") << QStringLiteral("blendable") << QStringLiteral("animatable")
@@ -268,6 +276,7 @@ QVariantMap maskToMap(const drift::Mask &m, drift::TimeUs timelineStart)
         {QStringLiteral("h"), m.h},
         {QStringLiteral("rotation"), m.rotation},
         {QStringLiteral("feather"), m.feather},
+        {QStringLiteral("roundness"), m.roundness},
         {QStringLiteral("invert"), m.invert},
         {QStringLiteral("points"), points},
         {QStringLiteral("mediaPath"), m.mediaPath},
@@ -275,6 +284,7 @@ QVariantMap maskToMap(const drift::Mask &m, drift::TimeUs timelineStart)
         {QStringLiteral("mediaSrcOffsetUs"), qint64(m.mediaSrcOffsetUs)},
         {QStringLiteral("mediaFit"), drift::maskMediaFitToString(m.mediaFit)},
         {QStringLiteral("mediaChannel"), drift::maskMediaChannelToString(m.mediaChannel)},
+        {QStringLiteral("sequenceId"), m.sequenceId},
         {QStringLiteral("mediaLoop"), m.mediaLoop},
         {QStringLiteral("mediaTimeBase"), drift::maskMediaTimeBaseToString(m.mediaTimeBase)},
         // Read-only, for the inspector and the preview overlay: keyframe edits go through the
@@ -890,6 +900,7 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip, const drift::Clip 
     QVariantMap map{
         {QStringLiteral("id"), clip.id},
         {QStringLiteral("name"), clip.name},
+        {QStringLiteral("label"), clip.label},
         {QStringLiteral("path"), clip.path},
         {QStringLiteral("sourceFrame"), clip.sourceFrame},
         {QStringLiteral("sourceFrameAngle"), clip.sourceFrameAngle},
@@ -903,6 +914,7 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip, const drift::Clip 
         // treat their edges as pinned.
         {QStringLiteral("adjustmentKind"), drift::adjustmentKindToString(clip.adjustmentKind)},
         {QStringLiteral("linkedClipId"), clip.linkedClipId},
+        {QStringLiteral("hiddenInLane"), clip.hiddenInLane},
         {QStringLiteral("thumbnailPath"), clip.thumbnailPath},
         {QStringLiteral("filmstripPath"), clip.filmstripPath},
         {QStringLiteral("textContent"), clip.textContent},
@@ -913,6 +925,7 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip, const drift::Clip 
         {QStringLiteral("speed"), clip.speed},
         {QStringLiteral("hasSpeedCurve"), clip.hasSpeedCurve()},
         {QStringLiteral("reverse"), clip.reverse},
+        {QStringLiteral("loop"), clip.loop},
         {QStringLiteral("flipH"), clip.flipH},
         {QStringLiteral("layer3d"), clip.layer3d},
         {QStringLiteral("depthOcclude"), clip.depthOcclude},
@@ -1033,11 +1046,16 @@ TimelineClipsModel::Row AppController::clipRow(const drift::Clip &clip,
     TimelineClipsModel::Row row;
     row.id = clip.id;
     row.name = clip.name;
+    if (row.name.isEmpty() && clip.adjustmentKind == drift::AdjustmentKind::Mask && clip.mask.isSequence())
+        row.name = clip.mask.name;
     row.path = clip.path;
     row.kind = drift::clipTypeToString(clip.type);
     row.packageMissing = clip.type == drift::ClipType::Procedural && !hasProcedural(clip.procedural.packageId);
     row.adjustmentKind = drift::adjustmentKindToString(clip.adjustmentKind);
     row.linkedClipId = clip.linkedClipId;
+    row.hiddenInLane = clip.hiddenInLane;
+    if (videoEffectHost && !videoEffectHost->effects.isEmpty())
+        row.fxLayer = videoEffectHost->hiddenInLane ? 1 : 2;
     row.linkId = clip.linkId;
     row.linked = !clip.linkId.isEmpty();
     row.filmstripPath = clip.filmstripPath;
@@ -1048,6 +1066,11 @@ TimelineClipsModel::Row AppController::clipRow(const drift::Clip &clip,
     row.inPoint = drift::usToSeconds(clip.srcIn);
     row.outPoint = drift::usToSeconds(clip.srcOut);
     row.sourceDuration = sourceAsset ? drift::usToSeconds(sourceAsset->durationUs) : 0.0;
+    row.loop = clip.loops();
+    if (row.loop) {
+        row.loopPeriod = drift::usToSeconds(clip.loopPeriodUs());
+        row.loopPhase = drift::usToSeconds(clip.loopOffsetUs) / clip.effectiveSpeed();
+    }
     row.audioStreamIndex = clip.audioStreamIndex;
     // For the waveform bar: not once the audio has been separated, nor when the source has no
     // audio stream. An unprobed source gets the benefit of the doubt; its waveform stays empty.
@@ -1141,7 +1164,7 @@ void AppController::syncClipModels()
                                 audioHosts.value(clip.id, nullptr)));
         }
         m_clipModels[ti]->setRows(std::move(rows));
-        m_clipModels[ti]->setDecorations(trackDecorations(track, laneIndexes));
+        m_clipModels[ti]->setDecorations(trackDecorations(track, visibleAdjustmentLanes(ti)));
     }
 
     // Slots past the end belong to tracks that are gone. Emptied rather than deleted — see the
@@ -1344,6 +1367,8 @@ bool AppController::removeAsset(int assetIndex)
     // start now points at the wrong asset.
     setDraggingAssetIndex(-1);
     pushProjectEdit(before, tr("Media removed"));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    m_mcpController->bumpEditRevision();
     settleUndoRefresh();
     return true;
 }
@@ -1385,6 +1410,8 @@ int AppController::removeAssets(const QStringList &assetIds)
 
     setDraggingAssetIndex(-1);
     pushProjectEdit(before, removed == 1 ? tr("Media removed") : tr("%n items removed", "", removed));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    m_mcpController->bumpEditRevision();
     settleUndoRefresh();
     return removed;
 }
@@ -1507,6 +1534,8 @@ bool AppController::setAssetRotation(int assetIndex, int degrees)
         return false;
 
     pushProjectEdit(before, tr("Media rotated"));
+    // An undo step without finishEdit: the revision (and the change feed) moves here.
+    m_mcpController->bumpEditRevision();
     settleUndoRefresh();
     return true;
 }
@@ -1708,6 +1737,7 @@ QVariantList AppController::actions() const
         action(QStringLiteral("pasteEffects"), tr("Paste effects onto clip")),
         action(QStringLiteral("pasteAttributes"), tr("Paste attributes…")),
         action(QStringLiteral("split"), tr("Split at current time")),
+        action(QStringLiteral("splitSelection"), tr("Split selected clip at current time")),
         action(QStringLiteral("addTransitionAtPlayhead"), tr("Add transition at playhead")),
         action(QStringLiteral("merge"), tr("Merge adjacent clips")),
         action(QStringLiteral("transformTogether"), tr("Transform selection together")),

@@ -8,6 +8,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <optional>
 #include <QJsonValue>
 #include <QList>
 #include <QObject>
@@ -72,6 +73,19 @@ public:
     QString error() const;
     QString cursorSnippet() const;
     QString claudeCommand() const;
+    // list_missing_media: assets whose file is gone, with how many clips use each.
+    QJsonObject missingMedia() const;
+    // relink_media({from, to} | {search_dir}, dry_run?): see the catalog entry.
+    QJsonObject relinkMedia(const QJsonObject &args);
+    // Background work still running, for wait_idle: {kind: how many} for each kind in `only`
+    // (every kind when empty) that is busy; `jobs` is {job kind: how many}. Empty when idle.
+    // Filmstrips and waveforms paused by playback can't drain: they go to `suspended` instead.
+    QJsonObject backgroundWork(const QStringList &only = {}, QStringList *suspended = nullptr) const;
+    static const QStringList &backgroundKinds();
+    // validate_project: what's wrong with the project, read-only. {problems:[{kind, message,
+    // clip?, asset?, track?, sequence?, ...}], n, counts?:{kind: n}, truncated?, open_sequence?},
+    // at most `limit` rows (n counts them all).
+    QJsonObject validateProject(int limit = 200) const;
     QString stdioSnippet() const;
     Q_INVOKABLE void copyCursorSnippet();
     Q_INVOKABLE void copyClaudeCommand();
@@ -92,6 +106,9 @@ public:
     // Helpers (GUI thread). Used by src/app/mcp, not QML.
     QPair<int, int> locateClip(const QString &id) const;
     QString clipId(int trackIndex, int clipIndex) const;
+    // Where the effect stack of the clip with this id lives: a linked adjustment for a media clip,
+    // the clip itself for an adjustment. {-1,-1} when it has none.
+    QPair<int, int> effectHostOf(const QString &clipId, bool audio) const;
     QVariantMap compactClip(int trackIndex, int clipIndex, bool includeCanvas = true) const;
     // A video/image clip's crop: the normalised source window and its straighten angle, plus the
     // window in source pixels when the asset's size is known. Empty for any other clip.
@@ -104,6 +121,9 @@ public:
         int since = -1;
         int track = -1;
         QString clip;
+        QList<int> tracks;   // only these tracks (with `track`, its index too)
+        QStringList fields;  // clip rows keep only these keys (and id)
+        bool dirtyDetail = false;
     };
     QJsonObject inspect(const InspectOptions &options) const;
     QJsonObject inspect(bool includeClips, int sinceRevision = -1, bool detail = false,
@@ -113,7 +133,27 @@ public:
     }
     int revision() const { return m_editRevision; }
     // AppController bumps this from every edit path, including ones that never touch MCP.
-    void bumpEditRevision() { ++m_editRevision; }
+    // Every finished edit (the editor's, an agent's, undo/redo) bumps the revision; with the change
+    // feed on, it also logs what changed since the last one.
+    enum class ChangeKind { Edit, Undo, Redo };
+    void bumpEditRevision(ChangeKind kind = ChangeKind::Edit);
+    // The next logged change is the agent's even outside its call: an async op it started (a
+    // replace_asset probe) lands from a nested event loop, where inAgentCall() is false.
+    void markNextChangeByAgent() { m_nextChangeByAgent = true; }
+    // The change feed: the edits after revision `since`, oldest first, each with its source ("mcp"
+    // or "ui"), kind (edit, undo, redo), label and clip/track/asset diff. The log starts at the
+    // first agent call and keeps the newest kChangeLogSize entries; an older `since` reports
+    // `truncated`.
+    QJsonObject changesSince(int since, int limit);
+    // Starts the log (idempotent): the first agent call does, and so does `changes`.
+    void startChangeFeed();
+    // What differs between two project states: a history hash (list_history), a snapshot hash
+    // (take_snapshot) or "head".
+    QJsonObject diffStates(const QString &from, const QString &to) const;
+    // What the unsaved changes are: `timeline` (clips, tracks, assets or settings differ from the
+    // saved project, with that diff) and `other`, the saved state outside the timeline that
+    // changed: track view settings, work area, bookmarks, open sequence tabs, project info.
+    QJsonObject dirtyDetail() const;
     bool undoSuspended() const { return m_undoSuspended; }
     const drift::Project &batchBefore() const { return m_batchBefore; }
     // A keyed write (the property already animates, or auto-key is on) lands at `atSeconds` on the
@@ -184,6 +224,15 @@ public:
     // Whether the open batch has changed the project: an edit went through finishEdit, or the
     // saved content differs from the batch's start. Ops can succeed without either (renaming a
     // clip to its own name), and such a batch should not leave an undo step that undoes nothing.
+    // apply({atomic:true}): taken after beginBatch, before the batch's first op. rollbackBatch
+    // then puts the project back as beginBatch found it, with the selection, playhead, unsaved
+    // flag and beat analysis, and drops the point; endBatch drops it as well.
+    void setRollbackPoint();
+    void rollbackBatch();
+    // An atomic batch can't start while another edit is open: a batch or edit group (rolling back
+    // would reach its start), a preview drag (its edit would lose its undo step) or a multicam
+    // session (an edit ends it, and its cuts live outside the project).
+    bool editOpen() const;
     bool batchChangedProject() const;
     QJsonObject listHistory(int limit = 20) const;
     QJsonObject undoTo(int index, const QString &hash);
@@ -191,6 +240,16 @@ public:
     // jmn8718/Drift#32: where the memory goes, and dropping what can be rebuilt.
     QJsonObject memoryStats() const;
     QJsonObject clearCache();
+    // get_performance / set_performance: the Settings › Performance knobs, preview quality and
+    // decode mode, with what the automatic frame cache resolves to.
+    QJsonObject performance() const;
+    QJsonObject setPerformance(const QJsonObject &given);
+    // Undo history housekeeping (jmn8718/Drift#30).
+    QJsonObject clearHistory(int keepLast);
+    // Unset optionals leave that part of the project's setting as it is.
+    QJsonObject setHistoryLimit(bool reset, std::optional<int> steps, std::optional<bool> persist);
+    QJsonObject historyStats(bool size) const;
+    QJsonObject historySettings() const;
     QJsonObject listSnapshots() const;
     QJsonObject restoreSnapshot(const QString &hash);
 
@@ -346,6 +405,13 @@ public:
     QJsonObject setAcceleration(const QString &variant);
 
 signals:
+    // Access is being turned off or its token rotated while agent calls are still open. Waits
+    // that serve the event loop (wait_idle) end early: the change runs once the calls return.
+    void transportStopping();
+public:
+    // A stop or token rotation waiting for open agent calls to return (see transportStopping).
+    bool transportChangePending() const { return m_pendingStop || m_pendingRotate; }
+signals:
     void runningChanged();
     void errorChanged();
     void startOnLaunchChanged();
@@ -400,10 +466,45 @@ private:
         int loopLevel = 0;
         int pausedAtStart = 0; // a call that starts inside a paused pump is still the agent's
     };
+    // setEnabled(false) / rotateToken during an agent call: done once the last call returns.
+    // Stopping the HTTP transport waits for its thread, which waits for the call in progress on
+    // this one, so doing it from inside that call (a wait's event loop) would deadlock.
+    bool m_pendingStop = false;
+    bool m_pendingRotate = false;
+    void applyPendingTransportChange();
     QList<AgentCallFrame> m_agentCalls;
+    // One finished edit. Its diff is worked out when `changes` reads it, from the project as it was
+    // after the previous entry (or the feed's start) to `state`; a snapshot costs a project copy,
+    // the diff a serialisation of every clip, so the edit path only pays for the first.
+    struct ChangeEntry
+    {
+        int revision = 0;
+        QString source;
+        QString kind;
+        QString label;
+        std::shared_ptr<const drift::Project> state;
+        QJsonObject diff;
+        bool computed = false;
+        bool detailDropped = false; // too many unread snapshots: only the label is left
+    };
+    static constexpr int kChangeLogSize = 500;
+    static constexpr int kChangeSnapshots = 50;
+    static constexpr int kChangeSnapshotClips = 20000; // clip copies across unread snapshots
+    std::optional<ChangeKind> m_batchKind;
+    bool m_changeFeedOn = false;
+    bool m_nextChangeByAgent = false;
+    int m_changeFeedFloor = 0; // the oldest revision `since` may name and still get every change
+    std::shared_ptr<const drift::Project> m_changeBase; // the state before the first entry
+    QString m_pendingChangeLabel;
+    QList<ChangeEntry> m_changeLog;
+    void recordChange(ChangeKind kind);
+    void computeChange(int index);
+    std::optional<drift::Project> projectForState(const QString &state, QString *error) const;
     int m_agentCallsPaused = 0;
     QString m_pendingWarning;
     drift::Project m_batchBefore;
+    struct RollbackPoint;
+    std::unique_ptr<RollbackPoint> m_rollback;
     int m_batchRevision = 0;
     int m_editRevision = 0;
     mutable QHash<QString, QPair<int, int>> m_clipIndex;

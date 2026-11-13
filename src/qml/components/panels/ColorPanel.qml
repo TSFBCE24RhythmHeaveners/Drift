@@ -615,7 +615,7 @@ PanelFrame {
                     }
 
                     SectionHeader {
-                        title: qsTr("Look")
+                        title: qsTr("LUT")
                         modified: root.lookModified
                         onResetRequested: root.colorState.resetGroup("Look")
                     }
@@ -624,7 +624,7 @@ PanelFrame {
                         readonly property bool none: (root.params.look || "") === ""
                         wrapMode: none ? Text.WordWrap : Text.NoWrap
                         elide: none ? Text.ElideNone : Text.ElideRight
-                        text: none ? qsTr("None. Choose a look in the Looks panel.") : root.target.lookLabel
+                        text: none ? qsTr("None. Choose one in the Color Grading LUTs panel.") : root.target.lookLabel
                         color: Theme.mutedForeground
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSizeXs
@@ -632,7 +632,7 @@ PanelFrame {
                     GradeSlider {
                         width: parent.width
                         enabled: (root.params.look || "") !== ""
-                        label: qsTr("Look Intensity")
+                        label: qsTr("LUT Intensity")
                         from: 0
                         to: 1
                         defaultValue: 1
@@ -681,11 +681,11 @@ PanelFrame {
                         readonly property real maxWheel: 240
                         readonly property int cols: wheelsTab.width >= 3 * minWheel + 2 * gap ? 3
                                                   : wheelsTab.width >= 2 * minWheel + gap ? 2 : 1
-                        readonly property int rows: Math.ceil(3 / cols)
+                        readonly property int wheelRows: Math.ceil(3 / cols)
                         readonly property real availH: root.bodyH - Theme.controlHeightSm - Theme.spacingMd
                                                        - Theme.spacingLg * 2
                         readonly property real byWidth: (wheelsTab.width - (cols - 1) * gap) / cols
-                        readonly property real byHeight: (availH - (rows - 1) * gap) / rows - wheelProbe.chromeHeight
+                        readonly property real byHeight: (availH - (wheelRows - 1) * gap) / wheelRows - wheelProbe.chromeHeight
                         readonly property real wheelSize: Math.floor(Math.max(minWheel, Math.min(maxWheel, byWidth, byHeight)))
                         anchors.horizontalCenter: parent.horizontalCenter
                         columns: cols

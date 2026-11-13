@@ -68,7 +68,6 @@ class TimelineTrackItem : public QQuickItem
     Q_PROPERTY(QObject *haptics READ haptics WRITE setHaptics NOTIFY servicesChanged)
     Q_PROPERTY(QAbstractItemModel *activeClips READ activeClips CONSTANT)
     Q_PROPERTY(bool dragging READ dragging NOTIFY draggingChanged)
-    Q_PROPERTY(bool touchDragging READ touchDragging NOTIFY draggingChanged)
     // Touch only: a clip is picked up (held, or being dragged). The panel stops panning for it.
     Q_PROPERTY(bool lifted READ lifted NOTIFY draggingChanged)
     Q_PROPERTY(bool lastPressTouch READ lastPressTouch NOTIFY lastPressTouchChanged)
@@ -100,7 +99,6 @@ public:
     void setHaptics(QObject *haptics);
     QAbstractItemModel *activeClips() const { return m_activeClips; }
     bool dragging() const { return m_drag.moving; }
-    bool touchDragging() const;
     bool lifted() const;
     bool lastPressTouch() const { return m_lastPressTouch; }
     QPointF dragPointer() const { return m_drag.pointer; }
@@ -185,6 +183,7 @@ private:
         QString id;
         QRectF rect;
         bool selected = false;
+        QRectF fxRect;
         QList<QPair<QRectF, QString>> toolTips;
     };
 
@@ -235,7 +234,8 @@ private:
     void build();
     void appendClip(int index, const QRectF &rect, bool selected, bool lit, bool lifted);
     void buildWaveform(int index, const QRectF &area, double clipX, double clipWidth,
-                       double inPoint, double outPoint, bool bar);
+                       double inPoint, double outPoint, bool bar, const QString &cacheId,
+                       double fullX, double fullWidth);
     void buildFilmstrip(int index, const QRectF &body, const QRectF &clipRect, double clipRadius,
                         double inPoint, double outPoint);
     void appendTile(const QString &key, const QImage &image, const QRectF &target,

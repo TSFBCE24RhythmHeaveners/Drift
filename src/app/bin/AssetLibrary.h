@@ -3,6 +3,7 @@
 #include "core/project/media/MediaAsset.h"
 
 #include <QAbstractListModel>
+#include <QFuture>
 #include <QJsonArray>
 #include <QHash>
 #include <QSet>
@@ -152,6 +153,14 @@ public:
     // Never touches the source file — applied to a clip's srcIn/srcOut when placed on the
     // timeline (see AppController::applyAssetLayout). Undo snapshot is the caller's, as above.
     bool setAssetTrim(int index, qint64 trimInUs, qint64 trimOutUs);
+    // import_media({previews:false}): assets imported while this is set get no thumbnail or
+    // filmstrip when their probe lands (the probe itself still runs); ensurePreview builds them
+    // when something shows the asset.
+    void setDeferPreviews(bool defer) { m_deferPreviews = defer; }
+    // Starts the thumbnail and filmstrip job when the asset has none and none is running: for a
+    // view showing it (the bin's cards), or anything that needs them now. Cheap to call often.
+    Q_INVOKABLE void ensurePreview(int index);
+    bool thumbnailJobPending(const QString &assetId) const { return m_thumbPending.contains(assetId); }
     int indexOfPath(const QString &path) const;
     // Drops the row from the project's asset table. Callers own the undo
     // snapshot and the in-use check; this only touches the bin.
@@ -198,6 +207,20 @@ public:
     double proxyProgress() const { return m_proxyProgress; }
     QString proxyCurrentName() const;
     int proxyQueuedCount() const { return m_proxyQueue.size(); }
+    QString proxyBuildingId() const { return m_proxyBuilding; }
+    // Background work still to land, for wait_idle: probes (imports, replaces, refreshes, and the
+    // audio and frame-rate passes), bin thumbnails, and proxies building, queued or waiting for
+    // their sidecar scan before they're queued.
+    int pendingProbeCount() const
+    {
+        return int(m_importPending.size() + m_refreshPending.size() + m_audioProbePending.size()
+                   + m_frameRateProbePending.size());
+    }
+    int pendingThumbnailCount() const { return int(m_thumbPending.size()); }
+    int pendingProxyCount() const
+    {
+        return int((m_proxyBuilding.isEmpty() ? 0 : 1) + m_proxyQueue.size() + m_autoProxyPending.size());
+    }
     // "none", "queued", "building", "ready" or "linked" for a video asset; empty for anything
     // else. "ready" means a proxy exists at the current proxy size, whether or not preview is set
     // to use proxies. "linked" means the proxy in use is a file made elsewhere that matched a
@@ -218,6 +241,21 @@ public:
     Q_INVOKABLE bool isMissing(const QString &assetId) const;
     int missingCount() const { return int(m_missing.size()); }
     Q_INVOKABLE void createProxies(const QStringList &assetIds);
+    // Why the last proxy build for this asset failed, or empty. Cleared when it is queued again
+    // or removed.
+    QString proxyError(const QString &assetId) const { return m_proxyErrors.value(assetId); }
+    // The video assets among these whose footage would preview slowly (what import's proxy
+    // suggestion flags). Probes each file, in parallel.
+    // Runs off the calling thread; the future yields the ids.
+    QFuture<QStringList> slowToPreview(const QStringList &assetIds) const;
+    // Waiting for its sidecar scan before an automatic proxy (proxySuggestion "always").
+    bool isAutoProxyPending(const QString &assetId) const { return m_autoProxyPending.contains(assetId); }
+    int autoProxyPendingCount() const { return int(m_autoProxyPending.size()); }
+    // The proxy being built was cancelled or removed, and its job hasn't wound down yet.
+    bool proxyCancelling(const QString &assetId) const
+    {
+        return !assetId.isEmpty() && assetId == m_proxyBuilding && m_proxyCancel.loadRelaxed() != 0;
+    }
     // What the end of an import does with footage that would preview slowly: "ask" emits it in
     // importSuggestions, "always" queues proxies for it, "never" drops it (the preference).
     void setProxySuggestionMode(const QString &mode) { m_proxySuggestionMode = mode; }
@@ -244,6 +282,9 @@ public:
     Q_INVOKABLE void commitProxyRule(const QString &pattern);
 
 signals:
+    // Clips on the timeline got the thumbnail or filmstrip their asset just received (they were
+    // placed before it existed).
+    void clipPreviewsFilled();
     void countChanged();
     void importingChanged();
     void importProgress(int done, int total, const QString &name);
@@ -345,6 +386,12 @@ private:
     QHash<QString, quint64> m_probeToken;
     quint64 m_completingProbeToken = 0;
     quint64 m_lastProbeToken = 0;
+    bool m_deferPreviews = false;
+    // ensurePreview tried these already (an asset whose first frame won't decode never gets a
+    // thumbnail); cleared when the project changes under the bin (undo, load).
+    QSet<QString> m_previewTried;
+    // Imported with previews deferred, probe still running.
+    QSet<QString> m_previewsDeferred;
     QSet<QString> m_thumbPending;
     // Asset ids whose settings (rotation/trim) changed again while a thumbnail job for them was
     // already in flight — the in-flight job's result is stale the moment it lands, so its landing
@@ -378,6 +425,7 @@ private:
     // Asset ids whose file is absent from disk. Image sequences and composites are never in it.
     QSet<QString> m_missing;
     QAtomicInt m_proxyCancel;
+    QHash<QString, QString> m_proxyErrors;
     // Its own single-thread pool: a proxy render runs for minutes and must not hold up the
     // probe and thumbnail jobs on m_jobs.
     QThreadPool m_proxyPool;
