@@ -14,8 +14,8 @@
       "displayName": "Pitch",
       "type": "float",
       "minValue": 0.5,
-      "maxValue": 0.95,
-      "defaultValue": 0.7
+      "maxValue": 0.100,
+      "defaultValue": 0.75
     }
   ]
 }
