@@ -4357,10 +4357,6 @@
         <translation>Трансформация сброшена</translation>
     </message>
     <message>
-        <source>Motion blur follows one clip&apos;s movement, so it goes on a clip, not on an adjustment layer.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Depth effects read one clip&apos;s depth, so they go on a clip, not on an adjustment layer.</source>
         <translation>Эффекты глубины используют данные одного клипа, поэтому применяются к клипу, а не к корректирующему слою.</translation>
     </message>
@@ -5040,6 +5036,10 @@
         <translation>Справка…</translation>
     </message>
     <message>
+        <source>Save diagnostics…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Settings…</source>
         <translation>Настройки…</translation>
     </message>
@@ -5051,16 +5051,8 @@
 <context>
     <name>AssetCategoryChips</name>
     <message>
-        <source>My Effects</source>
-        <translation>Мои эффекты</translation>
-    </message>
-    <message>
         <source>Favorites</source>
         <translation>Избранное</translation>
-    </message>
-    <message>
-        <source>Recent</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -5615,36 +5607,12 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Nothing here yet. Import a .driftfx or a Drift Forge zip to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Import a .driftfx or zip made in Drift Forge to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>My Audio Effects</source>
         <translation>Мои звуковые эффекты</translation>
     </message>
     <message>
         <source>No audio effects match “%1”.</source>
         <translation>Нет аудиоэффектов по запросу «%1».</translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star presets to save them here.</source>
-        <translation>Избранного пока нет. Отмечайте пресеты звёздочкой, чтобы сохранить их здесь.</translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>В этой категории ничего нет.</translation>
-    </message>
-    <message>
-        <source>%1 is empty</source>
-        <translation>%1 пусто</translation>
-    </message>
-    <message>
-        <source>Import</source>
-        <translation>Импорт</translation>
     </message>
 </context>
 <context>
@@ -7186,6 +7154,52 @@
     </message>
 </context>
 <context>
+    <name>CrashReport</name>
+    <message>
+        <source>Drift closed unexpectedly</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift did not close properly</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift did not close properly last time. If it keeps happening, you can start in safe mode, which uses the default graphics backend and loads no add-ons for this session.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A report was sent to help fix this. You can turn this off in Settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save crash file…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Start in safe mode</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Continue</source>
+        <translation type="unfinished">Продолжить</translation>
+    </message>
+</context>
+<context>
+    <name>CrashReporter</name>
+    <message>
+        <source>Choose where to save the file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Saved to %1</source>
+        <translation type="unfinished">Сохранено в %1</translation>
+    </message>
+    <message>
+        <source>Could not save the file: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>CropOverlay</name>
     <message>
         <source>Fit view</source>
@@ -8414,18 +8428,6 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Nothing here yet. Import a .driftfx or a Drift Forge zip to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Import a .driftfx or zip made in Drift Forge to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Import</source>
-        <translation>Импорт</translation>
-    </message>
-    <message>
         <source>Add adjustment layer — click, or drag it onto a track</source>
         <translation>Добавить корректирующий слой — нажмите или перетащите на дорожку</translation>
     </message>
@@ -8436,18 +8438,6 @@
     <message>
         <source>No effects match “%1”.</source>
         <translation>Нет эффектов по запросу «%1».</translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star presets to save them here.</source>
-        <translation>Избранного пока нет. Отмечайте пресеты звёздочкой, чтобы сохранить их здесь.</translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>В этой категории ничего нет.</translation>
-    </message>
-    <message>
-        <source>%1 is empty</source>
-        <translation>%1 пусто</translation>
     </message>
     <message>
         <source>Delete effect</source>
@@ -8655,14 +8645,6 @@
     <message>
         <source>No templates match “%1”.</source>
         <translation>Нет шаблонов по запросу «%1».</translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star templates to save them here.</source>
-        <translation>Избранного пока нет. Отмечайте шаблоны звёздочкой, чтобы сохранить их здесь.</translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>В этой категории ничего нет.</translation>
     </message>
 </context>
 <context>
@@ -9003,6 +8985,21 @@
     <message>
         <source>LUT files (*.cube)</source>
         <translation>Файлы LUT (*.cube)</translation>
+    </message>
+</context>
+<context>
+    <name>EffectsMaskSection</name>
+    <message>
+        <source>This effect needs a mask.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add new mask</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cutout subject</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -11718,26 +11715,6 @@
     <message>
         <source>No LUTs match “%1”.</source>
         <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star LUTs to save them here.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>В этой категории ничего нет.</translation>
-    </message>
-    <message>
-        <source>%1 is empty</source>
-        <translation>%1 пусто</translation>
-    </message>
-    <message>
-        <source>Import a .cube file to add your own.</source>
-        <translation>Импортируйте файл .cube, чтобы добавить собственный стиль.</translation>
-    </message>
-    <message>
-        <source>Import</source>
-        <translation>Импорт</translation>
     </message>
     <message>
         <source>No LUTs</source>
@@ -17117,6 +17094,10 @@ If playback stutters, try another.</source>
         <source>Copy email address</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>If Drift crashes, it sends an error report to help fix it. No project files or media are included. You can turn this off in Settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>QuickSetupMockEditor</name>
@@ -18090,6 +18071,21 @@ If playback stutters, try another.</source>
     </message>
 </context>
 <context>
+    <name>SectionedAssetGrid</name>
+    <message>
+        <source>Mine</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">Избранное</translation>
+    </message>
+    <message>
+        <source>Recent</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>SegmentationControlColumn</name>
     <message>
         <source>Tap marks the subject, press and hold marks what to exclude. Tap a marker to remove it.</source>
@@ -18330,6 +18326,18 @@ If playback stutters, try another.</source>
     <message>
         <source>Check now</source>
         <translation>Проверить сейчас</translation>
+    </message>
+    <message>
+        <source>Save diagnostics</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Saves an archive with your logs and system information to attach to a bug report.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save diagnostics…</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Help</source>
@@ -18958,6 +18966,18 @@ If playback stutters, try another.</source>
     <message>
         <source>Vibrate on taps, snaps, and edits. Uses this device’s own haptic effects when it has them.</source>
         <translation>Вибрация при нажатиях, привязке и монтаже. Используются встроенные тактильные эффекты устройства, если они есть.</translation>
+    </message>
+    <message>
+        <source>Privacy</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Send crash reports automatically</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>After a crash, send the error details, a short scrubbed log and your system and graphics information to help fix it. No project files or media.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Storage</source>
@@ -20395,14 +20415,6 @@ If playback stutters, try another.</source>
     <message>
         <source>No shapes match “%1”.</source>
         <translation>Нет фигур по запросу «%1».</translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star shapes to save them here.</source>
-        <translation>Избранных фигур пока нет. Отметьте фигуры звёздочкой, чтобы сохранить их здесь.</translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>В этой категории ничего нет.</translation>
     </message>
 </context>
 <context>
@@ -22238,24 +22250,8 @@ If playback stutters, try another.</source>
         <translation>Нет стикеров по запросу «%1»</translation>
     </message>
     <message>
-        <source>No favorites yet</source>
-        <translation>В избранном пока ничего нет</translation>
-    </message>
-    <message>
-        <source>Nothing in this category</source>
-        <translation>В этой категории ничего нет</translation>
-    </message>
-    <message>
         <source>Try a different name.</source>
         <translation>Попробуйте другое название.</translation>
-    </message>
-    <message>
-        <source>Star stickers to save them here.</source>
-        <translation>Отмечайте стикеры звёздочкой, чтобы сохранять их здесь.</translation>
-    </message>
-    <message>
-        <source>Pick another category.</source>
-        <translation>Выберите другую категорию.</translation>
     </message>
 </context>
 <context>
@@ -26748,44 +26744,8 @@ If playback stutters, try another.</source>
         <translation type="unfinished">Нет переходов по запросу «%1»</translation>
     </message>
     <message>
-        <source>No custom transitions yet</source>
-        <translation type="unfinished">Пользовательских переходов пока нет</translation>
-    </message>
-    <message>
-        <source>No favorites yet</source>
-        <translation type="unfinished">В избранном пока ничего нет</translation>
-    </message>
-    <message>
-        <source>No recent transitions</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Nothing in this category</source>
-        <translation type="unfinished">В этой категории ничего нет</translation>
-    </message>
-    <message>
         <source>Try a different name.</source>
         <translation type="unfinished">Попробуйте другое название.</translation>
-    </message>
-    <message>
-        <source>Import a .driftfx or zip made in Drift Forge to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Star transitions to save them here.</source>
-        <translation type="unfinished">Отмечайте переходы звёздочкой, чтобы сохранять их здесь.</translation>
-    </message>
-    <message>
-        <source>Transitions you add show up here.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Pick another category.</source>
-        <translation type="unfinished">Выберите другую категорию.</translation>
-    </message>
-    <message>
-        <source>Import</source>
-        <translation type="unfinished">Импорт</translation>
     </message>
 </context>
 <context>
@@ -28342,6 +28302,37 @@ If playback stutters, try another.</source>
     <message>
         <source>Holographic</source>
         <translation>Голографический</translation>
+    </message>
+</context>
+<context>
+    <name>drift::crash</name>
+    <message>
+        <source>Drift ran out of memory. Close other programs, or work with smaller or lower-resolution media.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A Windows component Drift depends on looks out of date. Update the Microsoft Visual C++ Redistributable.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Download the Visual C++ Redistributable</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The graphics driver stopped responding. Update your graphics driver, or try another graphics backend in Settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>An add-on crashed. Try disabling or reinstalling your add-ons.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The add-on &quot;%1&quot; crashed. Try updating or reinstalling it.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift closed unexpectedly.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

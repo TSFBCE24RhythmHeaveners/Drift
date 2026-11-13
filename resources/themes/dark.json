@@ -1946,6 +1946,10 @@
     "effectsHueParam": {
       "foregroundMuted": "$semantic.mutedForeground"
     },
+    "effectsMaskSection": {
+      "foregroundMuted": "$semantic.mutedForeground",
+      "warning": "$semantic.warning"
+    },
     "effectsOccludeSection": {
       "foregroundMuted": "$semantic.mutedForeground"
     },
@@ -3329,6 +3333,13 @@
     "assetCategoryChips": {
       "divider": "$semantic.panel.border",
       "dividerWidth": "$metrics.borderWidth"
+    },
+    "sectionedAssetGrid": {
+      "headerBackground": "$semantic.panel.accent",
+      "headerBorder": "$semantic.panel.border",
+      "headerBorderWidth": "$metrics.borderWidth",
+      "headerForeground": "$semantic.panel.foreground",
+      "headerRadius": "$metrics.radius.sm"
     },
     "assetsPanel": {
       "background": "$semantic.surface.panel",

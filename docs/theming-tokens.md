@@ -1423,6 +1423,8 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | effectsFileParam | destructive | $semantic.destructive | $semantic.destructive |
 | effectsFileParam | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | effectsHueParam | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| effectsMaskSection | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
+| effectsMaskSection | warning | $semantic.warning | $semantic.warning |
 | effectsOccludeSection | foregroundMuted | $semantic.mutedForeground | $semantic.mutedForeground |
 | effectsParamGroupHeader | backgroundHover | $semantic.panel.accent | $semantic.panel.accent |
 | effectsParamGroupHeader | foreground | $semantic.panel.foreground | $semantic.panel.foreground |
@@ -2351,6 +2353,11 @@ Values are the document text. `$palette` and `$semantic` references are unresolv
 | scrollStrip | fade | $semantic.surface.panel | $semantic.surface.panel |
 | assetCategoryChips | divider | $semantic.panel.border | $semantic.panel.border |
 | assetCategoryChips | dividerWidth | $metrics.borderWidth | $metrics.borderWidth |
+| sectionedAssetGrid | headerBackground | $semantic.panel.accent | $semantic.panel.accent |
+| sectionedAssetGrid | headerBorder | $semantic.panel.border | $semantic.panel.border |
+| sectionedAssetGrid | headerBorderWidth | $metrics.borderWidth | $metrics.borderWidth |
+| sectionedAssetGrid | headerForeground | $semantic.panel.foreground | $semantic.panel.foreground |
+| sectionedAssetGrid | headerRadius | $metrics.radius.sm | $metrics.radius.sm |
 | assetsPanel | background | $semantic.surface.panel | $semantic.surface.panel |
 | assetsPanel | border | $semantic.panel.border | $semantic.panel.border |
 | assetsPanel | borderWidth | $metrics.borderWidth | $metrics.borderWidth |

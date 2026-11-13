@@ -21,7 +21,10 @@
 #include "app/online/addons/AddonManager.h"
 #include "app/bin/AssetLibrary.h"
 #include "app/editor/EditorState.h"
+#include "app/crash/CrashReporter.h"
+#include "app/platform/CrashHandler.h"
 #include "app/platform/FileDialogs.h"
+#include "engine/addons/AddonRegistry.h"
 #include "app/platform/Haptics.h"
 #include "app/platform/PointerDevices.h"
 #include "app/platform/PrimaryDisplay.h"
@@ -140,6 +143,11 @@ extern "C" {
 #include <libavutil/log.h>
 }
 
+#if defined(DRIFT_HAS_CRASH_HANDLER) && !defined(Q_OS_WIN)
+#include <cstdio>
+#include <unistd.h>
+#endif
+
 #ifdef Q_OS_WIN
 // Exports NVIDIA Optimus and AMD PowerXpress look up in the executable: 1 asks for the discrete
 // GPU. Variables rather than constants so main() can set them from the stored preference before
@@ -153,7 +161,7 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 0;
 
 namespace {
 
-#ifdef Q_OS_WIN
+#ifdef DRIFT_HAS_CRASH_HANDLER
 // A GUI process on Windows has no console, so when Drift dies or never shows a window the user
 // has nothing to attach to a report (#475). Every launch writes logs/drift.log under the app's
 // local data folder and keeps the launch before it as drift.prev.log. Splash steps go in
@@ -179,6 +187,7 @@ void startupLogHandler(QtMsgType type, const QMessageLogContext &context, const 
         g_previousHandler(type, context, message);
 }
 
+#ifdef Q_OS_WIN
 // Nothing in Qt sees an access violation, so without this a crash leaves the log ending at the
 // last splash step with no word on why.
 LONG WINAPI logUnhandledException(EXCEPTION_POINTERS *info)
@@ -203,6 +212,7 @@ LONG WINAPI logUnhandledException(EXCEPTION_POINTERS *info)
     std::fflush(g_startupLog);
     return EXCEPTION_CONTINUE_SEARCH;
 }
+#endif
 
 // Needs the application names, which pick the folder.
 void openStartupLog()
@@ -217,18 +227,39 @@ void openStartupLog()
     // by the pid in each launch's header.
     QFile::remove(previous);
     QFile::rename(path, previous);
+#ifdef Q_OS_WIN
     g_startupLog = _wfsopen(reinterpret_cast<const wchar_t *>(QDir::toNativeSeparators(path).utf16()),
                             L"ab", _SH_DENYNO);
+#else
+    g_startupLog = std::fopen(QFile::encodeName(path).constData(), "ab");
+#endif
     if (!g_startupLog)
         return;
+#ifdef Q_OS_WIN
+    const qint64 pid = qint64(GetCurrentProcessId());
+#else
+    const qint64 pid = qint64(getpid());
+    drift::crash::setCrashLogFd(fileno(g_startupLog));
+#endif
     writeStartupLog(QByteArray("Drift " DRIFT_VERSION ", pid ")
-                    + QByteArray::number(qint64(GetCurrentProcessId())) + ", "
+                    + QByteArray::number(pid) + ", "
                     + QSysInfo::prettyProductName().toUtf8() + ", "
                     + QDateTime::currentDateTime().toString(Qt::ISODate).toUtf8());
     g_previousHandler = qInstallMessageHandler(startupLogHandler);
+#ifdef Q_OS_WIN
     SetUnhandledExceptionFilter(logUnhandledException);
+#endif
 }
 #endif
+
+bool hasArgument(int argc, char *argv[], const char *name)
+{
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], name) == 0)
+            return true;
+    }
+    return false;
+}
 
 bool verboseLoggingRequested(int argc, char *argv[])
 {
@@ -697,9 +728,15 @@ int main(int argc, char *argv[])
     // must be in the environment before QApplication is constructed.
     QCoreApplication::setApplicationName("CutWire Drift");
     QCoreApplication::setOrganizationName("CutWire Drift");
-#ifdef Q_OS_WIN
+#ifdef DRIFT_HAS_CRASH_HANDLER
     openStartupLog();
+    drift::crash::installCrashHandler(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+                                      + QStringLiteral("/crashes"));
 #endif
+    // Offered after an unclean exit: the default graphics API (see GraphicsApiChoice) and no
+    // addons, for this run only.
+    if (hasArgument(argc, argv, "--safe-mode"))
+        drift::addon::setSafeMode(true);
     // Reads QSettings, so after the names. Qt Quick stays on OpenGL with a global share context
     // unless the user picked another API in Settings; see GraphicsApiChoice.h.
     [[maybe_unused]] const bool graphicsApiGuarded = drift::graphics::applyAtStartup(argc, argv);
@@ -806,7 +843,7 @@ int main(int argc, char *argv[])
     }
 #endif
     const auto step = [splash](const QString &status, double progress) {
-#ifdef Q_OS_WIN
+#ifdef DRIFT_HAS_CRASH_HANDLER
         writeStartupLog("step: " + status.toUtf8());
 #endif
         if (splash)
@@ -891,6 +928,7 @@ int main(int argc, char *argv[])
     static ProceduralEditorController proceduralEditor(&editorState);
     static drift::Haptics haptics;
     static drift::PointerDevices pointerDevices;
+    static CrashReporter crashReporter;
     editorState.setAddonManager(&addonManager);
     static MarketServices market(assetLibrary, editorState, addonManager);
     editorState.setMarketplace(market.context());
@@ -919,6 +957,7 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("Drift", 1, 0, "SearchIndex", &searchIndex);
     qmlRegisterSingletonInstance("Drift", 1, 0, "Haptics", &haptics);
     qmlRegisterSingletonInstance("Drift", 1, 0, "PointerDevices", &pointerDevices);
+    qmlRegisterSingletonInstance("Drift", 1, 0, "CrashReports", &crashReporter);
     // QML_ELEMENT on ThemeManager is recorded in qml_register_types_Drift(), and
     // that callback runs only when an import is the first thing to touch the
     // Drift URI. The registrations above create the module first, so the
@@ -1107,32 +1146,54 @@ int main(int argc, char *argv[])
         hookWindow(windowOf(engine.rootObjects().constLast()), first, true);
     };
 
-    if (showSetup) {
+    const auto startEditor = [&](bool first) {
+        if (showSetup) {
+            step(StartupSplash::tr("Building the interface…"), 0.5);
+            engine.setInitialProperties({{QStringLiteral("shellPreference"), resolvedShell}});
+            engine.loadFromModule("Drift", "QuickSetup");
+            QObject *setupRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constLast();
+            step(StartupSplash::tr("Opening setup…"), 1.0);
+            hookWindow(windowOf(setupRoot), first, false);
+            QObject::connect(editorState.preferences(), &PreferencesController::quickSetupCompleted, &app,
+                             [loadShell, setupRoot] {
+                PreferencesController *prefs = editorState.preferences();
+                if (prefs->uiScaleNeedsRestart() && prefs->canRestart()) {
+                    prefs->restartApp();
+                    QCoreApplication::quit();
+                    return;
+                }
+                loadShell(false);
+                if (auto *setupWindow = qobject_cast<QQuickWindow *>(setupRoot)) {
+                    setupWindow->close();
+                    setupWindow->deleteLater();
+                }
+            }, Qt::QueuedConnection);
+        } else {
+            step(StartupSplash::tr("Building the interface…"), 0.5);
+            loadShell(first);
+            step(StartupSplash::tr("Opening the editor…"), 1.0);
+        }
+    };
+
+#ifdef DRIFT_HAS_CRASH_HANDLER
+    crashReporter.begin();
+#endif
+    if (crashReporter.startupKind() != QLatin1String("none")) {
         step(StartupSplash::tr("Building the interface…"), 0.5);
-        engine.setInitialProperties({{QStringLiteral("shellPreference"), resolvedShell}});
-        engine.loadFromModule("Drift", "QuickSetup");
-        QObject *setupRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
-        step(StartupSplash::tr("Opening setup…"), 1.0);
-        hookWindow(windowOf(setupRoot), true, false);
-        QObject::connect(editorState.preferences(), &PreferencesController::quickSetupCompleted, &app,
-                         [loadShell, setupRoot] {
-            PreferencesController *prefs = editorState.preferences();
-            if (prefs->uiScaleNeedsRestart() && prefs->canRestart()) {
-                prefs->restartApp();
-                QCoreApplication::quit();
-                return;
-            }
-            loadShell(false);
-            if (auto *setupWindow = qobject_cast<QQuickWindow *>(setupRoot)) {
-                setupWindow->close();
-                setupWindow->deleteLater();
+        engine.loadFromModule("Drift", "CrashReport");
+        QObject *crashRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constLast();
+        hookWindow(windowOf(crashRoot), true, false);
+        QObject::connect(&crashReporter, &CrashReporter::dismissed, &app, [startEditor, windowOf, crashRoot] {
+            startEditor(false);
+            if (auto *crashWindow = windowOf(crashRoot)) {
+                crashWindow->close();
+                crashWindow->deleteLater();
             }
         }, Qt::QueuedConnection);
     } else {
-        step(StartupSplash::tr("Building the interface…"), 0.5);
-        loadShell(true);
-        step(StartupSplash::tr("Opening the editor…"), 1.0);
+        startEditor(true);
     }
+    QMetaObject::invokeMethod(&crashReporter, &CrashReporter::startUploads, Qt::QueuedConnection);
     drift::perf::install();
     if (drift::perf::enabled()) {
         // Frame pacing: the interval between swaps is the frame time the user sees. Windows are

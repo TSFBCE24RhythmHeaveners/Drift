@@ -4341,10 +4341,6 @@
         <translation>변환이 초기화됨</translation>
     </message>
     <message>
-        <source>Motion blur follows one clip&apos;s movement, so it goes on a clip, not on an adjustment layer.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Depth effects read one clip&apos;s depth, so they go on a clip, not on an adjustment layer.</source>
         <translation>깊이 효과는 한 클립의 깊이 데이터를 읽으므로 보정 레이어가 아닌 클립에 적용합니다.</translation>
     </message>
@@ -5012,6 +5008,10 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Save diagnostics…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Settings…</source>
         <translation>설정…</translation>
     </message>
@@ -5023,16 +5023,8 @@
 <context>
     <name>AssetCategoryChips</name>
     <message>
-        <source>My Effects</source>
-        <translation>내 효과</translation>
-    </message>
-    <message>
         <source>Favorites</source>
         <translation>즐겨찾기</translation>
-    </message>
-    <message>
-        <source>Recent</source>
-        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -5569,36 +5561,12 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Nothing here yet. Import a .driftfx or a Drift Forge zip to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Import a .driftfx or zip made in Drift Forge to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>My Audio Effects</source>
         <translation>내 오디오 효과</translation>
     </message>
     <message>
         <source>No audio effects match “%1”.</source>
         <translation>“%1”과(와) 일치하는 오디오 효과가 없습니다.</translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star presets to save them here.</source>
-        <translation>아직 즐겨찾기가 없습니다. 프리셋에 별표를 표시하여 여기에 저장하세요.</translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>이 카테고리에는 항목이 없습니다.</translation>
-    </message>
-    <message>
-        <source>%1 is empty</source>
-        <translation>%1이(가) 비어 있습니다</translation>
-    </message>
-    <message>
-        <source>Import</source>
-        <translation>가져오기</translation>
     </message>
 </context>
 <context>
@@ -7130,6 +7098,52 @@
     </message>
 </context>
 <context>
+    <name>CrashReport</name>
+    <message>
+        <source>Drift closed unexpectedly</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift did not close properly</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift did not close properly last time. If it keeps happening, you can start in safe mode, which uses the default graphics backend and loads no add-ons for this session.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A report was sent to help fix this. You can turn this off in Settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save crash file…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Start in safe mode</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Continue</source>
+        <translation type="unfinished">계속</translation>
+    </message>
+</context>
+<context>
+    <name>CrashReporter</name>
+    <message>
+        <source>Choose where to save the file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Saved to %1</source>
+        <translation type="unfinished">%1에 저장됨</translation>
+    </message>
+    <message>
+        <source>Could not save the file: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>CropOverlay</name>
     <message>
         <source>Fit view</source>
@@ -8348,18 +8362,6 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Nothing here yet. Import a .driftfx or a Drift Forge zip to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Import a .driftfx or zip made in Drift Forge to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Import</source>
-        <translation>가져오기</translation>
-    </message>
-    <message>
         <source>Add adjustment layer — click, or drag it onto a track</source>
         <translation>조정 레이어 추가 — 클릭하거나 트랙으로 드래그하세요</translation>
     </message>
@@ -8370,18 +8372,6 @@
     <message>
         <source>No effects match “%1”.</source>
         <translation>“%1”과(와) 일치하는 효과가 없습니다.</translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star presets to save them here.</source>
-        <translation>아직 즐겨찾기가 없습니다. 프리셋에 별표를 표시하여 여기에 저장하세요.</translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>이 카테고리에는 항목이 없습니다.</translation>
-    </message>
-    <message>
-        <source>%1 is empty</source>
-        <translation>%1이(가) 비어 있습니다</translation>
     </message>
     <message>
         <source>Delete effect</source>
@@ -8587,14 +8577,6 @@
     <message>
         <source>No templates match “%1”.</source>
         <translation>“%1”과(와) 일치하는 템플릿이 없습니다.</translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star templates to save them here.</source>
-        <translation>아직 즐겨찾기가 없습니다. 템플릿에 별표를 표시하여 여기에 저장하세요.</translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>이 카테고리에는 항목이 없습니다.</translation>
     </message>
 </context>
 <context>
@@ -8935,6 +8917,21 @@
     <message>
         <source>LUT files (*.cube)</source>
         <translation>LUT 파일 (*.cube)</translation>
+    </message>
+</context>
+<context>
+    <name>EffectsMaskSection</name>
+    <message>
+        <source>This effect needs a mask.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add new mask</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cutout subject</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -11634,26 +11631,6 @@
     <message>
         <source>No LUTs match “%1”.</source>
         <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star LUTs to save them here.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>이 카테고리에는 항목이 없습니다.</translation>
-    </message>
-    <message>
-        <source>%1 is empty</source>
-        <translation>%1이(가) 비어 있습니다</translation>
-    </message>
-    <message>
-        <source>Import a .cube file to add your own.</source>
-        <translation>직접 추가하려면 .cube 파일을 가져오세요.</translation>
-    </message>
-    <message>
-        <source>Import</source>
-        <translation>가져오기</translation>
     </message>
     <message>
         <source>No LUTs</source>
@@ -16969,6 +16946,10 @@ If playback stutters, try another.</source>
         <source>Copy email address</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>If Drift crashes, it sends an error report to help fix it. No project files or media are included. You can turn this off in Settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>QuickSetupMockEditor</name>
@@ -17939,6 +17920,21 @@ If playback stutters, try another.</source>
     </message>
 </context>
 <context>
+    <name>SectionedAssetGrid</name>
+    <message>
+        <source>Mine</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation type="unfinished">즐겨찾기</translation>
+    </message>
+    <message>
+        <source>Recent</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>SegmentationControlColumn</name>
     <message>
         <source>Tap marks the subject, press and hold marks what to exclude. Tap a marker to remove it.</source>
@@ -18179,6 +18175,18 @@ If playback stutters, try another.</source>
     <message>
         <source>Check now</source>
         <translation>지금 확인</translation>
+    </message>
+    <message>
+        <source>Save diagnostics</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Saves an archive with your logs and system information to attach to a bug report.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save diagnostics…</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Help</source>
@@ -18807,6 +18815,18 @@ If playback stutters, try another.</source>
     <message>
         <source>Vibrate on taps, snaps, and edits. Uses this device’s own haptic effects when it has them.</source>
         <translation>탭, 스냅 및 편집 시 진동합니다. 해당 장치에서 지원하는 경우 장치 자체의 햅틱 효과를 사용합니다.</translation>
+    </message>
+    <message>
+        <source>Privacy</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Send crash reports automatically</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>After a crash, send the error details, a short scrubbed log and your system and graphics information to help fix it. No project files or media.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Storage</source>
@@ -20244,14 +20264,6 @@ If playback stutters, try another.</source>
     <message>
         <source>No shapes match “%1”.</source>
         <translation>“%1”과(와) 일치하는 도형이 없습니다.</translation>
-    </message>
-    <message>
-        <source>No favorites yet. Star shapes to save them here.</source>
-        <translation>아직 즐겨찾기가 없습니다. 도형에 별표를 표시하여 여기에 저장하세요.</translation>
-    </message>
-    <message>
-        <source>Nothing in this category.</source>
-        <translation>이 카테고리에는 항목이 없습니다.</translation>
     </message>
 </context>
 <context>
@@ -22082,24 +22094,8 @@ If playback stutters, try another.</source>
         <translation>“%1”과(와) 일치하는 스티커가 없습니다</translation>
     </message>
     <message>
-        <source>No favorites yet</source>
-        <translation>아직 즐겨찾기가 없습니다</translation>
-    </message>
-    <message>
-        <source>Nothing in this category</source>
-        <translation>이 카테고리에는 항목이 없습니다</translation>
-    </message>
-    <message>
         <source>Try a different name.</source>
         <translation>다른 이름을 입력해 보세요.</translation>
-    </message>
-    <message>
-        <source>Star stickers to save them here.</source>
-        <translation>여기에 저장하려면 스티커에 별표를 표시하세요.</translation>
-    </message>
-    <message>
-        <source>Pick another category.</source>
-        <translation>다른 카테고리를 선택하세요.</translation>
     </message>
 </context>
 <context>
@@ -26564,44 +26560,8 @@ If playback stutters, try another.</source>
         <translation type="unfinished">“%1”과(와) 일치하는 전환이 없습니다</translation>
     </message>
     <message>
-        <source>No custom transitions yet</source>
-        <translation type="unfinished">아직 사용자 정의 전환이 없습니다</translation>
-    </message>
-    <message>
-        <source>No favorites yet</source>
-        <translation type="unfinished">아직 즐겨찾기가 없습니다</translation>
-    </message>
-    <message>
-        <source>No recent transitions</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Nothing in this category</source>
-        <translation type="unfinished">이 카테고리에는 항목이 없습니다</translation>
-    </message>
-    <message>
         <source>Try a different name.</source>
         <translation type="unfinished">다른 이름을 입력해 보세요.</translation>
-    </message>
-    <message>
-        <source>Import a .driftfx or zip made in Drift Forge to add your own.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Star transitions to save them here.</source>
-        <translation type="unfinished">전환에 별표를 표시하여 여기에 저장하세요.</translation>
-    </message>
-    <message>
-        <source>Transitions you add show up here.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Pick another category.</source>
-        <translation type="unfinished">다른 카테고리를 선택하세요.</translation>
-    </message>
-    <message>
-        <source>Import</source>
-        <translation type="unfinished">가져오기</translation>
     </message>
 </context>
 <context>
@@ -28154,6 +28114,37 @@ If playback stutters, try another.</source>
     <message>
         <source>Holographic</source>
         <translation>홀로그램</translation>
+    </message>
+</context>
+<context>
+    <name>drift::crash</name>
+    <message>
+        <source>Drift ran out of memory. Close other programs, or work with smaller or lower-resolution media.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A Windows component Drift depends on looks out of date. Update the Microsoft Visual C++ Redistributable.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Download the Visual C++ Redistributable</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The graphics driver stopped responding. Update your graphics driver, or try another graphics backend in Settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>An add-on crashed. Try disabling or reinstalling your add-ons.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The add-on &quot;%1&quot; crashed. Try updating or reinstalling it.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift closed unexpectedly.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

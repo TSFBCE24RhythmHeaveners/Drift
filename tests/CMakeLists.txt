@@ -193,6 +193,7 @@ target_compile_definitions(tst_engine PRIVATE
     # Beauty / makeup packages live in the effects.core addon (drift-addons staging), not the
     # bundled VideoEd/effects tree. Optional so a checkout without the sibling repo still builds.
     DRIFT_TEST_ADDON_EFFECTS_DIR="${CMAKE_SOURCE_DIR}/../drift-addons/staging/effects-core/effects"
+    DRIFT_TEST_TRENDING_EFFECTS_DIR="${CMAKE_SOURCE_DIR}/../drift-addons/staging/effects-trending/effects"
     DRIFT_TEST_TRANSITIONS_DIR="${CMAKE_SOURCE_DIR}/transitions"
     DRIFT_TEST_FONTS_DIR="${CMAKE_SOURCE_DIR}/fonts"
     DRIFT_TEST_EMOJI_FONT_DIR="${CMAKE_SOURCE_DIR}/emoji-fonts"
@@ -344,9 +345,13 @@ target_compile_definitions(tst_mcp PRIVATE DRIFT_VERSION="${PROJECT_VERSION}"
     DRIFT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 qt_add_resources(tst_mcp "procedural_docs"
     PREFIX "/docs"
-    BASE ../docs
-    FILES ../docs/procedural.md
+    BASE "${CMAKE_SOURCE_DIR}/docs"
+    FILES "${CMAKE_SOURCE_DIR}/docs/procedural.md"
 )
+# lupdate parses a source it has no parser for as C++. The exclusion is compared against the
+# source path as written, so the resource is named without "..".
+set_property(TARGET tst_mcp APPEND PROPERTY QT_EXCLUDE_SOURCES_FROM_TRANSLATION
+    "${CMAKE_SOURCE_DIR}/docs/procedural.md")
 add_test(NAME Mcp COMMAND tst_mcp)
 drift_copy_effects(tst_mcp)
 drift_copy_transitions(tst_mcp)
@@ -471,3 +476,23 @@ qt_add_executable(tst_transform3d tst_transform3d.cpp)
 target_include_directories(tst_transform3d PRIVATE ../src)
 target_link_libraries(tst_transform3d PRIVATE Qt6::Test Qt6::Gui driftengine driftcore)
 add_test(NAME Transform3d COMMAND tst_transform3d)
+
+qt_add_executable(tst_crashreport
+    tst_crashreport.cpp
+    ../src/app/crash/CrashBundle.cpp
+    ../src/app/crash/CrashMeta.cpp
+    ../src/app/crash/CrashReason.cpp
+    ../src/app/crash/CrashStore.cpp
+    ../src/app/crash/LogScrubber.cpp)
+target_include_directories(tst_crashreport PRIVATE ../src)
+target_link_libraries(tst_crashreport PRIVATE Qt6::Test Qt6::Core driftcore ${DRIFT_ZSTD_TARGET})
+add_test(NAME CrashReport COMMAND tst_crashreport)
+
+if(UNIX AND NOT ANDROID AND NOT EMSCRIPTEN)
+    qt_add_executable(tst_crashhandler_posix
+        tst_crashhandler_posix.cpp
+        ../src/app/platform/CrashHandler_posix.cpp)
+    target_include_directories(tst_crashhandler_posix PRIVATE ../src)
+    target_link_libraries(tst_crashhandler_posix PRIVATE Qt6::Test Qt6::Core)
+    add_test(NAME CrashHandlerPosix COMMAND tst_crashhandler_posix)
+endif()

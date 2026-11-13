@@ -883,6 +883,8 @@ add_library(driftengine STATIC
     src/engine/gpu/device/GpuStatus.h
     src/engine/gpu/device/GpuStatus.cpp
     src/engine/decode/hw/VaapiZeroCopy.h
+    src/engine/gpu/effects/FrameHistory.h
+    src/engine/gpu/effects/FrameHistory.cpp
     src/engine/gpu/effects/GpuEffectExecutor.h
     src/engine/gpu/effects/GpuEffectExecutor.cpp
     src/engine/gpu/effects/LookupTextures.h
@@ -1169,6 +1171,19 @@ qt_add_executable(drift
     src/app/editor/SearchIndex.cpp
     src/app/platform/FileDialogs.h
     src/app/platform/FileDialogs.cpp
+    src/app/platform/CrashHandler.h
+    src/app/crash/CrashBundle.h
+    src/app/crash/CrashBundle.cpp
+    src/app/crash/CrashMeta.h
+    src/app/crash/CrashMeta.cpp
+    src/app/crash/CrashReason.h
+    src/app/crash/CrashReason.cpp
+    src/app/crash/CrashReporter.h
+    src/app/crash/CrashReporter.cpp
+    src/app/crash/CrashStore.h
+    src/app/crash/CrashStore.cpp
+    src/app/crash/LogScrubber.h
+    src/app/crash/LogScrubber.cpp
     src/app/platform/Haptics.h
     src/app/platform/Haptics.cpp
     src/app/platform/PointerDevices.h
@@ -1433,13 +1448,17 @@ endif()
 
 # Windows needs the icon embedded in the PE resource section for Explorer and
 # the taskbar; setWindowIcon alone is not enough for the .exe identity.
+if(UNIX AND NOT ANDROID AND NOT EMSCRIPTEN)
+    target_sources(drift PRIVATE src/app/platform/CrashHandler_posix.cpp)
+endif()
 if(WIN32)
     # qt_add_executable() forwards to add_executable() without WIN32, so the linker defaults to the
     # console subsystem and Windows opens a console window before the GUI comes up. Qt6::EntryPoint
     # (linked in by Qt6::Core) supplies the WinMain that forwards to main().
     set_target_properties(drift PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_sources(drift PRIVATE resources/windows/drift.rc src/app/platform/PrimaryDisplay_win.cpp)
-    target_link_libraries(drift PRIVATE shcore)
+    target_sources(drift PRIVATE resources/windows/drift.rc src/app/platform/PrimaryDisplay_win.cpp
+        src/app/platform/CrashHandler_win.cpp)
+    target_link_libraries(drift PRIVATE shcore dbghelp version)
     set_source_files_properties(resources/windows/drift.rc PROPERTIES
         OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/resources/windows/drift.ico")
 endif()
@@ -1614,6 +1633,8 @@ qt_add_resources(drift "drift_procedural_docs"
     BASE docs
     FILES docs/procedural.md
 )
+# A resource file is a target source, and lupdate parses a source it has no parser for as C++.
+set_property(TARGET drift APPEND PROPERTY QT_EXCLUDE_SOURCES_FROM_TRANSLATION docs/procedural.md)
 
 qt_add_resources(drift "drift_search_index"
     PREFIX "/"
@@ -1686,6 +1707,7 @@ qt_add_qml_module(drift
     QML_FILES
         src/qml/Shell.qml
         src/qml/QuickSetup.qml
+        src/qml/CrashReport.qml
         src/qml/LayoutPresets.qml
         src/qml/MediaImport.qml
         src/qml/Main.qml
@@ -1867,6 +1889,7 @@ qt_add_qml_module(drift
         src/qml/components/properties/EffectsCurveParam.qml
         src/qml/components/properties/EffectsLookParam.qml
         src/qml/components/properties/EffectsFaceSection.qml
+        src/qml/components/properties/EffectsMaskSection.qml
         src/qml/components/properties/EffectsFaceIndexParam.qml
         src/qml/components/properties/EffectsEnumParam.qml
         src/qml/components/properties/EffectsEffectHeader.qml
@@ -1912,6 +1935,7 @@ qt_add_qml_module(drift
         src/qml/components/assets/StockThumb.qml
         src/qml/components/assets/BinBreadcrumb.qml
         src/qml/components/assets/AssetCategoryChips.qml
+        src/qml/components/assets/SectionedAssetGrid.qml
         src/qml/components/assets/EffectStacksSection.qml
         src/qml/components/assets/AssetFavoriteButton.qml
         src/qml/components/assets/AssetQuickAddButton.qml
@@ -2195,6 +2219,7 @@ qt_add_qml_module(drift
         src/qml/components/shell/PanelSplitHandle.qml
         src/qml/components/ClipFilmstrip.qml
         src/qml/components/controls/AppScrollBar.qml
+        src/qml/components/controls/KineticWheel.qml
         src/qml/components/KeyframeDiamond.qml
         src/qml/components/ChannelKeyButton.qml
         src/qml/components/Vec2Param.qml
@@ -2637,6 +2662,7 @@ target_link_libraries(drift PRIVATE
     driftapp
     driftcore
     driftengine
+    ${DRIFT_ZSTD_TARGET}
 )
 target_include_directories(drift PRIVATE src)
 # qmltyperegistrar emits bare-basename includes (<ThemeManager.h>) for the qml module's headers.
@@ -2772,7 +2798,7 @@ file(GLOB DRIFT_MCP_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/app/mcp/tools/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/app/mcp/tools/*.h")
 if(DRIFT_MCP_SOURCES)
-    set_source_files_properties(${DRIFT_MCP_SOURCES} PROPERTIES QT_EXCLUDE_FROM_TRANSLATION ON)
+    set_property(TARGET drift APPEND PROPERTY QT_EXCLUDE_SOURCES_FROM_TRANSLATION ${DRIFT_MCP_SOURCES})
 endif()
 
 if(Qt6LinguistTools_FOUND)
