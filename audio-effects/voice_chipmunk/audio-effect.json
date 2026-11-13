@@ -13,7 +13,7 @@
       "identifier": "pitch",
       "displayName": "Pitch",
       "type": "float",
-      "minValue": 1.05,
+      "minValue": 1.0,
       "maxValue": 2.0,
       "defaultValue": 1.5
     }
