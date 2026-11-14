@@ -60,8 +60,7 @@ public:
         LoopRole,
         LoopPeriodRole,
         LoopPhaseRole,
-        HiddenInLaneRole,
-        FxLayerRole,
+        EnabledRole,
     };
     Q_ENUM(Role)
 
@@ -98,11 +97,7 @@ public:
         bool loop = false;
         double loopPeriod = 0.0;
         double loopPhase = 0.0;
-        // An adjustment tucked out of its lane (not drawn, not hit-tested).
-        bool hiddenInLane = false;
-        // On a media clip, its linked effects layer: 0 none with effects, 1 tucked away, 2 shown
-        // in the lane.
-        int fxLayer = 0;
+        bool enabled = true;
 
         // Not roles: typed copies for the scene-graph renderer, derived from the fields above so
         // any change to them already arrives as a changed row.

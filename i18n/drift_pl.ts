@@ -647,6 +647,14 @@
         <translation>Zanikanie</translation>
     </message>
     <message>
+        <source>Enable</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Disable</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Speed</source>
         <translation>Prędkość</translation>
     </message>
@@ -2296,6 +2304,17 @@
     </message>
 </context>
 <context>
+    <name>AndroidTimelineTrimNudge</name>
+    <message>
+        <source>In</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Out</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>AndroidToolPage</name>
     <message>
         <source>Cancel</source>
@@ -2605,6 +2624,10 @@
         <translation>Połącz klipy</translation>
     </message>
     <message>
+        <source>Enable or disable selected clips</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Clear selection</source>
         <translation>Wyczyść zaznaczenie</translation>
     </message>
@@ -2753,6 +2776,10 @@
         <translation>Klip usunięty</translation>
     </message>
     <message>
+        <source>No space to place the clip there</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>A clip can&apos;t completely cover another</source>
         <translation>Klip nie może całkowicie pokrywać innego</translation>
     </message>
@@ -2783,6 +2810,10 @@
     <message>
         <source>Split right</source>
         <translation>Podziel na prawo</translation>
+    </message>
+    <message>
+        <source>Trim clip</source>
+        <translation type="unfinished">Przytnij klip</translation>
     </message>
     <message>
         <source>Trim updated</source>
@@ -3369,22 +3400,6 @@
         <translation>Odłączono korektę</translation>
     </message>
     <message>
-        <source>Hide effects layer</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Show effects layer</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Effects layer hidden</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Effects layer shown</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Link adjustment to clip</source>
         <translation>Połącz korektę z klipem</translation>
     </message>
@@ -3663,6 +3678,22 @@
     <message>
         <source>Clip flip updated</source>
         <translation>Zaktualizowano odbicie klipu</translation>
+    </message>
+    <message>
+        <source>Enable clips</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Disable clips</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips enabled</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clips disabled</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Pan changed</source>
@@ -7156,15 +7187,15 @@
 <context>
     <name>CrashReport</name>
     <message>
-        <source>Drift closed unexpectedly</source>
+        <source>Drift crashed the last time it ran</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drift did not close properly</source>
+        <source>Drift did not close properly last time</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drift did not close properly last time. If it keeps happening, you can start in safe mode, which uses the default graphics backend and loads no add-ons for this session.</source>
+        <source>If it keeps happening, you can start in safe mode, which uses the default graphics backend and loads no add-ons for this session.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -24367,6 +24398,14 @@ Jeśli odtwarzanie się zacina, spróbuj innego.</translation>
         <translation>Oddziel wszystkie ścieżki audio</translation>
     </message>
     <message>
+        <source>Enable clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Disable clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Stop looping</source>
         <translation type="unfinished"></translation>
     </message>
@@ -24534,6 +24573,10 @@ Jeśli odtwarzanie się zacina, spróbuj innego.</translation>
 </context>
 <context>
     <name>TimelineFadeHandle</name>
+    <message>
+        <source>%1s</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <source>Adjust fade</source>
         <translation>Dostosuj zanikanie</translation>
@@ -25071,6 +25114,14 @@ Jeśli odtwarzanie się zacina, spróbuj innego.</translation>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Effect</source>
+        <translation type="unfinished">Efekt</translation>
+    </message>
+    <message>
+        <source>%1 (off)</source>
+        <translation type="unfinished">%1 (wył.)</translation>
+    </message>
+    <message>
         <source>Audio adjustment</source>
         <translation>Korekta audio</translation>
     </message>
@@ -25089,14 +25140,6 @@ Jeśli odtwarzanie się zacina, spróbuj innego.</translation>
     <message>
         <source>Subtitles</source>
         <translation>Napisy</translation>
-    </message>
-    <message>
-        <source>Hide the effects layer</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Show the effects layer</source>
-        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1, track %2</source>
@@ -28332,7 +28375,7 @@ Jeśli odtwarzanie się zacina, spróbuj innego.</translation>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drift closed unexpectedly.</source>
+        <source>Drift closed unexpectedly during your last session.</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

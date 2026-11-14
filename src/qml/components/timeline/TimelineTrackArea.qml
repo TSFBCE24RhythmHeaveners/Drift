@@ -15,6 +15,8 @@ Item {
     property int trackIndex: -1
     property var viewState
     property bool touchMode: false
+    // Off for a hidden effect lane, which stripes itself as a whole.
+    property bool dimHidden: true
     readonly property bool dragging: renderer.dragging
 
     readonly property var trackData: panel && panel.tracks && trackIndex >= 0
@@ -33,6 +35,8 @@ Item {
         trackType: area.trackData.type || ""
         clipDisplay: area.trackData.clipDisplay !== undefined ? area.trackData.clipDisplay : 1
         showChannelWaveforms: area.trackData.showChannelWaveforms === true
+        trackDimmed: area.dimHidden && (area.trackData.hidden === true
+                     || (area.trackData.type === "audio" && area.trackData.muted === true))
         editor: EditorState
         assets: AssetLibrary
         haptics: Haptics
@@ -53,7 +57,6 @@ Item {
                                              rect.y + rect.height / 2)
             const targetTrack = area.panel.trackIndexAtY(pos.y)
             const effTrack = targetTrack >= 0 ? targetTrack : area.trackIndex
-            area.updateLayerHideHighlight(clipIndex, effTrack, desired + info.duration / 2, pos.y)
             if (Math.abs(desired - area.lastPreviewDesired) * area.panel.pxPerSecond >= 1
                     || effTrack !== area.lastPreviewTrack) {
                 area.lastPreviewDesired = desired
@@ -62,7 +65,6 @@ Item {
             }
         }
         onMoveCanceled: {
-            area.clearLayerHideHighlight()
             area.panel.clearMoveFollow()
             area.panel.clearLandingPreview()
             area.lastPreviewDesired = -1
@@ -77,36 +79,11 @@ Item {
         }
     }
 
-    // Holding a revealed effects layer over its own clip lights that clip: dropping it there tucks
-    // the layer away again.
-    function updateLayerHideHighlight(originClip, track, centerSeconds, y) {
-        const info = renderer.clipInfo(originClip)
-        let host = -1
-        if (info.kind === "adjustment" && info.adjustmentKind === "videoEffects") {
-            const target = typeof panel.dropTargetAtY === "function" ? panel.dropTargetAtY(y)
-                                                                   : { "track": track, "lane": -1 }
-            if (target.track >= 0 && target.lane < 0)
-                host = EditorState.effectsLayerHostClip(area.trackIndex, originClip, target.track, centerSeconds)
-        }
-        if (host >= 0) {
-            panel.effectDropTrackIndex = track
-            panel.effectDropClipIndex = host
-        } else {
-            clearLayerHideHighlight()
-        }
-    }
-
-    function clearLayerHideHighlight() {
-        if (typeof panel.clearEffectDropHighlight === "function")
-            panel.clearEffectDropHighlight()
-    }
-
     // Same decision tree the per-clip delegate ran on release, with the indices captured at press.
     function finishMove(originClip, rect) {
         const originTrack = area.trackIndex
         panel.clearMoveFollow()
         panel.clearLandingPreview()
-        clearLayerHideHighlight()
         lastPreviewDesired = -1
         lastPreviewTrack = -1
 
@@ -120,12 +97,6 @@ Item {
                      ? panel.dropTargetAtY(pos.y)
                      : { "track": panel.trackIndexAtY(pos.y), "lane": -1 }
         const isAdjustment = info.kind === "adjustment"
-        if (isAdjustment && info.adjustmentKind === "videoEffects" && target.track >= 0 && target.lane < 0
-                && EditorState.effectsLayerHostClip(originTrack, originClip, target.track,
-                                                    newStart + info.duration / 2) >= 0) {
-            EditorState.hideEffectsLayer(originTrack, originClip)
-            return
-        }
         const wasInLane = panel.tracks[originTrack].isAdjustmentLane === true
         // Transform clips live on transform rows only, and nothing else lands on one; the C++
         // side (Track::acceptsClip) refuses the rest too, this just keeps the clip in its row.

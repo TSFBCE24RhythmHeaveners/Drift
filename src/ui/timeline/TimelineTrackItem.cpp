@@ -1,6 +1,7 @@
 #include "ui/timeline/TimelineTrackItem.h"
 
 #include "ui/timeline/ClipThumbnailStore.h"
+#include "ui/timeline/TimelineCursors.h"
 #include "ui/timeline/TimelineViewState.h"
 #include "app/editor/AppController.h"
 #include "app/bin/AssetLibrary.h"
@@ -28,6 +29,7 @@
 #include <QStyleHints>
 #include <QTextLayout>
 
+#include <algorithm>
 #include <cmath>
 
 using timelinelayout::Zone;
@@ -152,15 +154,65 @@ void appendRoundedRect(QVector<Vertex> &out, const QRectF &r, double radius, con
     appendConvex(out, roundedPolygon(r, radius, corners), c, ox);
 }
 
+// Keeps the part of a convex polygon where a*x + b*y <= limit.
+QVector<QPointF> clipHalfPlane(const QVector<QPointF> &poly, double a, double b, double limit)
+{
+    QVector<QPointF> out;
+    const int n = poly.size();
+    for (int i = 0; i < n; ++i) {
+        const QPointF p = poly[i];
+        const QPointF q = poly[(i + 1) % n];
+        const double dp = a * p.x() + b * p.y() - limit;
+        const double dq = a * q.x() + b * q.y() - limit;
+        if (dp <= 0.0)
+            out.append(p);
+        if ((dp < 0.0 && dq > 0.0) || (dp > 0.0 && dq < 0.0))
+            out.append(p + (q - p) * (dp / (dp - dq)));
+    }
+    return out;
+}
+
+// 45 degree stripes (rising to the right) over a rounded rect, each one the exact intersection of
+// a diagonal band with the rect's outline. Anchored to the rect's top-left so they travel with the
+// clip, and cut to [minX, maxX] so a long clip only pays for what is on screen.
+void appendStripes(QVector<Vertex> &out, const QRectF &r, double radius, int corners, const QColor &c,
+                   double ox, double minX, double maxX)
+{
+    constexpr double kSpacing = 8.0;
+    constexpr double kWidth = 3.0;
+    if (r.width() <= 0.0 || r.height() <= 0.0 || c.alpha() == 0)
+        return;
+    QVector<QPointF> poly = clipHalfPlane(roundedPolygon(r, radius, corners), -1.0, 0.0, -minX);
+    poly = clipHalfPlane(poly, 1.0, 0.0, maxX);
+    if (poly.size() < 3)
+        return;
+    double lo = poly[0].x() + poly[0].y();
+    double hi = lo;
+    for (const QPointF &p : std::as_const(poly)) {
+        lo = std::min(lo, p.x() + p.y());
+        hi = std::max(hi, p.x() + p.y());
+    }
+    const double period = kSpacing * M_SQRT2;
+    const double band = kWidth * M_SQRT2;
+    const double origin = r.left() + r.top();
+    for (double k = std::floor((lo - origin) / period); origin + k * period < hi; k += 1.0) {
+        const double c0 = origin + k * period;
+        QVector<QPointF> piece = clipHalfPlane(poly, -1.0, -1.0, -c0);
+        piece = clipHalfPlane(piece, 1.0, 1.0, c0 + band);
+        if (piece.size() >= 3)
+            appendConvex(out, piece, c, ox);
+    }
+}
+
 // A border drawn inside the rect, like a QML Rectangle's.
 void appendOutline(QVector<Vertex> &out, const QRectF &r, double radius, double width,
-                   const QColor &c, double ox)
+                   const QColor &c, double ox, int corners = AllCorners)
 {
     if (width <= 0.0 || r.width() <= 2.0 * width || r.height() <= 2.0 * width)
         return;
-    const QVector<QPointF> o = roundedPolygon(r, radius);
-    const QVector<QPointF> i =
-        roundedPolygon(r.adjusted(width, width, -width, -width), std::max(0.0, radius - width));
+    const QVector<QPointF> o = roundedPolygon(r, radius, corners);
+    const QVector<QPointF> i = roundedPolygon(r.adjusted(width, width, -width, -width),
+                                              std::max(0.0, radius - width), corners);
     if (o.size() != i.size())
         return;
     const int n = o.size();
@@ -188,6 +240,90 @@ void appendStroke(QVector<Vertex> &out, const QVector<QPointF> &pts, double widt
                    vertex(b.x() + nrm.x() - ox, b.y() + nrm.y(), c),
                    vertex(b.x() - nrm.x() - ox, b.y() - nrm.y(), c),
                    vertex(a.x() - nrm.x() - ox, a.y() - nrm.y(), c));
+    }
+}
+
+// A dashed rectangle outline, cut to [minX, maxX] so a long clip only pays for what is on screen.
+void appendDashedOutline(QVector<Vertex> &out, const QRectF &r, double width, const QColor &c,
+                         double ox, double minX, double maxX)
+{
+    constexpr double kDash = 6.0;
+    constexpr double kGap = 4.0;
+    if (r.width() <= 2.0 * width || r.height() <= 2.0 * width)
+        return;
+    const QRectF in = r.adjusted(width / 2.0, width / 2.0, -width / 2.0, -width / 2.0);
+    const auto horizontal = [&](double y) {
+        const double from = std::max(in.left(), minX);
+        const double to = std::min(in.right(), maxX);
+        double x = in.left() + std::floor((from - in.left()) / (kDash + kGap)) * (kDash + kGap);
+        for (; x < to; x += kDash + kGap) {
+            const double a = std::max(x, from);
+            const double b = std::min(x + kDash, to);
+            if (b > a)
+                appendStroke(out, {QPointF(a, y), QPointF(b, y)}, width, c, ox);
+        }
+    };
+    horizontal(in.top());
+    horizontal(in.bottom());
+    for (const double x : {in.left(), in.right()}) {
+        if (x < minX || x > maxX)
+            continue;
+        for (double y = in.top(); y < in.bottom(); y += kDash + kGap)
+            appendStroke(out, {QPointF(x, y), QPointF(x, std::min(y + kDash, in.bottom()))}, width, c, ox);
+    }
+}
+
+// Repeating ">" chevrons, the pattern for a gap between clips: "\" down to the middle, "/" back.
+void appendChevrons(QVector<Vertex> &out, const QRectF &r, double width, const QColor &c, double ox,
+                    double minX, double maxX)
+{
+    const double from = std::max(r.left(), minX);
+    const double to = std::min(r.right(), maxX);
+    const double depth = r.height() / 2.0;
+    if (to <= from || depth < 2.0)
+        return;
+    constexpr double kStep = 8.0;
+    const double mid = r.center().y();
+    // Keeps the part of a segment that lies within [from, to].
+    const auto clipped = [&](QPointF a, QPointF b) {
+        const double lo = std::max(std::min(a.x(), b.x()), from);
+        const double hi = std::min(std::max(a.x(), b.x()), to);
+        if (hi <= lo)
+            return;
+        const auto at = [&](double x) { return QPointF(x, a.y() + (b.y() - a.y()) * (x - a.x()) / (b.x() - a.x())); };
+        appendStroke(out, {at(lo), at(hi)}, width, c, ox);
+    };
+    for (double x = std::floor((from - depth) / kStep) * kStep; x < to; x += kStep) {
+        const QPointF top(x, r.top());
+        const QPointF tip(x + depth, mid);
+        const QPointF bottom(x, r.bottom());
+        if (x >= from && x + depth <= to) {
+            appendStroke(out, {top, tip, bottom}, width, c, ox);
+        } else {
+            clipped(top, tip);
+            clipped(tip, bottom);
+        }
+    }
+}
+
+// A sparse dot grid, the pattern for the empty run before a track's first clip.
+void appendDotGrid(QVector<Vertex> &out, const QRectF &r, const QColor &c, double ox, double minX,
+                   double maxX)
+{
+    constexpr double kStep = 8.0;
+    constexpr double kDot = 1.5;
+    const double from = std::max(r.left(), minX);
+    const double to = std::min(r.right(), maxX);
+    if (to <= from || r.height() < kStep)
+        return;
+    const double top = r.top() + std::fmod(r.height() - kDot, kStep) / 2.0;
+    int row = 0;
+    for (double y = top; y + kDot <= r.bottom(); y += kStep, ++row) {
+        const double shift = row % 2 ? kStep / 2.0 : 0.0;
+        for (double x = std::floor((from - shift) / kStep) * kStep + shift; x + kDot <= to; x += kStep) {
+            if (x >= from)
+                appendRect(out, QRectF(x, y, kDot, kDot), c, ox);
+        }
     }
 }
 
@@ -467,6 +603,15 @@ void TimelineTrackItem::setClipDisplay(int display)
     scheduleRebuild();
 }
 
+void TimelineTrackItem::setTrackDimmed(bool dimmed)
+{
+    if (m_trackDimmed == dimmed)
+        return;
+    m_trackDimmed = dimmed;
+    emit trackChanged();
+    scheduleRebuild();
+}
+
 void TimelineTrackItem::setShowChannelWaveforms(bool show)
 {
     if (m_showChannelWaveforms == show)
@@ -491,6 +636,17 @@ void TimelineTrackItem::setEditor(QObject *editor)
     m_editor = controller;
     if (m_editor) {
         connect(m_editor, &AppController::selectionChanged, this, [this] {
+            QSet<int> selected;
+            if (m_clips) {
+                const int rows = int(m_clips->rows().size());
+                for (int i = 0; i < rows; ++i) {
+                    if (isSelected(i))
+                        selected.insert(i);
+                }
+            }
+            if (selected == m_selectedClips)
+                return;
+            m_selectedClips = selected;
             updateActiveSet();
             scheduleRebuild();
         });
@@ -670,6 +826,8 @@ double TimelineTrackItem::edgeMargin(double clipWidth) const
     if (!m_viewState)
         return 14.0;
     const TimelineViewState::Style &s = m_viewState->styleValues();
+    if (clipWidth < s.clipControlsMinWidth)
+        return 0.0;
     return m_viewState->touchMode() ? std::min(s.edgeMarginTouch, clipWidth / 4.0)
                                     : s.edgeMarginDesktop;
 }
@@ -790,8 +948,34 @@ void TimelineTrackItem::build()
         for (auto it = m_waveCache.begin(); it != m_waveCache.end();)
             it = ids.contains(it.key().section(QLatin1Char('#'), 0, 0)) ? std::next(it) : m_waveCache.erase(it);
     }
+    // Gaps get chevrons and the run before the first clip a dot grid, never diagonal stripes:
+    // those mean "disabled".
+    if (m_trackType != QLatin1String("adjustment")) {
+        QList<QRectF> spans;
+        for (int i = 0; i < rows.size(); ++i) {
+            if ((m_drag.moving && i == m_drag.clipIndex) || rows.at(i).kind == QLatin1String("adjustment"))
+                continue;
+            spans.append(effectiveRect(i));
+        }
+        std::sort(spans.begin(), spans.end(),
+                  [](const QRectF &a, const QRectF &b) { return a.left() < b.left(); });
+        const TimelineViewState::Style &gapStyle = m_viewState->styleValues();
+        if (!spans.isEmpty() && spans.first().left() >= 8.0) {
+            const QRectF lead(0.0, spans.first().top(), spans.first().left(), spans.first().height());
+            appendDotGrid(m_under, lead.adjusted(3.0, 3.0, -3.0, -3.0), gapStyle.gapOutline, m_originX,
+                          m_window.left, m_window.right);
+        }
+        for (int i = 0; i + 1 < spans.size(); ++i) {
+            const QRectF gap = QRectF(spans.at(i).right(), spans.at(i).top(),
+                                      spans.at(i + 1).left() - spans.at(i).right(), spans.at(i).height())
+                                   .adjusted(3.0, 3.0, -3.0, -3.0);
+            if (gap.width() >= 8.0 && m_window.contains(gap.left(), gap.right()))
+                appendChevrons(m_under, gap, 1.2, gapStyle.gapOutline, m_originX, m_window.left,
+                               m_window.right);
+        }
+    }
     for (int i = 0; i < rows.size(); ++i) {
-        if ((m_drag.moving && i == m_drag.clipIndex) || rows.at(i).hiddenInLane)
+        if (m_drag.moving && i == m_drag.clipIndex)
             continue;
         const QRectF rect = effectiveRect(i);
         const bool selected = isSelected(i);
@@ -823,6 +1007,14 @@ void TimelineTrackItem::appendClip(int index, const QRectF &baseRect, bool selec
         rect = QRectF(c.x() - rect.width() * 0.515, c.y() - rect.height() * 0.515,
                       rect.width() * 1.03, rect.height() * 1.03);
     }
+
+    // A layer pinned to a clip hangs off it: squared top, reaching up to the top of its lane so it
+    // sits flush under the clip (or the pinned layer above). A free one keeps its own rounded block.
+    const bool attached = row.kind == QLatin1String("adjustment") && !row.linkedClipId.isEmpty()
+                          && !lifted && !(m_drag.moving && index == m_drag.clipIndex);
+    const int clipCorners = attached ? BottomLeft | BottomRight : AllCorners;
+    if (attached)
+        rect.setTop(std::min(rect.top(), 0.0));
 
     double inPoint = row.inPoint;
     double outPoint = row.outPoint;
@@ -897,7 +1089,7 @@ void TimelineTrackItem::appendClip(int index, const QRectF &baseRect, bool selec
     }
     if (lit)
         base = base.lighter(115);
-    appendRoundedRect(m_under, rect, s.radiusSm, base, ox);
+    appendRoundedRect(m_under, rect, s.radiusSm, base, ox, clipCorners);
     const double clipRadius = std::min(s.radiusSm, std::min(rect.width(), rect.height()) / 2.0);
 
     const bool bandTrack = m_trackType == QLatin1String("video")
@@ -919,7 +1111,7 @@ void TimelineTrackItem::appendClip(int index, const QRectF &baseRect, bool selec
                                           showWaveformBar ? -barHeight : 0.0);
         for (const Pass &p : std::as_const(passes)) {
             const QRectF passBody(p.left, body.top(), p.width, body.height());
-            buildFilmstrip(index, passBody, rect, clipRadius, p.in, p.out);
+            buildFilmstrip(index, passBody, rect, clipRadius, clipCorners, p.in, p.out);
         }
     }
 
@@ -933,12 +1125,12 @@ void TimelineTrackItem::appendClip(int index, const QRectF &baseRect, bool selec
                           showWaveformBar ? barHeight : std::max(0.0, rect.height() - band));
         if (showWaveformBar)
             appendRoundedRect(m_over, area, clipRadius, QColor(0, 0, 0, 89), ox,
-                              BottomLeft | BottomRight);
+                              clipCorners & (BottomLeft | BottomRight));
         for (const Pass &p : std::as_const(passes)) {
             const QRectF passArea(p.left, area.top(), p.width, area.height());
             buildWaveform(index, passArea, p.left, p.width, p.in, p.out, showWaveformBar,
                           looping ? row.id + QLatin1Char('#') + QString::number(p.number) : row.id,
-                          rect.left(), rect.width());
+                          rect.left(), rect.width(), rect, clipRadius, clipCorners);
         }
     }
 
@@ -958,7 +1150,7 @@ void TimelineTrackItem::appendClip(int index, const QRectF &baseRect, bool selec
                            && m_assets->hasProxyForPath(row.path);
         const QRectF bandRect(rect.left(), rect.top(), rect.width(), band);
         appendRoundedRect(m_over, bandRect, clipRadius, proxy ? s.proxyBand : s.scrim, ox,
-                          TopLeft | TopRight);
+                          clipCorners & (TopLeft | TopRight));
 
         QString assetId;
         if (m_assets && !row.path.isEmpty())
@@ -1052,9 +1244,78 @@ void TimelineTrackItem::appendClip(int index, const QRectF &baseRect, bool selec
         }
     }
 
-    if (isAdjustment) {
-        // An adjustment is its stack: it shows the effects it carries, and only names its kind
-        // while it is still empty.
+    // An adjustment is its stack: one chip per effect it carries, as many as fit, and a "+N" for
+    // the rest. Falls through to a plain label when it carries none or the lane is too short.
+    const QVariantList &stack = row.adjustmentKind == QLatin1String("audioEffects") ? row.audioEffects
+                                                                                    : row.effects;
+    const QFont chipFont = labelFont(m_fontFamily, s.fontSizeTiny, true);
+    const QFontMetricsF chipMetrics(chipFont);
+    const double chipH = std::min(rect.height() - 4.0, chipMetrics.height());
+    bool drewChips = false;
+    if (isAdjustment && row.adjustmentKind != QLatin1String("transform") && !stack.isEmpty()
+        && chipH >= chipMetrics.height() * 0.75) {
+        const double gap = 3.0;
+        const double right = rect.right() - 4.0;
+        const double chipTop = rect.center().y() - chipH / 2.0;
+        const auto labelOf = [this](const QVariantMap &fx) {
+            const QString label = fx.value(QStringLiteral("label")).toString();
+            return label.isEmpty() ? tr("Effect") : label;
+        };
+        const auto moreLabel = [](qsizetype count) { return QStringLiteral("+%1").arg(count); };
+        double x = rect.left() + 4.0;
+        int shown = 0;
+        for (; shown < stack.size(); ++shown) {
+            const qsizetype rest = stack.size() - shown - 1;
+            const double reserve =
+                rest > 0 ? chipMetrics.horizontalAdvance(moreLabel(rest)) + s.spacingMd + gap : 0.0;
+            const double w = chipMetrics.horizontalAdvance(labelOf(stack.at(shown).toMap())) + s.spacingMd;
+            if (x + w + reserve > right)
+                break;
+            x += w + gap;
+        }
+        if (shown > 0) {
+            drewChips = true;
+            x = rect.left() + 4.0;
+            QStringList hidden;
+            for (int i = 0; i < stack.size(); ++i) {
+                const QVariantMap fx = stack.at(i).toMap();
+                const QString label = labelOf(fx);
+                const bool enabled = fx.value(QStringLiteral("enabled"), true).toBool();
+                const QString tip = enabled ? label : tr("%1 (off)").arg(label);
+                if (i >= shown) {
+                    hidden.append(tip);
+                    continue;
+                }
+                const QRectF chip(x, chipTop, chipMetrics.horizontalAdvance(label) + s.spacingMd, chipH);
+                QColor fg = s.onMedia;
+                if (enabled) {
+                    appendRoundedRect(m_over, chip, s.radiusXs, s.scrim, ox);
+                } else {
+                    fg.setAlphaF(0.55);
+                    appendStripes(m_over, chip, s.radiusXs, AllCorners, s.disabledStripe, ox, m_window.left,
+                                  m_window.right);
+                }
+                m_labels.append({label,
+                                 QPointF(chip.left() + s.spacingMd / 2.0 - ox,
+                                         chip.center().y() - chipMetrics.height() / 2.0),
+                                 s.fontSizeTiny, fg, true});
+                visual.toolTips.append({chip, tip});
+                x += chip.width() + gap;
+            }
+            if (!hidden.isEmpty()) {
+                const QString more = moreLabel(hidden.size());
+                const QRectF pill(x, chipTop, chipMetrics.horizontalAdvance(more) + s.spacingMd, chipH);
+                m_labels.append({more,
+                                 QPointF(pill.left() + s.spacingMd / 2.0 - ox,
+                                         pill.center().y() - chipMetrics.height() / 2.0),
+                                 s.fontSizeTiny, s.onMedia, true});
+                visual.toolTips.append({pill, hidden.join(QLatin1Char('\n'))});
+            }
+        }
+    }
+
+    if (isAdjustment && !drewChips) {
+        // Names its kind while it is still empty.
         QString text = row.effectsLabel;
         if (text.isEmpty())
             text = row.name;
@@ -1133,32 +1394,18 @@ void TimelineTrackItem::appendClip(int index, const QRectF &baseRect, bool selec
     appendFade(rect.left(), fadeInW, false);
     appendFade(rect.right() - fadeOutW, fadeOutW, true);
 
+    // A clip that is off — disabled itself, or on a hidden or muted track — stays visible but
+    // reads as inert.
+    if (!row.enabled || m_trackDimmed) {
+        appendRoundedRect(m_over, rect, s.radiusSm, s.disabledScrim, ox, clipCorners);
+        appendStripes(m_over, rect, s.radiusSm, clipCorners, s.disabledStripe, ox, m_window.left,
+                      m_window.right);
+    }
+
     // Give adjacent clips a visible edge even when neither is selected.
     QColor clipEdge = s.scrim;
     clipEdge.setAlpha(185);
-    appendOutline(m_over, rect, s.radiusSm, 1.25, clipEdge, ox);
-
-    // --- fx button: the clip's effects layer, shown or tucked away ---------------------------
-    if (!isAdjustment && row.fxLayer > 0) {
-        const QFont fxFont = labelFont(m_fontFamily, s.fontSizeTiny, true);
-        const QFontMetricsF fxMetrics(fxFont);
-        const QString fxText = QStringLiteral("fx");
-        const QSizeF fxSize(fxMetrics.horizontalAdvance(fxText) + s.spacingMd,
-                            fxMetrics.height() + 2.0);
-        const double inset = edgeMargin(rect.width()) + 2.0;
-        if (rect.width() >= fxSize.width() + 2.0 * inset && rect.height() >= fxSize.height() + 4.0) {
-            const QRectF pill(rect.right() - inset - fxSize.width(), rect.bottom() - 2.0 - fxSize.height(),
-                              fxSize.width(), fxSize.height());
-            appendRoundedRect(m_over, pill, s.radiusXs, row.fxLayer == 2 ? s.clipEffect : s.scrim, ox);
-            m_labels.append({fxText,
-                             QPointF(pill.center().x() - fxMetrics.horizontalAdvance(fxText) / 2.0 - ox,
-                                     pill.center().y() - fxMetrics.height() / 2.0),
-                             s.fontSizeTiny, s.onMedia, true});
-            visual.fxRect = pill;
-            visual.toolTips.append({pill, row.fxLayer == 2 ? tr("Hide the effects layer")
-                                                           : tr("Show the effects layer")});
-        }
-    }
+    appendOutline(m_over, rect, s.radiusSm, 1.25, clipEdge, ox, clipCorners);
 
     // --- effect drop and selection -----------------------------------------------------------
     const bool dropTarget = m_viewState->effectDropTrack() == m_trackIndex
@@ -1166,10 +1413,21 @@ void TimelineTrackItem::appendClip(int index, const QRectF &baseRect, bool selec
     if (dropTarget) {
         QColor tint = s.clipEffect;
         tint.setAlphaF(0.28);
-        appendRoundedRect(m_over, rect, s.radiusSm, tint, ox);
-        appendOutline(m_over, rect, s.radiusSm, s.borderWidthFocus, s.clipEffect, ox);
+        appendRoundedRect(m_over, rect, s.radiusSm, tint, ox, clipCorners);
+        appendOutline(m_over, rect, s.radiusSm, s.borderWidthFocus, s.clipEffect, ox, clipCorners);
     } else if (selected) {
-        appendOutline(m_over, rect, s.radiusSm, s.ringWidth, s.primary, ox);
+        appendOutline(m_over, rect, s.radiusSm, s.ringWidth, s.primary, ox, clipCorners);
+    }
+
+    // A ripple trim in progress: this clip is about to be pushed along, and is already drawn at
+    // where it will land.
+    if (!attached && m_viewState->rippleShiftIds().contains(row.id)) {
+        QColor tint = s.primary;
+        tint.setAlphaF(0.2);
+        appendRoundedRect(m_over, rect, s.radiusSm, tint, ox, clipCorners);
+        QColor dash = s.primary;
+        dash.setAlphaF(0.9);
+        appendDashedOutline(m_over, rect, 1.5, dash, ox, m_window.left, m_window.right);
     }
 
     m_visible.append(visual);
@@ -1177,7 +1435,8 @@ void TimelineTrackItem::appendClip(int index, const QRectF &baseRect, bool selec
 
 void TimelineTrackItem::buildWaveform(int index, const QRectF &area, double clipX,
                                       double clipWidth, double inPoint, double outPoint, bool bar,
-                                      const QString &cacheId, double fullX, double fullWidth)
+                                      const QString &cacheId, double fullX, double fullWidth,
+                                      const QRectF &clipRect, double clipRadius, int clipCorners)
 {
     const TimelineClipsModel::Row &row = m_clips->rows().at(index);
     if (!m_editor || row.path.isEmpty() || area.height() <= 0.0)
@@ -1250,6 +1509,23 @@ void TimelineTrackItem::buildWaveform(int index, const QRectF &area, double clip
         return std::clamp(row.volumeTyped.evaluateAt(drift::secondsToUs(seconds)), 0.0, 2.0);
     };
 
+    // Keeps a column inside the clip's rounded corners; a wider extent would paint past the body.
+    const auto fitColumn = [&](int x, double *top, double *bottom) {
+        const double xa = left + x + 0.5;
+        const double dl = xa - clipRect.left();
+        const double dr = clipRect.right() - xa;
+        const bool leftSide = dl < dr;
+        const double d = std::max(0.0, std::min(dl, dr));
+        if (clipRadius < 0.5 || d >= clipRadius)
+            return;
+        const double dx = clipRadius - d;
+        const double inset = clipRadius - std::sqrt(std::max(0.0, clipRadius * clipRadius - dx * dx));
+        if (clipCorners & (leftSide ? TopLeft : TopRight))
+            *top = std::max(*top, clipRect.top() + inset);
+        if (clipCorners & (leftSide ? BottomLeft : BottomRight))
+            *bottom = std::min(*bottom, clipRect.bottom() - inset);
+    };
+
     if (laneCount > 1 && cached.lanes.size() == laneCount) {
         const double laneH = area.height() / laneCount;
         for (int c = 0; c < laneCount; ++c) {
@@ -1262,8 +1538,13 @@ void TimelineTrackItem::buildWaveform(int index, const QRectF &area, double clip
                 const double amp = std::max(0.5, std::min(columnPeak(values, x) * half * volumeAt(x),
                                                           laneH / 2.0));
                 const double x0 = left + x - ox;
-                appendQuad(m_over, vertex(x0, mid - amp, color), vertex(x0 + 1.0, mid - amp, color),
-                           vertex(x0 + 1.0, mid + amp, color), vertex(x0, mid + amp, color));
+                double y0 = mid - amp;
+                double y1 = mid + amp;
+                fitColumn(x, &y0, &y1);
+                if (y1 <= y0)
+                    continue;
+                appendQuad(m_over, vertex(x0, y0, color), vertex(x0 + 1.0, y0, color),
+                           vertex(x0 + 1.0, y1, color), vertex(x0, y1, color));
             }
         }
         QColor divider = s.panelBorder;
@@ -1295,14 +1576,19 @@ void TimelineTrackItem::buildWaveform(int index, const QRectF &area, double clip
         if (amp <= 0.5)
             continue;
         const double x0 = left + x - ox;
-        appendQuad(m_over, vertex(x0, mid - amp, color), vertex(x0 + 1.0, mid - amp, color),
-                   vertex(x0 + 1.0, mid + amp, color), vertex(x0, mid + amp, color));
+        double y0 = mid - amp;
+        double y1 = mid + amp;
+        fitColumn(x, &y0, &y1);
+        if (y1 <= y0)
+            continue;
+        appendQuad(m_over, vertex(x0, y0, color), vertex(x0 + 1.0, y0, color),
+                   vertex(x0 + 1.0, y1, color), vertex(x0, y1, color));
     }
 }
 
 void TimelineTrackItem::buildFilmstrip(int index, const QRectF &body, const QRectF &clipRect,
-                                       double clipRadius, double inPoint,
-                                       double outPoint)
+                                       double clipRadius, int clipCorners,
+                                       double inPoint, double outPoint)
 {
     const TimelineClipsModel::Row &row = m_clips->rows().at(index);
     if (body.width() <= 0.0 || body.height() <= 0.0)
@@ -1343,7 +1629,7 @@ void TimelineTrackItem::buildFilmstrip(int index, const QRectF &body, const QRec
                         QRectF tgt = target;
                         QRectF src = aspectCrop(QRectF(QPointF(0, 0), image.size()), tgt.size());
                         if (clipTile(tgt, src, body))
-                            appendTile(file, image, tgt, src, clipRect, clipRadius);
+                            appendTile(file, image, tgt, src, clipRect, clipRadius, clipCorners);
                         continue;
                     }
                 }
@@ -1357,17 +1643,19 @@ void TimelineTrackItem::buildFilmstrip(int index, const QRectF &body, const QRec
         QRectF src = aspectCrop(QRectF(frame * frameW, 0, frameW, strip.height()), target.size());
         QRectF tgt = target;
         if (clipTile(tgt, src, body))
-            appendTile(row.filmstripPath, strip, tgt, src, clipRect, clipRadius);
+            appendTile(row.filmstripPath, strip, tgt, src, clipRect, clipRadius, clipCorners);
     }
 }
 
 void TimelineTrackItem::appendTile(const QString &key, const QImage &image, const QRectF &target,
-                                   const QRectF &source, const QRectF &clipRect, double clipRadius)
+                                   const QRectF &source, const QRectF &clipRect, double clipRadius,
+                                   int clipCorners)
 {
     Tile tile{key, image, target.translated(-m_originX, 0), source, {}};
-    const bool atEnd = target.left() <= clipRect.left() + 0.5 || target.right() >= clipRect.right() - 0.5;
+    const bool atEnd = target.left() <= clipRect.left() + clipRadius
+                       || target.right() >= clipRect.right() - clipRadius;
     if (atEnd && clipRadius >= 0.5) {
-        tile.clip = roundedPolygon(clipRect.translated(-m_originX, 0), clipRadius);
+        tile.clip = roundedPolygon(clipRect.translated(-m_originX, 0), clipRadius, clipCorners);
     }
     m_tiles.append(tile);
 }
@@ -1564,17 +1852,6 @@ void TimelineTrackItem::callHaptic(const char *method)
 
 void TimelineTrackItem::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton && m_editor && m_clips) {
-        for (auto it = m_visible.crbegin(); it != m_visible.crend(); ++it) {
-            if (!it->fxRect.isNull() && it->fxRect.contains(event->position())
-                && it->index >= 0 && it->index < m_clips->rows().size()
-                && m_clips->rows().at(it->index).id == it->id) {
-                m_editor->toggleEffectsLayerRevealed(m_trackIndex, it->index);
-                event->accept();
-                return;
-            }
-        }
-    }
     Zone zone = Zone::None;
     const int index = clipAt(event->position(), &zone);
     // The device behind this press, not the timeline's mode: a finger on the desktop timeline
@@ -1771,6 +2048,8 @@ void TimelineTrackItem::finishPress(bool canceled)
     }
     if (QGuiApplication::keyboardModifiers() & (Qt::ShiftModifier | Qt::ControlModifier))
         return; // the press already added it
+    if (!drag.touch && !drag.wasSelected)
+        return; // the press already selected it
     if (drag.touch) {
         if (drag.wasSelected) {
             // A tap on a clip that is already selected opens its menu on the desktop timeline.
@@ -1852,10 +2131,16 @@ void TimelineTrackItem::setHovered(const QString &clipId, bool body, const QPoin
     }
     setToolTip(tip, tipRect);
 
-    if (body && !m_drag.pressed)
-        setCursor(Qt::OpenHandCursor);
+    bool narrow = false;
+    for (const ClipVisual &visual : std::as_const(m_visible)) {
+        if (visual.id == clipId)
+            narrow = m_viewState && visual.rect.width() < m_viewState->styleValues().clipControlsMinWidth;
+    }
+    const qreal dpr = window() ? window()->devicePixelRatio() : 1.0;
+    if (body && !m_drag.pressed && !narrow)
+        setCursor(timelineCursor(TimelineCursorKind::Move, 0, dpr));
     else if (m_drag.moving)
-        setCursor(Qt::ClosedHandCursor);
+        setCursor(timelineCursor(TimelineCursorKind::MoveActive, 0, dpr));
     else
         unsetCursor();
 
