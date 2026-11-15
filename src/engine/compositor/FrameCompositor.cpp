@@ -538,8 +538,8 @@ QSize decodeBoundForClip(const drift::Clip &clip, int projectWidth, int projectH
 #else
     constexpr int kMaxEdge = 16384;
 #endif
-    const int w = qCeil(maxTrackValue(clip.transformW, projectWidth) * renderScale);
-    const int h = qCeil(maxTrackValue(clip.transformH, projectHeight) * renderScale);
+    const int w = qCeil((clip.frameW > 0.0 ? clip.frameW : projectWidth) * maxTrackValue(clip.scaleX, 1.0) * renderScale);
+    const int h = qCeil((clip.frameH > 0.0 ? clip.frameH : projectHeight) * maxTrackValue(clip.scaleY, 1.0) * renderScale);
     return QSize(qMax(canvasWidth, qMin(w, kMaxEdge)), qMax(canvasHeight, qMin(h, kMaxEdge)));
 }
 
@@ -1002,27 +1002,25 @@ double opacityForClip(const drift::Clip &clip, drift::TimeUs timelineUs)
     return value * clip.fadeMultiplier(timelineUs);
 }
 
-double transformValue(const drift::KeyframeTrack<double> &track, drift::TimeUs relative, double defaultValue)
-{
-    if (track.isEmpty())
-        return defaultValue;
-    return track.evaluateAt(relative);
-}
-
 // Layout is stored in project pixels. Preview/export canvases may be scaled
 // via renderScale — always map project → canvas here so WYSIWYG handles match.
-void layoutRectForClip(const drift::Clip &clip, drift::TimeUs timelineUs, int projectWidth, int projectHeight,
-                       double renderScale, double extraScale, double *xOut, double *yOut, double *wOut, double *hOut,
-                       double *rotationOut = nullptr)
+// The rect is the scaled box with the rotation pivot folded in (see clipPlacementAt).
+drift::ClipPlacement placementForClip(const drift::Clip &clip, drift::TimeUs timelineUs, int projectWidth,
+                                      int projectHeight, double renderScale)
+{
+    return drift::clipPlacementAt(clip, timelineUs - clip.timelineStart, renderScale,
+                                  QSizeF(projectWidth, projectHeight));
+}
+
+// Text and shapes are laid out in the frame and then scaled with the clip, so they are painted at
+// the final on-screen size: the box is the scaled one and the style's lengths are multiplied by
+// the scale. A squished box takes the smaller axis, so the text never spills out of it.
+double contentScaleForClip(const drift::Clip &clip, drift::TimeUs timelineUs)
 {
     const drift::TimeUs relative = timelineUs - clip.timelineStart;
-    const double scale = renderScale * extraScale;
-    *xOut = transformValue(clip.transformX, relative, 0.0) * renderScale;
-    *yOut = transformValue(clip.transformY, relative, 0.0) * renderScale;
-    *wOut = transformValue(clip.transformW, relative, static_cast<double>(projectWidth)) * scale;
-    *hOut = transformValue(clip.transformH, relative, static_cast<double>(projectHeight)) * scale;
-    if (rotationOut)
-        *rotationOut = transformValue(clip.rotation, relative, 0.0);
+    const double sx = clip.scaleX.isEmpty() ? 1.0 : clip.scaleX.evaluateAt(relative);
+    const double sy = clip.scaleY.isEmpty() ? 1.0 : clip.scaleY.evaluateAt(relative);
+    return qMax(1e-6, qMin(qAbs(sx), qAbs(sy)));
 }
 
 // The bottommost active video/image frame at this time, used to derive a blur fill.
@@ -1098,21 +1096,20 @@ int karaokeWordIndex(const drift::Clip &clip, const drift::SubtitleCue &cue, dri
     return drift::activeWordIndexAt(cue.text, cue.startUs, cue.endUs, localUs);
 }
 
-// CapCut-style body intro/outro: opacity/offset/scale/rotation on top of fades and text anims.
+// Body intro/outro: offset/scale/rotation on top of text anims.
 void applyClipBodyAnimation(const drift::Clip &clip, drift::TimeUs timelineUs, double layoutW,
-                            double layoutH, QRectF *destRect, double *opacity, double *rotation)
+                            double layoutH, QRectF *destRect, double *rotation)
 {
-    if (!destRect || !opacity || !rotation)
+    if (!destRect || !rotation)
         return;
     if (clip.type == drift::ClipType::Audio || clip.type == drift::ClipType::Subtitle)
         return;
-    if (clip.animIn.kind == drift::ClipAnimKind::None && clip.animOut.kind == drift::ClipAnimKind::None)
+    if (clip.animIn.isNone() && clip.animOut.isNone())
         return;
 
     const drift::ClipAnimSample body =
         drift::evaluateClipAnimation(clip.timelineStart, clip.timelineDuration, clip.animIn,
                                      clip.animOut, timelineUs, layoutW, layoutH);
-    *opacity *= body.opacity;
     destRect->translate(body.dx, body.dy);
     if (!qFuzzyCompare(body.scale, 1.0)) {
         const QPointF centre = destRect->center();
@@ -1340,15 +1337,16 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
 
     const drift::TimeUs clipTimeUs = timelineUs - clip.timelineStart;
 
-    double x = 0.0;
-    double y = 0.0;
-    double w = 0.0;
-    double h = 0.0;
-    double rotation = 0.0;
-    layoutRectForClip(clip, timelineUs, projectWidth, projectHeight, renderScale, 1.0, &x, &y, &w, &h,
-                      &rotation);
+    const drift::ClipPlacement placement =
+        placementForClip(clip, timelineUs, projectWidth, projectHeight, renderScale);
+    const double x = placement.rect.x();
+    const double y = placement.rect.y();
+    const double w = placement.rect.width();
+    const double h = placement.rect.height();
+    double rotation = placement.rotation;
     if (w <= 0.5 || h <= 0.5)
         return layer;
+    const double contentRenderScale = renderScale * contentScaleForClip(clip, timelineUs);
 
     const int layoutW = qMax(1, qRound(w));
     const int layoutH = qMax(1, qRound(h));
@@ -1376,7 +1374,7 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
         QRectF rasterRect =
             fillTextLayer(layer, textClip->textStyle,
                           editingText || !clip.textContent.isEmpty() ? clip.textContent : clip.name, layoutRect,
-                          renderScale, karaokeWordIndex(clip, timelineUs), clip.timelineStart,
+                          contentRenderScale, karaokeWordIndex(clip, timelineUs), clip.timelineStart,
                           clip.timelineDuration, timelineUs, projectFps, &block, editingText);
         if (editingText && !layer.hasPixels()) {
             // Empty or blank text paints nothing, but the layer must exist for the caret's.
@@ -1395,7 +1393,7 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
         // Each cue animates in and out on its own window, so cues play one after another.
         drift::textanim::BlockProps block;
         const QRectF rasterRect =
-            fillTextLayer(layer, textClip->textStyle, cue->text, layoutRect, renderScale,
+            fillTextLayer(layer, textClip->textStyle, cue->text, layoutRect, contentRenderScale,
                           karaokeWordIndex(clip, *cue, localUs), clip.timelineStart + cue->startUs,
                           cue->endUs - cue->startUs, timelineUs, projectFps, &block);
         if (!layer.hasPixels())
@@ -1410,7 +1408,7 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
         drift::skia::ShapePaintRequest request;
         request.style = clip.shapeStyle.isAnimated() ? clip.shapeStyle.resolvedAt(clipTimeUs) : clip.shapeStyle;
         request.layoutRect = layoutRect;
-        request.renderScale = renderScale;
+        request.renderScale = contentRenderScale;
         request.timeSec = drift::usToSeconds(qMax<drift::TimeUs>(0, clipTimeUs));
         request.frameRate = projectFps;
         const drift::skia::ShapePainterResult painted = drift::skia::makeShapePainter(request);
@@ -1505,7 +1503,7 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
         return layer;
 
     if (!editingText)
-        applyClipBodyAnimation(clip, timelineUs, w, h, &destRect, &opacity, &rotation);
+        applyClipBodyAnimation(clip, timelineUs, w, h, &destRect, &rotation);
 
     fillGpuLayerMasks(project, layer, clip, laneMasks, timelineUs, canvasWidth, canvasHeight, renderScale,
                       projectFps);
@@ -1524,8 +1522,8 @@ GpuLayer buildGpuLayer(const drift::Project &project, const drift::Clip &clip,
     if (clip.type != drift::ClipType::Model3d && clip.type != drift::ClipType::Procedural) {
         layer.pose3d = drift::clipPoseAt(clip, clipTimeUs, renderScale, projectHeight);
     }
-    layer.flipH = clip.flipH;
-    layer.flipV = clip.flipV;
+    layer.flipH = placement.flipH;
+    layer.flipV = placement.flipV;
     layer.opacity = opacity;
     layer.clipTimeUs = timelineUs - clip.timelineStart;
     layer.frameRate = projectFps;
@@ -1554,7 +1552,7 @@ void appendTextEditDecor(GpuScene &scene, const GpuItem &textItem, const drift::
     drift::skia::TextEditPaintRequest request;
     request.set = geometry.set;
     request.layoutRect = geometry.layoutRect;
-    request.renderScale = renderScale;
+    request.renderScale = geometry.contentScale;
     request.cursor = edit.cursor;
     request.selStart = edit.selStart;
     request.selEnd = edit.selEnd;
@@ -2131,17 +2129,17 @@ FrameCompositor::TextEditGeometry FrameCompositor::textEditGeometry(const drift:
                                                                     int projectHeight, double renderScale)
 {
     TextEditGeometry out;
-    double x = 0.0, y = 0.0, w = 0.0, h = 0.0;
-    layoutRectForClip(clip, timelineUs, projectWidth, projectHeight, renderScale, 1.0, &x, &y, &w, &h,
-                      &out.rotation);
-    out.layoutRect = QRectF(x, y, w, h);
+    const drift::ClipPlacement placement = placementForClip(clip, timelineUs, projectWidth, projectHeight, renderScale);
+    out.rotation = placement.rotation;
+    out.layoutRect = placement.rect;
+    out.contentScale = renderScale * contentScaleForClip(clip, timelineUs);
 #ifdef DRIFT_WITH_SKIA
-    if (w <= 0.5 || h <= 0.5)
+    if (out.layoutRect.width() <= 0.5 || out.layoutRect.height() <= 0.5)
         return out;
     const drift::TextStyle style = clip.textStyle.isAnimated()
                                        ? clip.textStyle.resolvedAt(timelineUs - clip.timelineStart)
                                        : clip.textStyle;
-    out.set = textFragments(style, renderedText, out.layoutRect, renderScale, karaokeWordIndex(clip, timelineUs));
+    out.set = textFragments(style, renderedText, out.layoutRect, out.contentScale, karaokeWordIndex(clip, timelineUs));
 #else
     Q_UNUSED(renderedText);
 #endif

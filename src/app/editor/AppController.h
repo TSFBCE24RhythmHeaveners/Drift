@@ -826,12 +826,14 @@ public:
     Q_INVOKABLE int transitionJunctionAt(int trackIndex, double seconds) const;
     Q_INVOKABLE void beginPreviewDrag(const QString &undoText = {});
     Q_INVOKABLE void previewSetClipPosition(int trackIndex, int clipIndex, double xPixels, double yPixels);
-    Q_INVOKABLE void previewSetClipSize(int trackIndex, int clipIndex, double widthPixels, double heightPixels);
-    Q_INVOKABLE void previewSetClipRect(int trackIndex, int clipIndex, double xPixels, double yPixels,
-                                        double widthPixels, double heightPixels);
-    // Text resizes scale the glyphs along with the box, so the size rides with the rect.
-    Q_INVOKABLE void previewSetTextRect(int trackIndex, int clipIndex, double xPixels, double yPixels,
-                                        double widthPixels, double heightPixels, int pixelSize);
+    // scaleX/scaleY are factors (1 = the clip's frame size); position is where the anchor lands.
+    Q_INVOKABLE void previewSetClipScale(int trackIndex, int clipIndex, double scaleX, double scaleY);
+    Q_INVOKABLE void previewSetClipPlacement(int trackIndex, int clipIndex, double posX, double posY,
+                                             double scaleX, double scaleY);
+    // Text box edits change the wrap frame (frameW/frameH, project px) and the position, never the
+    // glyph size.
+    Q_INVOKABLE void previewSetTextRect(int trackIndex, int clipIndex, double posX, double posY,
+                                        double frameW, double frameH);
     Q_INVOKABLE void previewSetClipRotation(int trackIndex, int clipIndex, double degrees);
     Q_INVOKABLE void previewSetClipKeyframe(int trackIndex, int clipIndex, const QString &prop,
                                             double atSeconds, double value);
@@ -1401,12 +1403,20 @@ public:
     Q_INVOKABLE QVariantMap inspectPdf(const QString &path) const;
     Q_INVOKABLE QVariantMap inspectPdfClip(int trackIndex, int clipIndex) const;
     Q_INVOKABLE void setClipFade(int trackIndex, int clipIndex, double fadeInSeconds, double fadeOutSeconds);
-    Q_INVOKABLE void setClipFadeCurve(int trackIndex, int clipIndex, const QString &curve,
-                                      const QVariantList &handles = {});
-    // which: "animIn" | "animOut". Partial patch: kind / duration / curve (or legacy ease) /
-    // handles ([x1, y1, x2, y2] for the bezier curve).
+    // edge: "in" | "out" | "both".
+    Q_INVOKABLE void setClipFadeCurve(int trackIndex, int clipIndex, const QString &edge,
+                                      const QString &curve, const QVariantList &handles = {});
+    // which: "animIn" | "animOut". Partial patch: kind (any id, "none" clears) / duration / curve
+    // (or legacy ease) / handles ([x1, y1, x2, y2] for the bezier curve). Never touches the fade.
     Q_INVOKABLE void setClipAnimation(int trackIndex, int clipIndex, const QString &which,
                                       const QVariantMap &patch);
+    // [{id, label}] for every animation kind the pickers offer, in menu order. "none" is not in it.
+    Q_INVOKABLE QVariantList clipAnimationKinds() const;
+    // which: "animIn" | "animOut" | "both". kind: "none" (clears animation and fade), "fade"
+    // (animation cleared, fade kept or 0.5 s) or an animation id (fade follows it when the edge
+    // had none). One undo step.
+    Q_INVOKABLE void applyClipAnimationPreset(int trackIndex, int clipIndex, const QString &which,
+                                              const QString &kind);
     // linkedAudio: also add the same transition between the two clips' linked audio, when they sit
     // next to each other on one audio track.
     Q_INVOKABLE void addTransition(int trackIndex, int clipIndex, const QString &kind, double durationSeconds,

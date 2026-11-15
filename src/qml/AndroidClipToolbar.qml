@@ -15,7 +15,6 @@ Item {
     property var panel: null
 
     signal moreRequested()
-    signal fadeRequested()
     signal editTextRequested()
 
     readonly property bool hasSelection: {
@@ -160,7 +159,7 @@ Item {
             break
         case "fade":
             if (ShellBridge.main.editorPage)
-                ShellBridge.main.editorPage.openTool("audio")
+                ShellBridge.main.editorPage.openTool("animation")
             break
         case "speed":
             if (ShellBridge.main.editorPage)

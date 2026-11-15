@@ -440,6 +440,61 @@
     </message>
 </context>
 <context>
+    <name>AndroidAnimationPage</name>
+    <message>
+        <source>None</source>
+        <translation>なし</translation>
+    </message>
+    <message>
+        <source>%1 s</source>
+        <translation>%1 秒</translation>
+    </message>
+    <message>
+        <source>In</source>
+        <translation>イン</translation>
+    </message>
+    <message>
+        <source>Out</source>
+        <translation>アウト</translation>
+    </message>
+    <message>
+        <source>Fade also ramps the volume.</source>
+        <translation>フェードは音量も徐々に変化させます。</translation>
+    </message>
+    <message>
+        <source>Fade ramps the volume.</source>
+        <translation>フェードは音量を徐々に変化させます。</translation>
+    </message>
+    <message>
+        <source>Fade in</source>
+        <translation>フェードイン</translation>
+    </message>
+    <message>
+        <source>Fade out</source>
+        <translation>フェードアウト</translation>
+    </message>
+    <message>
+        <source>Fade curve</source>
+        <translation>フェードカーブ</translation>
+    </message>
+    <message>
+        <source>Animation</source>
+        <translation>アニメーション</translation>
+    </message>
+    <message>
+        <source>Duration</source>
+        <translation>長さ</translation>
+    </message>
+    <message>
+        <source>Animation curve</source>
+        <translation>アニメーションカーブ</translation>
+    </message>
+    <message>
+        <source>Letter and word animations live in Text animation. This moves the whole clip.</source>
+        <translation>文字や単語のアニメーションは「テキストアニメーション」にあります。これはクリップ全体を動かします。</translation>
+    </message>
+</context>
+<context>
     <name>AndroidBackgroundPage</name>
     <message>
         <source>Choose background image</source>
@@ -519,6 +574,10 @@
     <message>
         <source>Stabilize</source>
         <translation>手ぶれ補正</translation>
+    </message>
+    <message>
+        <source>Fade</source>
+        <translation>フェード</translation>
     </message>
     <message>
         <source>Edit text</source>
@@ -646,11 +705,11 @@
     </message>
     <message>
         <source>Enable</source>
-        <translation type="unfinished"></translation>
+        <translation>有効化</translation>
     </message>
     <message>
         <source>Disable</source>
-        <translation type="unfinished"></translation>
+        <translation>無効化</translation>
     </message>
     <message>
         <source>Speed</source>
@@ -942,33 +1001,6 @@
     </message>
 </context>
 <context>
-    <name>AndroidFadeSheet</name>
-    <message>
-        <source>Fade</source>
-        <translation>フェード</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <translation>完了</translation>
-    </message>
-    <message>
-        <source>%1 s</source>
-        <translation>%1 秒</translation>
-    </message>
-    <message>
-        <source>Fade in</source>
-        <translation>フェードイン</translation>
-    </message>
-    <message>
-        <source>Fade out</source>
-        <translation>フェードアウト</translation>
-    </message>
-    <message>
-        <source>Curve</source>
-        <translation>カーブ</translation>
-    </message>
-</context>
-<context>
     <name>AndroidFiltersPage</name>
     <message>
         <source>Applied</source>
@@ -1096,7 +1128,7 @@
     </message>
     <message>
         <source>Favorites</source>
-        <translation type="unfinished">お気に入り</translation>
+        <translation>お気に入り</translation>
     </message>
     <message>
         <source>Template</source>
@@ -2303,11 +2335,11 @@
     <name>AndroidTimelineTrimNudge</name>
     <message>
         <source>In</source>
-        <translation type="unfinished">イン</translation>
+        <translation>イン</translation>
     </message>
     <message>
         <source>Out</source>
-        <translation type="unfinished">アウト</translation>
+        <translation>アウト</translation>
     </message>
 </context>
 <context>
@@ -2402,21 +2434,6 @@
     </message>
 </context>
 <context>
-    <name>AndroidVolumePage</name>
-    <message>
-        <source>%1 s</source>
-        <translation>%1 秒</translation>
-    </message>
-    <message>
-        <source>Fade in</source>
-        <translation>フェードイン</translation>
-    </message>
-    <message>
-        <source>Fade out</source>
-        <translation>フェードアウト</translation>
-    </message>
-</context>
-<context>
     <name>AnimationInspector</name>
     <message>
         <source>None</source>
@@ -2427,40 +2444,44 @@
         <translation>フェード</translation>
     </message>
     <message>
+        <source>Fade in</source>
+        <translation>フェードイン</translation>
+    </message>
+    <message>
+        <source>Fade out</source>
+        <translation>フェードアウト</translation>
+    </message>
+    <message>
+        <source>Animation</source>
+        <translation>アニメーション</translation>
+    </message>
+    <message>
+        <source>Fade and motion combine — fade also ramps the volume.</source>
+        <translation>フェードとモーションが組み合わされます — フェードは音量も徐々に変化させます。</translation>
+    </message>
+    <message>
+        <source>Fade ramps the volume in and out.</source>
+        <translation>フェードは音量をフェードイン・フェードアウトさせます。</translation>
+    </message>
+    <message>
         <source>Slide up</source>
         <translation>スライドアップ</translation>
     </message>
     <message>
-        <source>Slide down</source>
-        <translation>スライドダウン</translation>
+        <source>Fade and animation in</source>
+        <translation>フェードとアニメーション (イン)</translation>
     </message>
     <message>
-        <source>Slide left</source>
-        <translation>左スライド</translation>
-    </message>
-    <message>
-        <source>Slide right</source>
-        <translation>右スライド</translation>
+        <source>Fade and animation out</source>
+        <translation>フェードとアニメーション (アウト)</translation>
     </message>
     <message>
         <source>Zoom in</source>
         <translation>ズームイン</translation>
     </message>
     <message>
-        <source>Zoom out</source>
-        <translation>ズームアウト</translation>
-    </message>
-    <message>
         <source>Pop</source>
         <translation>ポップ</translation>
-    </message>
-    <message>
-        <source>Spin CW</source>
-        <translation>時計回り回転</translation>
-    </message>
-    <message>
-        <source>Spin CCW</source>
-        <translation>反時計回り回転</translation>
     </message>
     <message>
         <source>Bounce</source>
@@ -2475,18 +2496,6 @@
         <translation>アニメーションはビデオ、画像、シェイプ、テキスト、オーディオに適用されます。</translation>
     </message>
     <message>
-        <source>Fade in / out (volume)</source>
-        <translation>フェードイン / フェードアウト (音量)</translation>
-    </message>
-    <message>
-        <source>Style</source>
-        <translation>スタイル</translation>
-    </message>
-    <message>
-        <source>Pick how the clip enters and leaves. Fade is one option — same style controls as slide or zoom.</source>
-        <translation>クリップの入り方と出方を選択します。フェードは選択肢の1つで、スライドやズームと同じスタイルコントロールが適用されます。</translation>
-    </message>
-    <message>
         <source>Clear</source>
         <translation>クリア</translation>
     </message>
@@ -2495,24 +2504,12 @@
         <translation>イン</translation>
     </message>
     <message>
-        <source>In animation</source>
-        <translation>インアニメーション</translation>
-    </message>
-    <message>
         <source>Out</source>
         <translation>アウト</translation>
     </message>
     <message>
-        <source>Out animation</source>
-        <translation>アウトアニメーション</translation>
-    </message>
-    <message>
         <source>Custom curve</source>
         <translation>カスタムカーブ</translation>
-    </message>
-    <message>
-        <source>Edit custom curve…</source>
-        <translation>カスタムカーブを編集…</translation>
     </message>
     <message>
         <source>Letter and word animations live in the Text tab, under Animate. This moves the whole clip.</source>
@@ -2711,7 +2708,7 @@
     </message>
     <message>
         <source>No space to place the clip there</source>
-        <translation type="unfinished"></translation>
+        <translation>そこにクリップを配置するスペースがありません</translation>
     </message>
     <message>
         <source>Clip moved</source>
@@ -2719,11 +2716,11 @@
     </message>
     <message>
         <source>Select a clip to split first</source>
-        <translation type="unfinished"></translation>
+        <translation>先に分割するクリップを選択してください</translation>
     </message>
     <message>
         <source>The playhead isn&apos;t over a selected clip</source>
-        <translation type="unfinished"></translation>
+        <translation>再生ヘッドが選択中のクリップ上にありません</translation>
     </message>
     <message>
         <source>Nothing to split here — move to a clip first</source>
@@ -2743,7 +2740,7 @@
     </message>
     <message>
         <source>Trim clip</source>
-        <translation type="unfinished">クリップをトリム</translation>
+        <translation>クリップをトリム</translation>
     </message>
     <message>
         <source>Trim updated</source>
@@ -3037,7 +3034,7 @@
     </message>
     <message>
         <source>Split selected clip at current time</source>
-        <translation type="unfinished"></translation>
+        <translation>選択中のクリップを現在の時間で分割</translation>
     </message>
     <message>
         <source>Add transition at playhead</source>
@@ -3045,7 +3042,7 @@
     </message>
     <message>
         <source>Enable or disable selected clips</source>
-        <translation type="unfinished"></translation>
+        <translation>選択したクリップを有効化または無効化</translation>
     </message>
     <message>
         <source>Go to previous cut point</source>
@@ -3265,15 +3262,15 @@
     </message>
     <message>
         <source>The gap stays open: a linked track is locked</source>
-        <translation type="unfinished"></translation>
+        <translation>ギャップは開いたままです: リンクされたトラックがロックされています</translation>
     </message>
     <message>
         <source>The gap stays open: a clip is in the way of closing it</source>
-        <translation type="unfinished"></translation>
+        <translation>ギャップは開いたままです: クリップが邪魔をして閉じられません</translation>
     </message>
     <message>
         <source>The gap stays open: &quot;%1&quot; is in the way of closing it</source>
-        <translation type="unfinished"></translation>
+        <translation>ギャップは開いたままです: 「%1」が邪魔をして閉じられません</translation>
     </message>
     <message>
         <source>Clip inserted</source>
@@ -3629,23 +3626,23 @@
     </message>
     <message>
         <source>A clip with a speed ramp can&apos;t loop</source>
-        <translation type="unfinished"></translation>
+        <translation>スピードランプが適用されたクリップはループできません</translation>
     </message>
     <message>
         <source>Loop on</source>
-        <translation type="unfinished"></translation>
+        <translation>ループ オン</translation>
     </message>
     <message>
         <source>Loop off</source>
-        <translation type="unfinished"></translation>
+        <translation>ループ オフ</translation>
     </message>
     <message>
         <source>Clip looping</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップをループ再生に設定しました</translation>
     </message>
     <message>
         <source>Clip not looping</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップのループを解除しました</translation>
     </message>
     <message>
         <source>A clip is already being reversed</source>
@@ -3669,19 +3666,19 @@
     </message>
     <message>
         <source>Enable clips</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップを有効化</translation>
     </message>
     <message>
         <source>Disable clips</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップを無効化</translation>
     </message>
     <message>
         <source>Clips enabled</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップを有効化しました</translation>
     </message>
     <message>
         <source>Clips disabled</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップを無効化しました</translation>
     </message>
     <message>
         <source>Pan changed</source>
@@ -3741,11 +3738,11 @@
     </message>
     <message>
         <source>Timeline %1</source>
-        <translation type="unfinished"></translation>
+        <translation>タイムライン %1</translation>
     </message>
     <message>
         <source>Timeline created</source>
-        <translation type="unfinished"></translation>
+        <translation>タイムラインを作成しました</translation>
     </message>
     <message>
         <source>Flattening composite…</source>
@@ -3937,7 +3934,7 @@
     </message>
     <message>
         <source>Split</source>
-        <translation type="unfinished">分割</translation>
+        <translation>分割</translation>
     </message>
     <message>
         <source>Freeform</source>
@@ -4683,15 +4680,15 @@
     </message>
     <message>
         <source>Exclude from export</source>
-        <translation type="unfinished"></translation>
+        <translation>エクスポートから除外</translation>
     </message>
     <message>
         <source>Track left out of export</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックをエクスポートから除外しました</translation>
     </message>
     <message>
         <source>Track included in export</source>
-        <translation type="unfinished"></translation>
+        <translation>トラックをエクスポートに含めました</translation>
     </message>
     <message>
         <source>Track lock</source>
@@ -5040,7 +5037,7 @@
     </message>
     <message>
         <source>Save diagnostics…</source>
-        <translation type="unfinished"></translation>
+        <translation>診断情報を保存…</translation>
     </message>
     <message>
         <source>Settings…</source>
@@ -5077,7 +5074,7 @@
     </message>
     <message>
         <source>The proxy could not be made</source>
-        <translation type="unfinished"></translation>
+        <translation>プロキシを作成できませんでした</translation>
     </message>
     <message>
         <source>%1 s</source>
@@ -5107,11 +5104,11 @@
     <name>AssetSearchBar</name>
     <message>
         <source>Clear search</source>
-        <translation type="unfinished">検索をクリア</translation>
+        <translation>検索をクリア</translation>
     </message>
     <message>
         <source>Remove from history</source>
-        <translation type="unfinished"></translation>
+        <translation>履歴から削除</translation>
     </message>
 </context>
 <context>
@@ -5422,11 +5419,11 @@
     </message>
     <message>
         <source>New timeline</source>
-        <translation type="unfinished"></translation>
+        <translation>新規タイムライン</translation>
     </message>
     <message>
         <source>Create an empty timeline and open it</source>
-        <translation type="unfinished"></translation>
+        <translation>空のタイムラインを作成して開く</translation>
     </message>
 </context>
 <context>
@@ -6622,6 +6619,49 @@
     </message>
 </context>
 <context>
+    <name>ClipAnimation</name>
+    <message>
+        <source>Slide up</source>
+        <translation>スライドアップ</translation>
+    </message>
+    <message>
+        <source>Slide down</source>
+        <translation>スライドダウン</translation>
+    </message>
+    <message>
+        <source>Slide left</source>
+        <translation>左スライド</translation>
+    </message>
+    <message>
+        <source>Slide right</source>
+        <translation>右スライド</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation>ズームイン</translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation>ズームアウト</translation>
+    </message>
+    <message>
+        <source>Pop</source>
+        <translation>ポップ</translation>
+    </message>
+    <message>
+        <source>Spin CW</source>
+        <translation>時計回り回転</translation>
+    </message>
+    <message>
+        <source>Spin CCW</source>
+        <translation>反時計回り回転</translation>
+    </message>
+    <message>
+        <source>Bounce</source>
+        <translation>バウンス</translation>
+    </message>
+</context>
+<context>
     <name>CloudProviders</name>
     <message>
         <source>No key set</source>
@@ -7132,46 +7172,46 @@
     <name>CrashReport</name>
     <message>
         <source>Drift crashed the last time it ran</source>
-        <translation type="unfinished"></translation>
+        <translation>前回の実行時に Drift がクラッシュしました</translation>
     </message>
     <message>
         <source>Drift did not close properly last time</source>
-        <translation type="unfinished"></translation>
+        <translation>前回 Drift が正常に終了しませんでした</translation>
     </message>
     <message>
         <source>If it keeps happening, you can start in safe mode, which uses the default graphics backend and loads no add-ons for this session.</source>
-        <translation type="unfinished"></translation>
+        <translation>問題が再発する場合は、セーフモードで起動できます。セーフモードではデフォルトのグラフィックスバックエンドが使用され、このセッションではアドオンは読み込まれません。</translation>
     </message>
     <message>
         <source>A report was sent to help fix this. You can turn this off in Settings.</source>
-        <translation type="unfinished"></translation>
+        <translation>問題の修正に役立てるため、レポートが送信されました。この設定は「設定」でオフにできます。</translation>
     </message>
     <message>
         <source>Save crash file…</source>
-        <translation type="unfinished"></translation>
+        <translation>クラッシュファイルを保存…</translation>
     </message>
     <message>
         <source>Start in safe mode</source>
-        <translation type="unfinished"></translation>
+        <translation>セーフモードで起動</translation>
     </message>
     <message>
         <source>Continue</source>
-        <translation type="unfinished">続行</translation>
+        <translation>続行</translation>
     </message>
 </context>
 <context>
     <name>CrashReporter</name>
     <message>
         <source>Choose where to save the file</source>
-        <translation type="unfinished"></translation>
+        <translation>ファイルの保存先を選択</translation>
     </message>
     <message>
         <source>Saved to %1</source>
-        <translation type="unfinished">%1 に保存しました</translation>
+        <translation>%1 に保存しました</translation>
     </message>
     <message>
         <source>Could not save the file: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>ファイルを保存できませんでした: %1</translation>
     </message>
 </context>
 <context>
@@ -7280,6 +7320,10 @@
     <message>
         <source>Custom fade applied</source>
         <translation>カスタムフェードを適用しました</translation>
+    </message>
+    <message>
+        <source>Custom animation curve applied</source>
+        <translation>カスタムアニメーションカーブを適用しました</translation>
     </message>
 </context>
 <context>
@@ -8954,15 +8998,15 @@
     <name>EffectsMaskSection</name>
     <message>
         <source>This effect needs a mask.</source>
-        <translation type="unfinished"></translation>
+        <translation>このエフェクトにはマスクが必要です。</translation>
     </message>
     <message>
         <source>Add new mask</source>
-        <translation type="unfinished"></translation>
+        <translation>新しいマスクを追加</translation>
     </message>
     <message>
         <source>Cutout subject</source>
-        <translation type="unfinished"></translation>
+        <translation>被写体を切り抜き</translation>
     </message>
 </context>
 <context>
@@ -9309,7 +9353,7 @@
     </message>
     <message>
         <source>Exporting audio</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオをエクスポート中</translation>
     </message>
     <message>
         <source>Export</source>
@@ -9329,7 +9373,7 @@
     </message>
     <message>
         <source>Rendering your audio. Close to keep editing, or cancel to stop.</source>
-        <translation type="unfinished"></translation>
+        <translation>オーディオをレンダリングしています。閉じて編集を続けるか、キャンセルして停止します。</translation>
     </message>
     <message>
         <source>Export finished.</source>
@@ -9925,6 +9969,22 @@
         <translation>カスタムカーブ</translation>
     </message>
     <message>
+        <source>Out animation curve</source>
+        <translation>アウトアニメーションカーブ</translation>
+    </message>
+    <message>
+        <source>In animation curve</source>
+        <translation>インアニメーションカーブ</translation>
+    </message>
+    <message>
+        <source>Fade out curve</source>
+        <translation>フェードアウトカーブ</translation>
+    </message>
+    <message>
+        <source>Fade in curve</source>
+        <translation>フェードインカーブ</translation>
+    </message>
+    <message>
         <source>Progress curve — %1</source>
         <translation>進捗曲線 — %1</translation>
     </message>
@@ -9933,12 +9993,16 @@
         <translation>進捗曲線</translation>
     </message>
     <message>
-        <source>Fade shape — %1</source>
-        <translation>フェード形状 — %1</translation>
+        <source>%1 — %2</source>
+        <translation>%1 — %2</translation>
     </message>
     <message>
-        <source>Fade shape</source>
-        <translation>フェード形状</translation>
+        <source>In</source>
+        <translation>イン</translation>
+    </message>
+    <message>
+        <source>Out</source>
+        <translation>アウト</translation>
     </message>
     <message>
         <source>Points</source>
@@ -9977,8 +10041,8 @@
         <translation>2 つのハンドルをドラッグして立方体の形を整えます。端はピンで固定されたままで、ハンドルはボックスの内側に保持されているため、カーブが折り返されることはありません。</translation>
     </message>
     <message>
-        <source>Drag the middle points to shape the ramp (ends stay silent→full). Double-click to add a point; Delete removes the selection.</source>
-        <translation>中間点をドラッグしてランプの形状を調整します (両端は無音から最大音量のままです)。ダブルクリックで点を追加します。Deleteキーで選択範囲を削除します。</translation>
+        <source>Drag the middle points to shape the ramp (ends stay pinned). Double-click to add a point; Delete removes the selection.</source>
+        <translation>中間ポイントをドラッグしてランプの形状を整えます (端はピンで固定されたままです)。ダブルクリックでポイントを追加し、Delete で選択項目を削除します。</translation>
     </message>
     <message>
         <source>Apply</source>
@@ -10171,15 +10235,15 @@
     </message>
     <message>
         <source>Loop</source>
-        <translation type="unfinished">ループ</translation>
+        <translation>ループ</translation>
     </message>
     <message>
         <source>A clip with a speed ramp can&apos;t loop</source>
-        <translation type="unfinished"></translation>
+        <translation>スピードランプが適用されたクリップはループできません</translation>
     </message>
     <message>
         <source>Repeat the trimmed part for as long as the clip runs. Drag the clip&apos;s edges past the end to add repeats. Turn it off to change the trim.</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップの長さ分、トリミングした部分を繰り返します。クリップの端を終端を越えてドラッグすると、繰り返しを追加できます。トリミングを変更するにはオフにしてください。</translation>
     </message>
     <message>
         <source>Rename</source>
@@ -10339,7 +10403,7 @@
     </message>
     <message>
         <source>Favorites</source>
-        <translation type="unfinished">お気に入り</translation>
+        <translation>お気に入り</translation>
     </message>
     <message>
         <source>Type</source>
@@ -10875,6 +10939,14 @@
         <translation>ズーム</translation>
     </message>
     <message>
+        <source>Scale X</source>
+        <translation>スケール X</translation>
+    </message>
+    <message>
+        <source>Scale Y</source>
+        <translation>スケール Y</translation>
+    </message>
+    <message>
         <source>Anchor X</source>
         <translation>アンカー X</translation>
     </message>
@@ -10892,7 +10964,7 @@
     </message>
     <message>
         <source>Roundness</source>
-        <translation type="unfinished"></translation>
+        <translation>角の丸み</translation>
     </message>
     <message>
         <source>Mask</source>
@@ -11028,12 +11100,12 @@
         <translation>Y 位置</translation>
     </message>
     <message>
-        <source>Width</source>
-        <translation>幅</translation>
+        <source>Scale X</source>
+        <translation>スケール X</translation>
     </message>
     <message>
-        <source>Height</source>
-        <translation>高さ</translation>
+        <source>Scale Y</source>
+        <translation>スケール Y</translation>
     </message>
     <message>
         <source>Rotation</source>
@@ -11483,7 +11555,7 @@
     </message>
     <message>
         <source>Favorites</source>
-        <translation type="unfinished">お気に入り</translation>
+        <translation>お気に入り</translation>
     </message>
     <message>
         <source>Template</source>
@@ -12616,11 +12688,11 @@
     <name>MaskOverlay</name>
     <message>
         <source>Unlock aspect ratio</source>
-        <translation type="unfinished"></translation>
+        <translation>アスペクト比の固定を解除</translation>
     </message>
     <message>
         <source>Lock aspect ratio</source>
-        <translation type="unfinished"></translation>
+        <translation>アスペクト比を固定</translation>
     </message>
     <message>
         <source>Drag points to reshape · Tap ○ on an edge to add a point · Hold a point to delete</source>
@@ -12650,22 +12722,22 @@
     <name>MaskOverlayFeatherHandle</name>
     <message>
         <source>Edit %1</source>
-        <translation type="unfinished">%1 を編集</translation>
+        <translation>%1 を編集</translation>
     </message>
     <message>
         <source>Feather</source>
-        <translation type="unfinished">ぼかし</translation>
+        <translation>ぼかし</translation>
     </message>
 </context>
 <context>
     <name>MaskOverlayRoundnessHandle</name>
     <message>
         <source>Edit %1</source>
-        <translation type="unfinished">%1 を編集</translation>
+        <translation>%1 を編集</translation>
     </message>
     <message>
         <source>Roundness</source>
-        <translation type="unfinished"></translation>
+        <translation>角の丸み</translation>
     </message>
 </context>
 <context>
@@ -12723,15 +12795,15 @@
     </message>
     <message>
         <source>Clip</source>
-        <translation type="unfinished">クリップ</translation>
+        <translation>クリップ</translation>
     </message>
     <message>
         <source>%1 mask</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 マスク</translation>
     </message>
     <message>
         <source>Clips used as mask</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップをマスクとして使用しました</translation>
     </message>
     <message>
         <source>Cutouts can&apos;t be moved yet</source>
@@ -12875,7 +12947,7 @@
     </message>
     <message>
         <source>Split</source>
-        <translation type="unfinished">分割</translation>
+        <translation>分割</translation>
     </message>
     <message>
         <source>Matte</source>
@@ -12883,7 +12955,7 @@
     </message>
     <message>
         <source>Sequence matte</source>
-        <translation type="unfinished"></translation>
+        <translation>シーケンスマット</translation>
     </message>
     <message>
         <source>Mask</source>
@@ -13352,7 +13424,7 @@
     </message>
     <message>
         <source>Edit mask timeline</source>
-        <translation type="unfinished"></translation>
+        <translation>マスクタイムラインを編集</translation>
     </message>
 </context>
 <context>
@@ -13387,7 +13459,7 @@
     </message>
     <message>
         <source>Split</source>
-        <translation type="unfinished">分割</translation>
+        <translation>分割</translation>
     </message>
     <message>
         <source>Combine</source>
@@ -13415,7 +13487,7 @@
     </message>
     <message>
         <source>Roundness</source>
-        <translation type="unfinished"></translation>
+        <translation>角の丸み</translation>
     </message>
     <message>
         <source>Center X</source>
@@ -13447,35 +13519,35 @@
     </message>
     <message>
         <source>Lock aspect ratio</source>
-        <translation type="unfinished"></translation>
+        <translation>アスペクト比を固定</translation>
     </message>
     <message>
         <source>Matte channel</source>
-        <translation type="unfinished"></translation>
+        <translation>マットチャンネル</translation>
     </message>
     <message>
         <source>Alpha (transparency)</source>
-        <translation type="unfinished">アルファ (透明度)</translation>
+        <translation>アルファ (透明度)</translation>
     </message>
     <message>
         <source>Luma (brightness)</source>
-        <translation type="unfinished">ルマ (輝度)</translation>
+        <translation>ルマ (輝度)</translation>
     </message>
     <message>
         <source>Fit</source>
-        <translation type="unfinished">フィット</translation>
+        <translation>フィット</translation>
     </message>
     <message>
         <source>Stretch</source>
-        <translation type="unfinished">ストレッチ</translation>
+        <translation>ストレッチ</translation>
     </message>
     <message>
         <source>Fill</source>
-        <translation type="unfinished">フィル</translation>
+        <translation>フィル</translation>
     </message>
     <message>
         <source>Edit mask timeline</source>
-        <translation type="unfinished"></translation>
+        <translation>マスクタイムラインを編集</translation>
     </message>
     <message>
         <source>Invert</source>
@@ -13545,7 +13617,7 @@
     <name>McpController</name>
     <message>
         <source>Relink media</source>
-        <translation type="unfinished">メディアを再リンク</translation>
+        <translation>メディアを再リンク</translation>
     </message>
 </context>
 <context>
@@ -14009,11 +14081,11 @@
     </message>
     <message>
         <source>The project was closed before the replace landed</source>
-        <translation type="unfinished"></translation>
+        <translation>置き換えが完了する前にプロジェクトが閉じられました</translation>
     </message>
     <message>
         <source>The project was closed before the edit landed</source>
-        <translation type="unfinished"></translation>
+        <translation>編集が完了する前にプロジェクトが閉じられました</translation>
     </message>
     <message>
         <source>Relink media</source>
@@ -14027,7 +14099,7 @@
     </message>
     <message>
         <source>Track is locked</source>
-        <translation type="unfinished">トラックはロックされています</translation>
+        <translation>トラックはロックされています</translation>
     </message>
     <message>
         <source>Sub-clip added</source>
@@ -16986,7 +17058,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>If Drift crashes, it sends an error report to help fix it. No project files or media are included. You can turn this off in Settings.</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift がクラッシュした場合、問題の修正に役立てるためエラーレポートを送信します。プロジェクトファイルやメディアは含まれません。この設定は「設定」でオフにできます。</translation>
     </message>
 </context>
 <context>
@@ -17962,15 +18034,15 @@ If playback stutters, try another.</source>
     <name>SectionedAssetGrid</name>
     <message>
         <source>Mine</source>
-        <translation type="unfinished"></translation>
+        <translation>マイアイテム</translation>
     </message>
     <message>
         <source>Favorites</source>
-        <translation type="unfinished">お気に入り</translation>
+        <translation>お気に入り</translation>
     </message>
     <message>
         <source>Recent</source>
-        <translation type="unfinished">最近使用</translation>
+        <translation>最近使用</translation>
     </message>
 </context>
 <context>
@@ -18217,15 +18289,15 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Save diagnostics</source>
-        <translation type="unfinished"></translation>
+        <translation>診断情報を保存</translation>
     </message>
     <message>
         <source>Saves an archive with your logs and system information to attach to a bug report.</source>
-        <translation type="unfinished"></translation>
+        <translation>バグ報告に添付するためのログとシステム情報を含むアーカイブを保存します。</translation>
     </message>
     <message>
         <source>Save diagnostics…</source>
-        <translation type="unfinished"></translation>
+        <translation>診断情報を保存…</translation>
     </message>
     <message>
         <source>Help</source>
@@ -18857,15 +18929,15 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Privacy</source>
-        <translation type="unfinished"></translation>
+        <translation>プライバシー</translation>
     </message>
     <message>
         <source>Send crash reports automatically</source>
-        <translation type="unfinished"></translation>
+        <translation>クラッシュレポートを自動送信</translation>
     </message>
     <message>
         <source>After a crash, send the error details, a short scrubbed log and your system and graphics information to help fix it. No project files or media.</source>
-        <translation type="unfinished"></translation>
+        <translation>クラッシュ発生後、問題の修正に役立てるため、エラーの詳細、個人情報を除外した短いログ、システムおよびグラフィックス情報を送信します。プロジェクトファイルやメディアは含まれません。</translation>
     </message>
     <message>
         <source>Storage</source>
@@ -23352,7 +23424,7 @@ If playback stutters, try another.</source>
     <name>TextInspectorAnimCategoryStrip</name>
     <message>
         <source>Favorites</source>
-        <translation type="unfinished">お気に入り</translation>
+        <translation>お気に入り</translation>
     </message>
     <message>
         <source>All</source>
@@ -24239,19 +24311,19 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Enable clip</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップを有効化</translation>
     </message>
     <message>
         <source>Disable clip</source>
-        <translation type="unfinished"></translation>
+        <translation>クリップを無効化</translation>
     </message>
     <message>
         <source>Stop looping</source>
-        <translation type="unfinished"></translation>
+        <translation>ループを停止</translation>
     </message>
     <message>
         <source>Loop</source>
-        <translation type="unfinished">ループ</translation>
+        <translation>ループ</translation>
     </message>
     <message>
         <source>Remove silence</source>
@@ -24271,11 +24343,11 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Use as mask (nested timeline)</source>
-        <translation type="unfinished"></translation>
+        <translation>マスクとして使用 (ネストされたタイムライン)</translation>
     </message>
     <message>
         <source>Open mask timeline</source>
-        <translation type="unfinished"></translation>
+        <translation>マスクタイムラインを開く</translation>
     </message>
     <message>
         <source>Convert to edit-friendly format</source>
@@ -24415,7 +24487,7 @@ If playback stutters, try another.</source>
     <name>TimelineFadeHandle</name>
     <message>
         <source>%1s</source>
-        <translation type="unfinished">%1s</translation>
+        <translation>%1s</translation>
     </message>
     <message>
         <source>Adjust fade</source>
@@ -24526,51 +24598,51 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Paste here</source>
-        <translation type="unfinished"></translation>
+        <translation>ここに貼り付け</translation>
     </message>
     <message>
         <source>Add bookmark here</source>
-        <translation type="unfinished"></translation>
+        <translation>ここにブックマークを追加</translation>
     </message>
     <message>
         <source>Select clips on track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラック上のクリップを選択</translation>
     </message>
     <message>
         <source>Select clips after here on track</source>
-        <translation type="unfinished"></translation>
+        <translation>トラック上のここ以降のクリップを選択</translation>
     </message>
     <message>
         <source>Select all clips</source>
-        <translation type="unfinished">すべてのクリップを選択</translation>
+        <translation>すべてのクリップを選択</translation>
     </message>
     <message>
         <source>Unmute track</source>
-        <translation type="unfinished">トラックのミュートを解除</translation>
+        <translation>トラックのミュートを解除</translation>
     </message>
     <message>
         <source>Mute track</source>
-        <translation type="unfinished">トラックをミュート</translation>
+        <translation>トラックをミュート</translation>
     </message>
     <message>
         <source>Show track</source>
-        <translation type="unfinished">トラックを表示</translation>
+        <translation>トラックを表示</translation>
     </message>
     <message>
         <source>Hide track</source>
-        <translation type="unfinished">トラックを非表示</translation>
+        <translation>トラックを非表示</translation>
     </message>
     <message>
         <source>Unlock track</source>
-        <translation type="unfinished">トラックのロックを解除</translation>
+        <translation>トラックのロックを解除</translation>
     </message>
     <message>
         <source>Lock track</source>
-        <translation type="unfinished">トラックをロック</translation>
+        <translation>トラックをロック</translation>
     </message>
     <message>
         <source>Remove empty tracks</source>
-        <translation type="unfinished">空のトラックを削除</translation>
+        <translation>空のトラックを削除</translation>
     </message>
     <message>
         <source>Rename bookmark</source>
@@ -24659,7 +24731,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>New timeline</source>
-        <translation type="unfinished"></translation>
+        <translation>新規タイムライン</translation>
     </message>
 </context>
 <context>
@@ -24953,11 +25025,11 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Effect</source>
-        <translation type="unfinished">エフェクト</translation>
+        <translation>エフェクト</translation>
     </message>
     <message>
         <source>%1 (off)</source>
-        <translation type="unfinished">%1 (オフ)</translation>
+        <translation>%1 (オフ)</translation>
     </message>
     <message>
         <source>Audio adjustment</source>
@@ -24988,7 +25060,7 @@ If playback stutters, try another.</source>
     <name>TimelineTrimHandle</name>
     <message>
         <source>Drag to repeat the clip</source>
-        <translation type="unfinished"></translation>
+        <translation>ドラッグしてクリップをリピート</translation>
     </message>
     <message>
         <source>Drag to trim the start</source>
@@ -25212,11 +25284,11 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Include in export</source>
-        <translation type="unfinished"></translation>
+        <translation>エクスポートに含める</translation>
     </message>
     <message>
         <source>Exclude from export</source>
-        <translation type="unfinished"></translation>
+        <translation>エクスポートから除外</translation>
     </message>
     <message>
         <source>Add camera clip at playhead</source>
@@ -25392,11 +25464,11 @@ If playback stutters, try another.</source>
     <name>TrackHeaderName</name>
     <message>
         <source>not exported</source>
-        <translation type="unfinished"></translation>
+        <translation>エクスポートされません</translation>
     </message>
     <message>
         <source>Shown while editing, left out of every export</source>
-        <translation type="unfinished"></translation>
+        <translation>編集中は表示されますが、すべてのエクスポートから除外されます</translation>
     </message>
 </context>
 <context>
@@ -26256,11 +26328,11 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Reset position</source>
-        <translation type="unfinished"></translation>
+        <translation>位置をリセット</translation>
     </message>
     <message>
         <source>Reset size</source>
-        <translation type="unfinished"></translation>
+        <translation>サイズをリセット</translation>
     </message>
     <message>
         <source>Edit width and height separately</source>
@@ -26295,20 +26367,16 @@ If playback stutters, try another.</source>
         <translation>スケールキーフレームを追加</translation>
     </message>
     <message>
-        <source>Scale origin</source>
-        <translation>スケールの原点</translation>
-    </message>
-    <message>
         <source>Opacity &amp; rotation</source>
         <translation>不透明度 / 回転</translation>
     </message>
     <message>
         <source>Reset opacity</source>
-        <translation type="unfinished"></translation>
+        <translation>不透明度をリセット</translation>
     </message>
     <message>
         <source>Reset rotation</source>
-        <translation type="unfinished">回転をリセット</translation>
+        <translation>回転をリセット</translation>
     </message>
     <message>
         <source>Rotate the whole group as one flat card</source>
@@ -26328,7 +26396,7 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Reset all</source>
-        <translation type="unfinished">すべてリセット</translation>
+        <translation>すべてリセット</translation>
     </message>
     <message>
         <source>Rotation</source>
@@ -28172,31 +28240,31 @@ If playback stutters, try another.</source>
     <name>drift::crash</name>
     <message>
         <source>Drift ran out of memory. Close other programs, or work with smaller or lower-resolution media.</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift のメモリが不足しました。他のプログラムを閉じるか、より小さいファイルまたは低解像度のメディアを使用してください。</translation>
     </message>
     <message>
         <source>A Windows component Drift depends on looks out of date. Update the Microsoft Visual C++ Redistributable.</source>
-        <translation type="unfinished"></translation>
+        <translation>Drift が依存している Windows コンポーネントが古いようです。Microsoft Visual C++ 再頒布可能パッケージを更新してください。</translation>
     </message>
     <message>
         <source>Download the Visual C++ Redistributable</source>
-        <translation type="unfinished"></translation>
+        <translation>Visual C++ 再頒布可能パッケージをダウンロード</translation>
     </message>
     <message>
         <source>The graphics driver stopped responding. Update your graphics driver, or try another graphics backend in Settings.</source>
-        <translation type="unfinished"></translation>
+        <translation>グラフィックスドライバーが応答を停止しました。グラフィックスドライバーを更新するか、「設定」で別のグラフィックスバックエンドを試してください。</translation>
     </message>
     <message>
         <source>An add-on crashed. Try disabling or reinstalling your add-ons.</source>
-        <translation type="unfinished"></translation>
+        <translation>アドオンがクラッシュしました。アドオンを無効化するか、再インストールしてみてください。</translation>
     </message>
     <message>
         <source>The add-on &quot;%1&quot; crashed. Try updating or reinstalling it.</source>
-        <translation type="unfinished"></translation>
+        <translation>アドオン「%1」がクラッシュしました。更新するか、再インストールしてみてください。</translation>
     </message>
     <message>
         <source>Drift closed unexpectedly during your last session.</source>
-        <translation type="unfinished"></translation>
+        <translation>前回のセッションで Drift が予期せず終了しました。</translation>
     </message>
 </context>
 <context>

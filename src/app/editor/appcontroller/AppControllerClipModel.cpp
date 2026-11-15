@@ -397,6 +397,14 @@ QString normalizeKeyframeProp(const QString &prop)
     // are camelCase members ("text.pixelSize", "shape.cornerRadius") and SVG element ids are
     // case-sensitive, so they pass through like effect params.
     const QString trimmed = prop.trimmed();
+    static const QStringList camelCase = {
+        QStringLiteral("positionX"), QStringLiteral("positionY"), QStringLiteral("scaleX"),
+        QStringLiteral("scaleY"),    QStringLiteral("rotationX"), QStringLiteral("rotationY"),
+        QStringLiteral("anchorX"),   QStringLiteral("anchorY"),   QStringLiteral("anchorZ")};
+    for (const QString &name : camelCase) {
+        if (trimmed.compare(name, Qt::CaseInsensitive) == 0)
+            return name;
+    }
     return trimmed.startsWith(QLatin1String("fx.")) || trimmed.startsWith(QLatin1String("afx."))
                    || trimmed.startsWith(QLatin1String("text."))
                    || trimmed.startsWith(QLatin1String("shape.")) || trimmed.startsWith(QLatin1String("vector."))
@@ -644,10 +652,10 @@ QVariantMap keyframesToMap(const drift::Clip &clip)
 {
     return {
         {QStringLiteral("opacity"), keyframeTrackToMap(clip.opacity, clip.timelineStart)},
-        {QStringLiteral("x"), keyframeTrackToMap(clip.transformX, clip.timelineStart)},
-        {QStringLiteral("y"), keyframeTrackToMap(clip.transformY, clip.timelineStart)},
-        {QStringLiteral("width"), keyframeTrackToMap(clip.transformW, clip.timelineStart)},
-        {QStringLiteral("height"), keyframeTrackToMap(clip.transformH, clip.timelineStart)},
+        {QStringLiteral("positionX"), keyframeTrackToMap(clip.positionX, clip.timelineStart)},
+        {QStringLiteral("positionY"), keyframeTrackToMap(clip.positionY, clip.timelineStart)},
+        {QStringLiteral("scaleX"), keyframeTrackToMap(clip.scaleX, clip.timelineStart)},
+        {QStringLiteral("scaleY"), keyframeTrackToMap(clip.scaleY, clip.timelineStart)},
         {QStringLiteral("rotation"), keyframeTrackToMap(clip.rotation, clip.timelineStart)},
         {QStringLiteral("rotationX"), keyframeTrackToMap(clip.rotationX, clip.timelineStart)},
         {QStringLiteral("rotationY"), keyframeTrackToMap(clip.rotationY, clip.timelineStart)},
@@ -756,10 +764,10 @@ void remapKeyframeTrack(drift::KeyframeTrack<T> &dst, const drift::KeyframeTrack
 void remapKeyframesForRetime(drift::Clip &dst, const drift::Clip &src)
 {
     remapKeyframeTrack(dst.opacity, src.opacity, src, dst);
-    remapKeyframeTrack(dst.transformX, src.transformX, src, dst);
-    remapKeyframeTrack(dst.transformY, src.transformY, src, dst);
-    remapKeyframeTrack(dst.transformW, src.transformW, src, dst);
-    remapKeyframeTrack(dst.transformH, src.transformH, src, dst);
+    remapKeyframeTrack(dst.positionX, src.positionX, src, dst);
+    remapKeyframeTrack(dst.positionY, src.positionY, src, dst);
+    remapKeyframeTrack(dst.scaleX, src.scaleX, src, dst);
+    remapKeyframeTrack(dst.scaleY, src.scaleY, src, dst);
     remapKeyframeTrack(dst.rotation, src.rotation, src, dst);
     remapKeyframeTrack(dst.rotationX, src.rotationX, src, dst);
     remapKeyframeTrack(dst.rotationY, src.rotationY, src, dst);
@@ -829,16 +837,33 @@ void AppController::clearPose3d(drift::Clip &clip)
 namespace drift::appdetail {
 
 
-void setClipLayoutPixels(drift::Clip &clip, double x, double y, double w, double h)
+void clearClipLayout(drift::Clip &clip)
 {
-    clip.transformX = {};
-    clip.transformY = {};
-    clip.transformW = {};
-    clip.transformH = {};
-    clip.transformX.setKeyframe(0, x);
-    clip.transformY.setKeyframe(0, y);
-    clip.transformW.setKeyframe(0, qMax(1.0, w));
-    clip.transformH.setKeyframe(0, qMax(1.0, h));
+    clip.positionX = {};
+    clip.positionY = {};
+    clip.scaleX = {};
+    clip.scaleY = {};
+    clip.frameW = 0.0;
+    clip.frameH = 0.0;
+}
+
+void refreshClipFrame(const drift::Project &project, drift::Clip &clip)
+{
+    if (clip.type != drift::ClipType::Video && clip.type != drift::ClipType::Image
+        && clip.type != drift::ClipType::Pdf && clip.type != drift::ClipType::Vector)
+        return;
+    const QSizeF fit = drift::clipFitFrameSize(project, clip);
+    clip.frameW = fit.width();
+    clip.frameH = fit.height();
+}
+
+void setClipFrameBox(drift::Clip &clip, double x, double y, double w, double h)
+{
+    clearClipLayout(clip);
+    clip.frameW = qMax(1.0, w);
+    clip.frameH = qMax(1.0, h);
+    clip.positionX.setKeyframe(0, x + clip.frameW / 2.0);
+    clip.positionY.setKeyframe(0, y + clip.frameH / 2.0);
 }
 
 } // namespace drift::appdetail
@@ -886,13 +911,25 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip, const drift::Clip 
     for (int i = 0; i < audioHost.audioEffects.size(); ++i)
         audioEffects.append(audioEffectToMap(audioHost.audioEffects.at(i), i, clip.timelineStart));
 
-    QVariantList fadeShape;
-    for (const QPointF &pt : clip.fadeShape.points()) {
-        fadeShape.append(QVariantMap{
-            {QStringLiteral("t"), pt.x()},
-            {QStringLiteral("g"), pt.y()},
-        });
-    }
+    const auto fadeShapePoints = [](const drift::FadeShape &shape) {
+        QVariantList points;
+        for (const QPointF &pt : shape.points()) {
+            points.append(QVariantMap{
+                {QStringLiteral("t"), pt.x()},
+                {QStringLiteral("g"), pt.y()},
+            });
+        }
+        return points;
+    };
+    const auto animToMap = [](const drift::ClipAnimation &anim) {
+        return QVariantMap{
+            {QStringLiteral("kind"), anim.kindId.isEmpty() ? QStringLiteral("none") : anim.kindId},
+            {QStringLiteral("parameters"), QVariant::fromValue(anim.parameters)},
+            {QStringLiteral("duration"), drift::usToSeconds(anim.durationUs)},
+            {QStringLiteral("curve"), drift::fadeCurveToString(anim.curve)},
+            {QStringLiteral("handles"), handlesToVariant(anim.shape)},
+        };
+    };
 
     // Full source length backs the filmstrip's timestamp mapping (the strip is sampled across
     // the whole source, so tiles need the total to place srcIn/srcOut within it).
@@ -929,6 +966,8 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip, const drift::Clip 
         {QStringLiteral("enabled"), clip.enabled},
         {QStringLiteral("flipH"), clip.flipH},
         {QStringLiteral("layer3d"), clip.layer3d},
+        {QStringLiteral("frameW"), clip.frameW > 0.0 ? clip.frameW : double(m_project.width())},
+        {QStringLiteral("frameH"), clip.frameH > 0.0 ? clip.frameH : double(m_project.height())},
         {QStringLiteral("depthOcclude"), clip.depthOcclude},
         {QStringLiteral("aimAtTarget"), clip.aimAtTarget},
         {QStringLiteral("flipV"), clip.flipV},
@@ -981,27 +1020,16 @@ QVariantMap AppController::clipToMap(const drift::Clip &clip, const drift::Clip 
         {QStringLiteral("audioStreamIndex"), clip.audioStreamIndex},
         {QStringLiteral("pan"), clip.pan},
         {QStringLiteral("volume"), clip.volume.isEmpty() ? 1.0 : clip.volume.evaluateAt(0)},
-        {QStringLiteral("fadeIn"), drift::usToSeconds(edgeHandleUs(clip, true))},
-        {QStringLiteral("fadeOut"), drift::usToSeconds(edgeHandleUs(clip, false))},
-        {QStringLiteral("fadeCurve"), drift::fadeCurveToString(clip.fadeCurve)},
-        {QStringLiteral("fadeShape"), fadeShape},
-        {QStringLiteral("fadeHandles"),
-         QVariantList{clip.fadeShape.handle1().x(), clip.fadeShape.handle1().y(),
-                      clip.fadeShape.handle2().x(), clip.fadeShape.handle2().y()}},
-        {QStringLiteral("animIn"), QVariantMap{
-             {QStringLiteral("kind"), drift::clipAnimKindToString(clip.animIn.kind)},
-             {QStringLiteral("duration"), drift::usToSeconds(clip.animIn.durationUs)},
-             {QStringLiteral("ease"), drift::clipAnimEaseToString(clip.animIn.ease)},
-             {QStringLiteral("curve"), drift::fadeCurveToString(clip.animIn.curve)},
-             {QStringLiteral("handles"), handlesToVariant(clip.animIn.shape)},
-         }},
-        {QStringLiteral("animOut"), QVariantMap{
-             {QStringLiteral("kind"), drift::clipAnimKindToString(clip.animOut.kind)},
-             {QStringLiteral("duration"), drift::usToSeconds(clip.animOut.durationUs)},
-             {QStringLiteral("ease"), drift::clipAnimEaseToString(clip.animOut.ease)},
-             {QStringLiteral("curve"), drift::fadeCurveToString(clip.animOut.curve)},
-             {QStringLiteral("handles"), handlesToVariant(clip.animOut.shape)},
-         }},
+        {QStringLiteral("fadeIn"), drift::usToSeconds(clip.fadeInUs)},
+        {QStringLiteral("fadeOut"), drift::usToSeconds(clip.fadeOutUs)},
+        {QStringLiteral("fadeInCurve"), drift::fadeCurveToString(clip.fadeInCurve)},
+        {QStringLiteral("fadeInShape"), fadeShapePoints(clip.fadeInShape)},
+        {QStringLiteral("fadeInHandles"), handlesToVariant(clip.fadeInShape)},
+        {QStringLiteral("fadeOutCurve"), drift::fadeCurveToString(clip.fadeOutCurve)},
+        {QStringLiteral("fadeOutShape"), fadeShapePoints(clip.fadeOutShape)},
+        {QStringLiteral("fadeOutHandles"), handlesToVariant(clip.fadeOutShape)},
+        {QStringLiteral("animIn"), animToMap(clip.animIn)},
+        {QStringLiteral("animOut"), animToMap(clip.animOut)},
         {QStringLiteral("effects"), effects},
         {QStringLiteral("audioEffects"), audioEffects},
         {QStringLiteral("keyframes"), keyframesToMap(clip)},
@@ -1075,27 +1103,36 @@ TimelineClipsModel::Row AppController::clipRow(const drift::Clip &clip,
     // audio stream. An unprobed source gets the benefit of the doubt; its waveform stays empty.
     row.hasEmbeddedAudio = clip.type == drift::ClipType::Video && !clip.suppressEmbeddedAudio
         && (!sourceAsset || !sourceAsset->hasAudioKnown || sourceAsset->hasAudio);
-    row.fadeIn = drift::usToSeconds(edgeHandleUs(clip, true));
-    row.fadeOut = drift::usToSeconds(edgeHandleUs(clip, false));
-    row.fadeCurve = drift::fadeCurveToString(clip.fadeCurve);
+    row.fadeIn = drift::usToSeconds(clip.fadeInUs);
+    row.fadeOut = drift::usToSeconds(clip.fadeOutUs);
+    row.fadeInCurve = drift::fadeCurveToString(clip.fadeInCurve);
+    row.fadeOutCurve = drift::fadeCurveToString(clip.fadeOutCurve);
     // Only a Custom curve is drawn from these points, and the strip keys its fade canvases on
     // the list — so it has to be present, not populated.
-    if (clip.fadeCurve == drift::FadeCurve::Custom) {
-        for (const QPointF &pt : clip.fadeShape.points()) {
-            row.fadeShape.append(QVariantMap{
-                {QStringLiteral("t"), pt.x()},
-                {QStringLiteral("g"), pt.y()},
-            });
+    const auto customPoints = [](drift::FadeCurve curve, const drift::FadeShape &shape) {
+        QVariantList points;
+        if (curve == drift::FadeCurve::Custom) {
+            for (const QPointF &pt : shape.points()) {
+                points.append(QVariantMap{
+                    {QStringLiteral("t"), pt.x()},
+                    {QStringLiteral("g"), pt.y()},
+                });
+            }
         }
-    }
-    row.fadeHandles = QVariantList{clip.fadeShape.handle1().x(), clip.fadeShape.handle1().y(),
-                                   clip.fadeShape.handle2().x(), clip.fadeShape.handle2().y()};
+        return points;
+    };
+    row.fadeInShape = customPoints(clip.fadeInCurve, clip.fadeInShape);
+    row.fadeOutShape = customPoints(clip.fadeOutCurve, clip.fadeOutShape);
+    row.fadeInHandles = handlesToVariant(clip.fadeInShape);
+    row.fadeOutHandles = handlesToVariant(clip.fadeOutShape);
     for (const drift::Effect &effect : videoHost.effects)
         row.effects.append(effectBadgeToMap(effect));
     for (const drift::Effect &effect : audioHost.audioEffects)
         row.audioEffects.append(audioEffectBadgeToMap(effect));
-    row.fadeCurveTyped = clip.fadeCurve;
-    row.fadeShapeTyped = clip.fadeShape;
+    row.fadeInCurveTyped = clip.fadeInCurve;
+    row.fadeInShapeTyped = clip.fadeInShape;
+    row.fadeOutCurveTyped = clip.fadeOutCurve;
+    row.fadeOutShapeTyped = clip.fadeOutShape;
     QStringList effectNames;
     for (const QVariantList *list : {&row.effects, &row.audioEffects}) {
         for (const QVariant &value : *list) {
@@ -1541,36 +1578,10 @@ bool AppController::setAssetRotation(int assetIndex, int degrees)
 
 void AppController::writeClipSourceFrame(int t, int c, const QRectF &frame, double turn)
 {
-    const QRectF previousFrame = m_project.tracks().at(t).clips.at(c).sourceFrame;
     auto &clip = m_project.tracks()[t].clips[c];
     clip.sourceFrame = frame;
     clip.sourceFrameAngle = turn;
-    if (const auto *asset = m_project.asset(clip.assetId)) {
-        // Displayed orientation: the file's own tag plus this clip's correction, as decoded.
-        int sw = asset->width, sh = asset->height;
-        if (qAbs(asset->rotationDegrees + clip.rotationCorrection) % 180 == 90)
-            std::swap(sw, sh);
-        if (sw > 0 && sh > 0) {
-            const auto fittedSize = [&](const QRectF &r) {
-                QSizeF size(sw * r.width(), sh * r.height());
-                size.scale(QSizeF(m_project.width(), m_project.height()), Qt::KeepAspectRatio);
-                return size;
-            };
-            const QSizeF previous = fittedSize(previousFrame), next = fittedSize(frame);
-            const auto scaleTrack = [](drift::KeyframeTrack<double> &track, double ratio) {
-                const auto keys = track.keyframes();
-                for (auto it = keys.cbegin(); it != keys.cend(); ++it) {
-                    auto key = it.value();
-                    key.value *= ratio;
-                    key.inDy *= ratio;
-                    key.outDy *= ratio;
-                    track.setKeyframe(it.key(), key);
-                }
-            };
-            scaleTrack(clip.transformW, next.width() / previous.width());
-            scaleTrack(clip.transformH, next.height() / previous.height());
-        }
-    }
+    refreshClipFrame(m_project, clip);
 }
 
 bool AppController::setClipSourceFrame(const QString &clipId, double x, double y, double w, double h,

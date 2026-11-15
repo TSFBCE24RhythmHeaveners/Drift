@@ -440,6 +440,61 @@
     </message>
 </context>
 <context>
+    <name>AndroidAnimationPage</name>
+    <message>
+        <source>None</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 s</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>In</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade also ramps the volume.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade ramps the volume.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade in</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade curve</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Animation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Duration</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Animation curve</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Letter and word animations live in Text animation. This moves the whole clip.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>AndroidBackgroundPage</name>
     <message>
         <source>Choose background image</source>
@@ -518,6 +573,10 @@
     </message>
     <message>
         <source>Stabilize</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -939,33 +998,6 @@
     <name>AndroidExtrasPage</name>
     <message>
         <source>Extras</source>
-        <translation type="unfinished"></translation>
-    </message>
-</context>
-<context>
-    <name>AndroidFadeSheet</name>
-    <message>
-        <source>Fade</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>%1 s</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Fade in</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Fade out</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Curve</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -2405,21 +2437,6 @@
     </message>
 </context>
 <context>
-    <name>AndroidVolumePage</name>
-    <message>
-        <source>%1 s</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Fade in</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Fade out</source>
-        <translation type="unfinished"></translation>
-    </message>
-</context>
-<context>
     <name>AnimationInspector</name>
     <message>
         <source>None</source>
@@ -2430,19 +2447,35 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Fade in</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Animation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade and motion combine — fade also ramps the volume.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade ramps the volume in and out.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Slide up</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Slide down</source>
+        <source>Fade and animation in</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Slide left</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Slide right</source>
+        <source>Fade and animation out</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -2450,19 +2483,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Zoom out</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Pop</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Spin CW</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Spin CCW</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -2478,18 +2499,6 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Fade in / out (volume)</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Style</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Pick how the clip enters and leaves. Fade is one option — same style controls as slide or zoom.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Clear</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2498,23 +2507,11 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>In animation</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Out</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Out animation</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Custom curve</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Edit custom curve…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -6646,6 +6643,49 @@
     </message>
 </context>
 <context>
+    <name>ClipAnimation</name>
+    <message>
+        <source>Slide up</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Slide down</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Slide left</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Slide right</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zoom out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Spin CW</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Spin CCW</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bounce</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>CloudProviders</name>
     <message>
         <source>No key set</source>
@@ -7307,6 +7347,10 @@
     </message>
     <message>
         <source>Custom fade applied</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom animation curve applied</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -9961,6 +10005,22 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Out animation curve</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>In animation curve</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade out curve</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade in curve</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Progress curve — %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -9969,11 +10029,15 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Fade shape — %1</source>
+        <source>%1 — %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Fade shape</source>
+        <source>In</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Out</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -10013,7 +10077,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Drag the middle points to shape the ramp (ends stay silent→full). Double-click to add a point; Delete removes the selection.</source>
+        <source>Drag the middle points to shape the ramp (ends stay pinned). Double-click to add a point; Delete removes the selection.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -10914,6 +10978,14 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Scale X</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Scale Y</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Anchor X</source>
         <translation type="unfinished"></translation>
     </message>
@@ -11068,11 +11140,11 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Width</source>
+        <source>Scale X</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Height</source>
+        <source>Scale Y</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -26367,10 +26439,6 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Add scale keyframe</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Scale origin</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

@@ -623,14 +623,10 @@ void AppController::applyEffectTemplateInternal(int trackIndex, int clipIndex,
                 pinMatte(clone, false);
                 if (i < entry.clones.scales.size()) {
                     const double scale = entry.clones.scales.at(i);
-                    const double w = sourceClip.transformW.isEmpty()
-                                           ? static_cast<double>(m_project.width())
-                                           : sourceClip.transformW.evaluateAt(0);
-                    const double h = sourceClip.transformH.isEmpty()
-                                           ? static_cast<double>(m_project.height())
-                                           : sourceClip.transformH.evaluateAt(0);
-                    clone.transformW.setKeyframe(0, w * scale);
-                    clone.transformH.setKeyframe(0, h * scale);
+                    const double sx = sourceClip.scaleX.isEmpty() ? 1.0 : sourceClip.scaleX.evaluateAt(0);
+                    const double sy = sourceClip.scaleY.isEmpty() ? 1.0 : sourceClip.scaleY.evaluateAt(0);
+                    clone.scaleX.setKeyframe(0, sx * scale);
+                    clone.scaleY.setKeyframe(0, sy * scale);
                 }
                 if (const EffectTemplateTrack *cloneDef =
                         trackForRole(entry, QStringLiteral("clone"))) {
@@ -678,14 +674,10 @@ void AppController::applyEffectTemplateInternal(int trackIndex, int clipIndex,
                     clone.opacity.setKeyframe(0, opacity);
                     if (i < entry.clones.scales.size()) {
                         const double scale = entry.clones.scales.at(i);
-                        const double w = sourceClip.transformW.isEmpty()
-                                               ? static_cast<double>(m_project.width())
-                                               : sourceClip.transformW.evaluateAt(0);
-                        const double h = sourceClip.transformH.isEmpty()
-                                               ? static_cast<double>(m_project.height())
-                                               : sourceClip.transformH.evaluateAt(0);
-                        clone.transformW.setKeyframe(0, w * scale);
-                        clone.transformH.setKeyframe(0, h * scale);
+                        const double sx = sourceClip.scaleX.isEmpty() ? 1.0 : sourceClip.scaleX.evaluateAt(0);
+                        const double sy = sourceClip.scaleY.isEmpty() ? 1.0 : sourceClip.scaleY.evaluateAt(0);
+                        clone.scaleX.setKeyframe(0, sx * scale);
+                        clone.scaleY.setKeyframe(0, sy * scale);
                     }
                     if (const EffectTemplateTrack *cloneDef =
                             trackForRole(entry, QStringLiteral("clone"))) {
@@ -2069,15 +2061,15 @@ QVariantMap AppController::clipboardAttributes() const
     const bool isVisual = (c.type != drift::ClipType::Audio);
     out.insert(QStringLiteral("isVisual"), isVisual);
 
-    const bool hasTransform = isVisual && (!c.transformX.isEmpty() || !c.transformY.isEmpty()
-                                           || !c.transformW.isEmpty() || !c.transformH.isEmpty()
+    const bool hasTransform = isVisual && (!c.positionX.isEmpty() || !c.positionY.isEmpty()
+                                           || !c.scaleX.isEmpty() || !c.scaleY.isEmpty()
                                            || !c.rotation.isEmpty() || !c.opacity.isEmpty()
                                            || c.layer3d
                                            || c.blendMode != drift::BlendMode::Normal
                                            || c.flipH || c.flipV
                                            || !item.masks.isEmpty()
-                                           || c.animIn.kind != drift::ClipAnimKind::None
-                                           || c.animOut.kind != drift::ClipAnimKind::None);
+                                           || !c.animIn.isNone()
+                                           || !c.animOut.isNone());
     out.insert(QStringLiteral("hasTransform"), hasTransform);
 
     const bool isAudioOrVideo = (c.type == drift::ClipType::Video || c.type == drift::ClipType::Audio);
@@ -2193,10 +2185,10 @@ void AppController::pasteAttributes(const QVariantMap &options)
 
         // 2. Transform / Motion
         if (pasteTransform && targetIsVisual) {
-            targetClip.transformX = rescaleKeyframeTrackTimes(sourceClip.transformX, srcDurationUs, targetDurationUs);
-            targetClip.transformY = rescaleKeyframeTrackTimes(sourceClip.transformY, srcDurationUs, targetDurationUs);
-            targetClip.transformW = rescaleKeyframeTrackTimes(sourceClip.transformW, srcDurationUs, targetDurationUs);
-            targetClip.transformH = rescaleKeyframeTrackTimes(sourceClip.transformH, srcDurationUs, targetDurationUs);
+            targetClip.positionX = rescaleKeyframeTrackTimes(sourceClip.positionX, srcDurationUs, targetDurationUs);
+            targetClip.positionY = rescaleKeyframeTrackTimes(sourceClip.positionY, srcDurationUs, targetDurationUs);
+            targetClip.scaleX = rescaleKeyframeTrackTimes(sourceClip.scaleX, srcDurationUs, targetDurationUs);
+            targetClip.scaleY = rescaleKeyframeTrackTimes(sourceClip.scaleY, srcDurationUs, targetDurationUs);
             targetClip.rotation = rescaleKeyframeTrackTimes(sourceClip.rotation, srcDurationUs, targetDurationUs);
             targetClip.rotationX = rescaleKeyframeTrackTimes(sourceClip.rotationX, srcDurationUs, targetDurationUs);
             targetClip.rotationY = rescaleKeyframeTrackTimes(sourceClip.rotationY, srcDurationUs, targetDurationUs);
@@ -2231,8 +2223,10 @@ void AppController::pasteAttributes(const QVariantMap &options)
             targetClip.volume = rescaleKeyframeTrackTimes(sourceClip.volume, srcDurationUs, targetDurationUs);
             targetClip.fadeInUs = qMin(sourceClip.fadeInUs, targetDurationUs);
             targetClip.fadeOutUs = qMin(sourceClip.fadeOutUs, targetDurationUs);
-            targetClip.fadeCurve = sourceClip.fadeCurve;
-            targetClip.fadeShape = sourceClip.fadeShape;
+            targetClip.fadeInCurve = sourceClip.fadeInCurve;
+            targetClip.fadeInShape = sourceClip.fadeInShape;
+            targetClip.fadeOutCurve = sourceClip.fadeOutCurve;
+            targetClip.fadeOutShape = sourceClip.fadeOutShape;
             clipModified = true;
         }
 
