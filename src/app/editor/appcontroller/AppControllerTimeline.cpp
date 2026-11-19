@@ -106,6 +106,32 @@ static QMap<QString, QPair<QJsonValue, bool>> trackContentById(const drift::Proj
     return result;
 }
 
+// The id of the first locked track whose clips or transitions differ between two project states,
+// empty when none does. pushProjectEdit refuses an edit on this basis; callers that must report the
+// refusal instead of replying ok ask the same question first.
+static std::optional<QString> firstLockedTrackChange(const drift::Project &before, const drift::Project &now)
+{
+    bool anyLocked = false;
+    // Every timeline, not just the open one: trackContentById walks them all, and a bin
+    // removal can delete a composite's sequence whatever is open (#83).
+    before.forEachTrackList([&anyLocked](const QList<drift::Track> &tracks) {
+        for (const drift::Track &track : tracks)
+            anyLocked = anyLocked || track.locked;
+    });
+    if (!anyLocked)
+        return std::nullopt;
+    const auto was = trackContentById(before);
+    const auto cur = trackContentById(now);
+    for (auto it = was.constBegin(); it != was.constEnd(); ++it) {
+        if (!it.value().second)
+            continue;
+        const auto found = cur.constFind(it.key());
+        if (found == cur.constEnd() || found->first != it.value().first)
+            return it.key();
+    }
+    return std::nullopt;
+}
+
 // Ripple by time rather than by index, over several tracks at once: every clip on those tracks
 // starting at or after fromUs moves by delta, and linked partners on other tracks follow. Index
 // ripple (applyRippleShift) only ever reached one track, which is how a trim of a linked clip used
@@ -718,13 +744,18 @@ QVariantMap AppController::activeVideoClipAtPlayhead() const
 QVariantMap AppController::activeAudioClipAtPlayhead() const
 {
     QVariantMap result;
+    const bool anySolo = drift::anyTrackSoloed(m_project.tracks());
     for (const drift::Track &track : m_project.tracks()) {
-        if (track.type != drift::TrackType::Audio || track.muted || track.hidden)
+        const bool isVideo = track.type == drift::TrackType::Video;
+        if ((track.type != drift::TrackType::Audio && !isVideo) || !drift::trackAudible(track, anySolo))
             continue;
 
         for (const drift::Clip &clip : track.clips) {
-            if (clip.containsTime(m_playheadUs))
-                result = clipToMap(clip);
+            if (!clip.enabled || !clip.containsTime(m_playheadUs))
+                continue;
+            if (isVideo && (clip.type != drift::ClipType::Video || clip.suppressEmbeddedAudio))
+                continue;
+            result = clipToMap(clip);
         }
     }
     return result;
@@ -771,24 +802,12 @@ void AppController::pushProjectEdit(const drift::Project &before, const QString 
     // parent by it, and the dozen places that append a track all leave it empty.
     normalizeProjectStructure(&before);
     m_editRefusedByLock = false;
-    bool anyLocked = false;
-    for (const drift::Track &track : before.tracks())
-        anyLocked = anyLocked || track.locked;
-    if (anyLocked) {
-        const auto was = trackContentById(before);
-        const auto now = trackContentById(m_project);
-        for (auto it = was.constBegin(); it != was.constEnd(); ++it) {
-            if (!it.value().second)
-                continue;
-            const auto cur = now.constFind(it.key());
-            if (cur == now.constEnd() || cur->first != it.value().first) {
-                m_project = before;
-                m_editRefusedByLock = true;
-                m_tracksCacheValid = false;
-                m_durationCacheValid = false;
-                return;
-            }
-        }
+    if (firstLockedTrackChange(before, m_project)) {
+        m_project = before;
+        m_editRefusedByLock = true;
+        m_tracksCacheValid = false;
+        m_durationCacheValid = false;
+        return;
     }
     // A split or duplicate copies the clip's label; the copy takes the next number. A batch's
     // closing push skips it: each op numbered its own copies, and a label set on a copy since
@@ -2112,6 +2131,19 @@ void AppController::splitSelectionAtPlayhead()
     splitClipsAtPlayhead(&ids);
 }
 
+void AppController::splitAtPlayheadForSelection()
+{
+    // A selection is a statement about what the next edit applies to, and Split was the one edit
+    // ignoring it: it cut every track under the playhead, so editing a stack of layers meant
+    // clearing the selection before every cut (#556). With nothing selected there is no scope to
+    // respect, so it still cuts everything. The all-tracks cut regardless of selection stays on
+    // the clip context menu and on the `splitAllTracks` action, for anyone who wants it on a key.
+    if (m_selection.isEmpty() && !isValidClipIndex(m_selectedTrack, m_selectedClip))
+        splitAtPlayhead();
+    else
+        splitSelectionAtPlayhead();
+}
+
 void AppController::splitClipsAtPlayhead(const QSet<QString> *onlyClipIds)
 {
     const drift::Project before = m_project;
@@ -2967,6 +2999,217 @@ void AppController::applyClipTrim(drift::Clip &clip, double inPoint, double outP
     clip.syncDurationFromSpeedCurve();
 }
 
+AppController::SlipResult AppController::slipClip(int trackIndex, int clipIndex, drift::TimeUs deltaUs)
+{
+    SlipResult out;
+    if (!isValidClipIndex(trackIndex, clipIndex)) {
+        out.errorCode = QStringLiteral("not_found");
+        out.error = QStringLiteral("No such clip");
+        return out;
+    }
+    const drift::Clip &clip = m_project.tracks().at(trackIndex).clips.at(clipIndex);
+    const bool hasSource = clip.type == drift::ClipType::Video || clip.type == drift::ClipType::Audio
+                           || clip.type == drift::ClipType::Composite;
+    if (!hasSource) {
+        out.errorCode = QStringLiteral("bad_args");
+        out.error = QStringLiteral("A %1 clip has no media to slip").arg(drift::clipTypeToString(clip.type));
+        return out;
+    }
+    // Strict partners only: the ones syncLinkedPartnersFrom mirrors.
+    QList<drift::ClipRef> partners;
+    if (!clip.linkLoose) {
+        for (const drift::ClipRef &ref : drift::linkedPartners(m_project, clip))
+        {
+            // Only partners with media (video, audio, composite) slip; others would clamp via the image fallback.
+            const drift::Clip &p = m_project.tracks().at(ref.trackIndex).clips.at(ref.clipIndex);
+            if (!p.linkLoose
+                && (p.type == drift::ClipType::Video || p.type == drift::ClipType::Audio
+                    || p.type == drift::ClipType::Composite))
+                partners.append(ref);
+        }
+    }
+    QSet<int> tracks{trackIndex};
+    for (const drift::ClipRef &ref : partners)
+        tracks.insert(ref.trackIndex);
+    for (const int t : std::as_const(tracks)) {
+        if (m_project.tracks().at(t).locked) {
+            out.errorCode = QStringLiteral("bad_args");
+            out.error = QStringLiteral("Track %1 is locked").arg(t);
+            return out;
+        }
+    }
+    drift::SlipLimits limits = drift::slipLimits(clip, sourceDurationForClip(clip));
+    for (const drift::ClipRef &ref : partners) {
+        const drift::Clip &p = m_project.tracks().at(ref.trackIndex).clips.at(ref.clipIndex);
+        const drift::SlipLimits l = drift::slipLimits(p, sourceDurationForClip(p));
+        limits.minUs = qMax(limits.minUs, l.minUs);
+        limits.maxUs = qMin(limits.maxUs, l.maxUs);
+    }
+    const drift::TimeUs applied = qBound(limits.minUs, deltaUs, limits.maxUs);
+    out.limit = applied < deltaUs ? 1 : applied > deltaUs ? -1 : 0;
+
+    // What the clip carries that depends on the source range, for the reply.
+    if (!clip.faceTrackPath.isEmpty())
+        out.sourceData.append(QStringLiteral("face_track"));
+    if (!clip.depthPath.isEmpty())
+        out.sourceData.append(QStringLiteral("depth"));
+    if (!clip.motionTrackers.isEmpty())
+        out.sourceData.append(QStringLiteral("trackers"));
+    for (const drift::ClipRef &ref : drift::linkedMaskAdjustments(m_project, trackIndex, clipIndex)) {
+        const drift::Mask &mask = m_project.tracks().at(ref.trackIndex).clips.at(ref.clipIndex).mask;
+        if (mask.isMedia() && mask.mediaTimeBase == drift::MaskMediaTimeBase::HostSource) {
+            out.sourceData.append(QStringLiteral("matte"));
+            break;
+        }
+    }
+    bool targeted = false;
+    for (const drift::MotionTracker &tracker : clip.motionTrackers)
+        targeted = targeted || !tracker.targets.isEmpty();
+    for (const drift::Track &track : m_project.tracks()) {
+        for (const drift::Clip &other : track.clips) {
+            for (const drift::MotionTracker &tracker : other.motionTrackers) {
+                for (const drift::TrackerTarget &target : tracker.targets)
+                    targeted = targeted || target.clipId == clip.id;
+            }
+        }
+    }
+    if (targeted)
+        out.bakedKeys.append(QStringLiteral("tracker_targets"));
+    if (clip.stabilizeAppliedSmoothing >= 0 && clip.stabilizeAppliedMode == drift::StabilizeMode::Keyframes)
+        out.bakedKeys.append(QStringLiteral("stabilize"));
+
+    if (applied == 0)
+        return out; // nothing moved: no undo step, no edit
+    if (clip.loops()) {
+        // A whole number of repeats lands where it started: nothing to change.
+        const drift::TimeUs range = clip.srcOut - clip.srcIn;
+        if (range > 0 && applied % range == 0) {
+            out.appliedUs = applied;
+            return out;
+        }
+    }
+
+    // Locks are compared by track id; make sure every track has one before the snapshot.
+    m_project.ensureTrackIds();
+    const drift::Project before = m_project;
+    drift::Clip &target = m_project.tracks()[trackIndex].clips[clipIndex];
+    drift::slipClipSource(target, applied);
+    drift::appdetail::syncLinkedPartnersFrom(m_project, target);
+    // Generated captions follow their words; cues whose words slipped out are dropped.
+    // Removing an emptied caption clip shifts the clip indices behind it: keep the selection on the
+    // same clips (one that was removed just leaves it).
+    captureSelectionClipIds();
+    drift::retimeLinkedSubtitles(before, m_project, {}, true);
+    bool dropGraphVideo = false;
+    bool dropGraphAudio = false;
+    bool dropGraphProps = false; // applied after the lock check, so a refused slip leaves graph state alone
+    {
+        // Effects and masks pinned to a removed caption clip go with it, with the same cleanup
+        // delete_clips does: transitions naming it, an adjustment lane it emptied, and the keyframe
+        // graph's hidden effect entries.
+        QSet<QString> removedIds;
+        for (const drift::Track &oldTrack : before.tracks()) {
+            for (const drift::Clip &old : oldTrack.clips) {
+                if (old.type == drift::ClipType::Subtitle && !findClipById(m_project, old.id, nullptr, nullptr))
+                    removedIds.insert(old.id);
+            }
+        }
+        if (!removedIds.isEmpty()) {
+            const QSet<QString> goneIds = removedIds;
+            QSet<QString> touchedLaneIds;
+            bool removedVideo = false;
+            bool removedAudio = false;
+            for (drift::Track &track : m_project.tracks()) {
+                if (!track.isAdjustment())
+                    continue;
+                for (int i = track.clips.size() - 1; i >= 0; --i) {
+                    const drift::Clip &pinned = track.clips.at(i);
+                    if (pinned.linkedClipId.isEmpty() || !goneIds.contains(pinned.linkedClipId))
+                        continue;
+                    touchedLaneIds.insert(track.id);
+                    removedVideo = removedVideo || pinned.adjustmentKind == drift::AdjustmentKind::VideoEffects;
+                    removedAudio = removedAudio || pinned.adjustmentKind == drift::AdjustmentKind::AudioEffects;
+                    removedIds.insert(pinned.id);
+                    track.clips.removeAt(i);
+                }
+            }
+            for (drift::Track &track : m_project.tracks()) {
+                for (int i = track.transitions.size() - 1; i >= 0; --i) {
+                    const drift::Transition &transition = track.transitions.at(i);
+                    if (removedIds.contains(transition.fromClipId) || removedIds.contains(transition.toClipId))
+                        track.transitions.removeAt(i);
+                }
+            }
+            if (!touchedLaneIds.isEmpty()) {
+                dropGraphProps = true;
+                dropGraphVideo = removedVideo;
+                dropGraphAudio = removedAudio;
+                for (int t = m_project.tracks().size() - 1; t >= 0; --t) {
+                    const drift::Track &track = m_project.tracks().at(t);
+                    if (track.isAdjustmentLane() && track.clips.isEmpty() && !track.id.isEmpty()
+                        && touchedLaneIds.contains(track.id))
+                        m_project.tracks().removeAt(t);
+                }
+            }
+        }
+    }
+    // The captions and the effects pinned to them live on other tracks: a lock on any of them
+    // refuses the whole slip, the same test pushProjectEdit applies. Nothing has been pushed yet.
+    if (const std::optional<QString> lockedId = firstLockedTrackChange(before, m_project)) {
+        const int lockedIndex = before.trackIndexById(*lockedId);
+        m_project = before;
+        m_tracksCacheValid = false;
+        m_durationCacheValid = false;
+        m_mcpController->bumpEditRevision(); // drop id lookups made against the mutated project
+        restoreSelectionClipIds();
+        m_undoSelectionCaptured = false;
+        out.errorCode = QStringLiteral("bad_args");
+        out.error = lockedIndex >= 0 ? QStringLiteral("Track %1 is locked").arg(lockedIndex)
+                                     : QStringLiteral("A track the slip would change is locked");
+        out.retimedSubtitles.clear();
+        return out;
+    }
+    if (dropGraphProps)
+        dropKeyframeGraphEffectProperties(dropGraphVideo, dropGraphAudio);
+    restoreSelectionClipIds(); // the captured ids stay until the push: a lock refusal remaps them again
+    // Report the caption clips that changed, or were removed because none of their words are left.
+    QHash<QString, const drift::Clip *> nowById;
+    for (const drift::Track &track : m_project.tracks())
+        for (const drift::Clip &c : track.clips)
+            if (c.type == drift::ClipType::Subtitle)
+                nowById.insert(c.id, &c);
+    for (const drift::Track &oldTrack : before.tracks()) {
+        for (const drift::Clip &old : oldTrack.clips) {
+            if (old.type != drift::ClipType::Subtitle)
+                continue;
+            const drift::Clip *sub = nowById.value(old.id, nullptr);
+            if (!sub
+                || old.timelineStart != sub->timelineStart || old.timelineDuration != sub->timelineDuration
+                || old.subtitleCues.size() != sub->subtitleCues.size()
+                || !std::equal(old.subtitleCues.cbegin(), old.subtitleCues.cend(), sub->subtitleCues.cbegin(),
+                               sub->subtitleCues.cend(),
+                               [](const drift::SubtitleCue &a, const drift::SubtitleCue &b) {
+                                   return a.startUs == b.startUs && a.endUs == b.endUs;
+                               }))
+                out.retimedSubtitles.append(old.id);
+        }
+    }
+    pushProjectEdit(before, tr("Slip clip"));
+    const bool refusedByLock = m_editRefusedByLock; // finishEdit clears it
+    if (refusedByLock)
+        restoreSelectionClipIds(); // safety net: the project is back to `before`
+    m_undoSelectionCaptured = false;
+    finishEdit(tr("Slip clip"));
+    if (refusedByLock) {
+        out.errorCode = QStringLiteral("bad_args");
+        out.error = QStringLiteral("A track the slip would change is locked");
+        out.retimedSubtitles.clear();
+        return out;
+    }
+    out.appliedUs = applied;
+    return out;
+}
+
 QStringList AppController::setClipTrimRippled(int trackIndex, int clipIndex, double inPoint, double outPoint,
                                               QString *error)
 {
@@ -3085,7 +3328,8 @@ bool AppController::rippleResizedClip(const drift::Project &before, int trackInd
     return true;
 }
 
-AppController::GapCloseResult AppController::closeGapsRippled(int trackIndex, drift::TimeUs fromUs, drift::TimeUs toUs)
+AppController::GapCloseResult AppController::closeGapsRippled(int trackIndex, drift::TimeUs fromUs, drift::TimeUs toUs,
+                                                                bool allTracks)
 {
     GapCloseResult result;
     if (trackIndex < 0 || trackIndex >= m_project.tracks().size()) {
@@ -3126,7 +3370,18 @@ AppController::GapCloseResult AppController::closeGapsRippled(int trackIndex, dr
         QString blocker;
         QStringList moved;
         const drift::Project prior = m_project;
-        bool closed = drift::closeRippleRanges(m_project, {{trackIndex, gap.first, gap.second}}, &blocker, &moved);
+        bool closed = false;
+        drift::EmptyTracksGapClose all;
+        if (allTracks) {
+            drift::GapTrackSkip originSkip;
+            closed = drift::closeGapOnEmptyTracks(m_project, trackIndex, gap.first, gap.second, &all, &originSkip);
+            if (!closed)
+                blocker = originSkip.blocker;
+            else
+                moved = all.moved;
+        } else {
+            closed = drift::closeRippleRanges(m_project, {{trackIndex, gap.first, gap.second}}, &blocker, &moved);
+        }
         if (closed) {
             // A clip before the gap linked to one after it moves too and leaves the hole open (and
             // the earlier gaps' positions stale): that gap stays, with the linked clip as blocker.
@@ -3144,13 +3399,23 @@ AppController::GapCloseResult AppController::closeGapsRippled(int trackIndex, dr
             if (!closed)
                 m_project = prior;
         }
-        if (closed)
+        if (closed) {
             result.closed.prepend({gap.first, gap.second - gap.first});
-        else
+            for (const int t : std::as_const(all.movedTracks))
+                if (!result.movedTracks.contains(t))
+                    result.movedTracks.append(t);
+            // Gaps are walked from the last, so this gap's skips go in front, in track order.
+            QList<QPair<drift::TimeUs, drift::GapTrackSkip>> gapSkips;
+            for (const drift::GapTrackSkip &skip : std::as_const(all.skipped))
+                gapSkips.append({gap.first, skip});
+            result.skippedTracks = gapSkips + result.skippedTracks;
+        } else {
             result.skipped.prepend({{gap.first, gap.second - gap.first}, blocker});
+        }
     }
     if (result.closed.isEmpty())
         return result;
+    std::sort(result.movedTracks.begin(), result.movedTracks.end());
     syncOverlapTransitions(m_project);
     pushProjectEdit(before, tr("Gaps closed"));
     finishEdit(tr("Gaps closed"));
@@ -3219,6 +3484,145 @@ QStringList movedSince(const drift::Project &before, const drift::Project &after
 }
 
 } // namespace
+
+AppController::GapCloseResult AppController::closeGapAllTracksAt(int trackIndex, drift::TimeUs gapStartUs)
+{
+    GapCloseResult result;
+    if (trackIndex < 0 || trackIndex >= m_project.tracks().size()) {
+        result.error = QStringLiteral("No such track");
+        return result;
+    }
+    // Same rule as closeGapsRippled: an adjustment track (a nested lane included) is never the
+    // origin; its clips follow the clips they apply to.
+    if (m_project.tracks().at(trackIndex).isAdjustment()) {
+        result.error = QStringLiteral("Track %1 is an adjustment track; its clips follow the clips they apply to")
+                           .arg(trackIndex);
+        result.uiError = tr("%1 is an adjustment track; its clips follow the clips they apply to")
+                             .arg(localizedTrackLabel(m_project.tracks().at(trackIndex)));
+        return result;
+    }
+    // Snapshot before taking any non-const reference into m_project (copy-on-write).
+    const drift::Project before = m_project;
+    // A gap start that came through seconds can be a microsecond off the clip's end (the callers
+    // round to the microsecond, a reply carries milliseconds): an origin clip ending within a
+    // millisecond of it is where the gap starts.
+    {
+        constexpr drift::TimeUs kSnapUs = 1000;
+        drift::TimeUs snapped = gapStartUs;
+        drift::TimeUs best = kSnapUs + 1;
+        for (const drift::Clip &clip : before.tracks().at(trackIndex).clips) {
+            const drift::TimeUs off = qAbs(clip.timelineEnd() - gapStartUs);
+            if (off <= kSnapUs && off < best) {
+                best = off;
+                snapped = clip.timelineEnd();
+            }
+        }
+        if (best <= kSnapUs)
+            gapStartUs = snapped;
+    }
+    bool foundNext = false;
+    drift::TimeUs nextStart = 0;
+    bool spanned = false;
+    for (const drift::Clip &clip : before.tracks().at(trackIndex).clips) {
+        if (clip.timelineStart < gapStartUs && clip.timelineEnd() > gapStartUs)
+            spanned = true;
+        if (clip.timelineStart < gapStartUs)
+            continue;
+        if (!foundNext || clip.timelineStart < nextStart) {
+            nextStart = clip.timelineStart;
+            foundNext = true;
+        }
+    }
+    if (!foundNext || spanned || nextStart <= gapStartUs) {
+        result.error = tr("No gap at %1 s").arg(drift::usToSeconds(gapStartUs), 0, 'f', 2);
+        return result;
+    }
+
+    // Track and clip names for the status line; ids stay in `error` for agents.
+    const auto trackLabel = [this, &before](int t) {
+        return t >= 0 && t < before.tracks().size() ? localizedTrackLabel(before.tracks().at(t))
+                                                    : QString::number(t);
+    };
+    const auto clipLabel = [this, &before](const QString &id) {
+        for (const drift::Track &track : before.tracks())
+            for (const drift::Clip &clip : track.clips)
+                if (clip.id == id)
+                    return clip.name.isEmpty() ? tr("a clip") : clip.name;
+        return id;
+    };
+    const auto refuse = [&](const QString &reason, const QString &blocker, int track) {
+        m_project = before;
+        if (reason == QLatin1String("locked")) {
+            result.error = tr("Track %1 is locked").arg(track);
+            result.uiError = tr("%1 is locked").arg(trackLabel(track));
+        } else if (reason == QLatin1String("clip_in_gap")) {
+            result.error = tr("Clip %1 sits in the gap on track %2").arg(blocker).arg(track);
+            result.uiError = tr("%1 sits in the gap on %2").arg(clipLabel(blocker), trackLabel(track));
+        } else {
+            result.error = tr("Closing would push clip %1 onto another").arg(blocker);
+            result.uiError = tr("Closing would push %1 onto another clip").arg(clipLabel(blocker));
+        }
+    };
+
+    drift::EmptyTracksGapClose close;
+    drift::GapTrackSkip originSkip;
+    if (!drift::closeGapOnEmptyTracks(m_project, trackIndex, gapStartUs, nextStart, &close, &originSkip)) {
+        refuse(originSkip.reason, originSkip.blocker, originSkip.track);
+        return result;
+    }
+    // A clip before the gap that is linked to one after it moves too and leaves the hole open (as
+    // in closeGapsRippled): refuse rather than report it closed.
+    for (const drift::Clip &clip : before.tracks().at(trackIndex).clips) {
+        if (clip.timelineStart >= gapStartUs)
+            continue;
+        for (const drift::Clip &after : m_project.tracks().at(trackIndex).clips) {
+            if (after.id == clip.id && after.timelineStart != clip.timelineStart) {
+                refuse(QStringLiteral("linked"), clip.id, trackIndex);
+                return result;
+            }
+        }
+    }
+    syncOverlapTransitions(m_project);
+    pushProjectEdit(before, tr("Close gap on all tracks"));
+    const bool refusedByLock = m_editRefusedByLock;
+    finishEdit(tr("Close gap on all tracks"));
+    if (refusedByLock) {
+        result.error = tr("Track is locked");
+        result.uiError = result.error;
+        return result;
+    }
+    result.closed.append({gapStartUs, nextStart - gapStartUs});
+    result.movedTracks = close.movedTracks;
+    for (const drift::GapTrackSkip &skip : std::as_const(close.skipped))
+        result.skippedTracks.append({gapStartUs, skip});
+    result.moved = movedSince(before, m_project);
+    return result;
+}
+
+void AppController::closeGapOnAllTracks(int trackIndex, double gapStartSeconds)
+{
+    // Rounded, not truncated: 8.04 s must not become 8039999 us and miss the clip that ends there.
+    const GapCloseResult result = closeGapAllTracksAt(trackIndex, qRound64(gapStartSeconds * 1e6));
+    if (!result.error.isEmpty()) {
+        setLastMessage(result.uiError.isEmpty() ? result.error : result.uiError, QStringLiteral("warning"));
+        return;
+    }
+    const int n = int(result.movedTracks.size());
+    if (result.skippedTracks.isEmpty()) {
+        setLastMessage(tr("Gap closed on %n track(s)", nullptr, n));
+        return;
+    }
+    QStringList names;
+    for (const auto &entry : result.skippedTracks) {
+        const int t = entry.second.track;
+        if (t >= 0 && t < m_project.tracks().size()) {
+            const QString label = localizedTrackLabel(m_project.tracks().at(t));
+            if (!names.contains(label))
+                names.append(label);
+        }
+    }
+    setLastMessage(tr("Gap closed on %n track(s). Not moved: %1", nullptr, n).arg(names.join(QStringLiteral(", "))));
+}
 
 AppController::ReorderResult AppController::moveClipNextTo(const QString &clipId, const QString &neighbourId, bool after)
 {
@@ -3348,6 +3752,39 @@ AppController::ReorderResult AppController::swapClips(const QString &firstId, co
     result.moved = movedSince(before, m_project);
     result.removedTransitions = removedTransitionsSince(before, m_project);
     return result;
+}
+
+QString AppController::neighbourClipId(int trackIndex, int clipIndex, bool next) const
+{
+    if (!isValidClipIndex(trackIndex, clipIndex) || m_project.tracks().at(trackIndex).isAdjustment())
+        return {};
+    const auto &clips = m_project.tracks().at(trackIndex).clips;
+    const drift::TimeUs start = clips.at(clipIndex).timelineStart;
+    const drift::Clip *best = nullptr;
+    for (int i = 0; i < clips.size(); ++i) {
+        if (i == clipIndex)
+            continue;
+        const drift::Clip &other = clips.at(i);
+        if (next ? other.timelineStart > start && (!best || other.timelineStart < best->timelineStart)
+                 : other.timelineStart < start && (!best || other.timelineStart > best->timelineStart))
+            best = &other;
+    }
+    return best ? best->id : QString();
+}
+
+bool AppController::hasClipNeighbour(int trackIndex, int clipIndex, bool next) const
+{
+    return !neighbourClipId(trackIndex, clipIndex, next).isEmpty();
+}
+
+void AppController::swapWithNeighbour(int trackIndex, int clipIndex, bool next)
+{
+    const QString other = neighbourClipId(trackIndex, clipIndex, next);
+    if (other.isEmpty())
+        return;
+    const ReorderResult result = swapClips(m_project.tracks().at(trackIndex).clips.at(clipIndex).id, other);
+    if (!result.error.isEmpty())
+        setLastMessage(result.error, QStringLiteral("error"));
 }
 
 AppController::SequenceResult AppController::setTrackSequence(int trackIndex, const QList<SequenceEntry> &entries,
@@ -4123,4 +4560,352 @@ void AppController::moveClipToTrack(int trackIndex, int clipIndex, int newTrackI
     if (macro)
         m_undoStack.endMacro();
     finishEdit(tr("Clips moved"));
+}
+
+namespace {
+
+QVariantMap beatsFailure(const char *code, const QString &message)
+{
+    return QVariantMap{{QStringLiteral("error"), QString::fromLatin1(code)},
+                       {QStringLiteral("message"), message}};
+}
+
+// The id of the right-hand piece a split minted on the track `trackId`. A split also mints
+// tails for linked partners and pinned adjustments on other tracks, so "any new id" is not
+// enough: the next cut has to follow this clip's own piece.
+QString newPieceOnTrack(const drift::Project &project, const QString &trackId, int trackIndex,
+                        const QSet<QString> &before)
+{
+    const int t = trackId.isEmpty() ? trackIndex : project.trackIndexById(trackId);
+    if (t < 0 || t >= project.tracks().size())
+        return {};
+    for (const drift::Clip &clip : project.tracks().at(t).clips) {
+        if (!before.contains(clip.id))
+            return clip.id;
+    }
+    return {};
+}
+
+QSet<QString> allClipIds(const drift::Project &project)
+{
+    QSet<QString> ids;
+    for (const drift::Track &track : project.tracks()) {
+        for (const drift::Clip &clip : track.clips)
+            ids.insert(clip.id);
+    }
+    return ids;
+}
+
+} // namespace
+
+QList<double> AppController::beatTimes(const QString &unit, double minStrength) const
+{
+    QList<double> times;
+    const QString u = unit.trimmed().toLower();
+
+    if (u == QLatin1String("onset")) {
+        for (const AudioOnset &o : m_beatAnalysisRaw.onsets) {
+            if (o.strength >= minStrength)
+                times.append(o.seconds);
+        }
+        return times;
+    }
+
+    const QList<double> &beats = m_beatAnalysisRaw.beats;
+    if (u == QLatin1String("bar")) {
+        const int per = qMax(1, m_beatAnalysisRaw.beatsPerBar);
+        // Count bars from the detected downbeat, not from index 0, or every bar line lands on
+        // whichever beat happened to be first in the analysed window.
+        const int first = qBound(0, m_beatAnalysisRaw.firstDownbeat, qMax(0, beats.size() - 1));
+        for (int i = first; i < beats.size(); i += per)
+            times.append(beats.at(i));
+        return times;
+    }
+
+    return beats;
+}
+
+// Splits front to back, each cut on the newest piece, re-resolving by UUID each pass. The id the
+// caller passed keeps naming the first piece, and the pieces are numbered left to right.
+QVariantMap AppController::splitClipAtTimes(int trackIndex, int clipIndex, const QList<double> &times,
+                                            double minGap, const QString &undoText,
+                                            const QString &noneInsideMessage)
+{
+    if (!isValidClipIndex(trackIndex, clipIndex))
+        return beatsFailure("not_found", QStringLiteral("Unknown clip"));
+    const drift::Clip &target = m_project.tracks().at(trackIndex).clips.at(clipIndex);
+    const QString firstId = target.id;
+    const double start = drift::usToSeconds(target.timelineStart);
+    const double end = start + drift::usToSeconds(target.timelineDuration);
+
+    QList<double> cuts;
+    for (double t : times) {
+        if (t - start < minGap || end - t < minGap)
+            continue;
+        if (!cuts.isEmpty() && t - cuts.last() < minGap)
+            continue;
+        cuts.append(t);
+    }
+    if (cuts.isEmpty())
+        return beatsFailure("bad_args", noneInsideMessage);
+
+    m_mcpController->beginBatch();
+    QVariantList at;
+    QStringList newIds;
+    for (const double cut : std::as_const(cuts)) {
+        const QPair<int, int> here = m_mcpController->locateClip(newIds.isEmpty() ? firstId : newIds.last());
+        if (here.first < 0 || here.second < 0)
+            break;
+        const QSet<QString> idsBefore = allClipIds(m_project);
+        const QString trackId = m_project.tracks().at(here.first).id;
+        splitClipAt(here.first, here.second, cut);
+        const QString minted = newPieceOnTrack(m_project, trackId, here.first, idsBefore);
+        if (minted.isEmpty())
+            continue; // refused (locked track, or the time landed on an edge after rounding)
+        newIds.append(minted);
+        at.append(cut);
+    }
+    m_mcpController->endBatch(undoText, !newIds.isEmpty());
+
+    if (newIds.isEmpty())
+        return beatsFailure("apply_failed", QStringLiteral("No cuts were made"));
+
+    QStringList clips{firstId}; // the original id now names the first piece
+    clips.append(newIds);
+    return QVariantMap{{QStringLiteral("clips"), clips}, {QStringLiteral("at"), at}};
+}
+
+QVariantMap AppController::splitClipOnBeats(int trackIndex, int clipIndex, const QString &unit,
+                                            double minStrength, double minGap)
+{
+    // Read the grid before touching anything: finishEdit drops the beat analysis as soon as the
+    // mix changes, so the first cut can take the rest of the grid with it.
+    const QList<double> times = beatTimes(unit.isEmpty() ? QStringLiteral("beat") : unit, minStrength);
+    if (times.isEmpty())
+        return beatsFailure("not_found", QStringLiteral("No beat analysis yet — call detect_beats first"));
+    return splitClipAtTimes(trackIndex, clipIndex, times, qMax(0.0, minGap), QStringLiteral("Split on beats"),
+                            QStringLiteral("No grid times fall inside that clip"));
+}
+
+QVariantMap AppController::snapClipsToBeats(const QStringList &clipIds, std::optional<int> track,
+                                            const QString &unit, double minStrength,
+                                            double maxDistance)
+{
+    const QList<double> times = beatTimes(unit.isEmpty() ? QStringLiteral("beat") : unit, minStrength);
+    if (times.isEmpty())
+        return beatsFailure("not_found", QStringLiteral("No beat analysis yet — call detect_beats first"));
+
+    // Resolve to UUIDs up front: the first move renumbers everything after it on the track.
+    QStringList targets;
+    if (!clipIds.isEmpty()) {
+        for (const QString &raw : clipIds) {
+            const QString id = raw.trimmed();
+            if (!id.isEmpty())
+                targets.append(id);
+        }
+    } else if (track.has_value()) {
+        const int t = *track;
+        if (t < 0 || t >= m_project.tracks().size())
+            return beatsFailure("not_found", QStringLiteral("No such track"));
+        for (const drift::Clip &clip : m_project.tracks().at(t).clips)
+            targets.append(clip.id);
+    } else {
+        return beatsFailure("bad_args", QStringLiteral("clips or track required"));
+    }
+    if (targets.isEmpty())
+        return beatsFailure("not_found", QStringLiteral("No clips to quantise"));
+
+    maxDistance = qMax(0.0, maxDistance);
+
+    struct Target {
+        QString id;
+        double start = 0.0;
+    };
+    const auto startOf = [this](const QString &id, double *start) {
+        const QPair<int, int> at = m_mcpController->locateClip(id);
+        if (at.first < 0 || at.second < 0 || !isValidClipIndex(at.first, at.second))
+            return false;
+        *start = drift::usToSeconds(m_project.tracks().at(at.first).clips.at(at.second).timelineStart);
+        return true;
+    };
+    // Ascending start order, so a clip is never shoved by the gap-resolve of a later one.
+    QList<Target> ordered;
+    for (const QString &id : std::as_const(targets)) {
+        double start = 0.0;
+        if (startOf(id, &start))
+            ordered.append({id, start});
+    }
+    std::sort(ordered.begin(), ordered.end(),
+              [](const Target &a, const Target &b) { return a.start < b.start; });
+
+    m_mcpController->beginBatch();
+    QVariantList moved;
+    QVariantList skipped;
+    const auto skip = [&skipped](const QString &id, const char *reason) {
+        skipped.append(QVariantMap{{QStringLiteral("clip"), id},
+                                   {QStringLiteral("reason"), QString::fromLatin1(reason)}});
+    };
+    for (const Target &target : std::as_const(ordered)) {
+        double nearest = times.first();
+        for (double t : times) {
+            if (qAbs(t - target.start) < qAbs(nearest - target.start))
+                nearest = t;
+        }
+        if (qAbs(nearest - target.start) > maxDistance) {
+            skip(target.id, "too_far");
+            continue;
+        }
+
+        const QPair<int, int> at = m_mcpController->locateClip(target.id);
+        if (at.first < 0 || at.second < 0) {
+            skip(target.id, "not_found");
+            continue;
+        }
+        setClipStart(at.first, at.second, nearest);
+
+        // Report where it landed, not where it was aimed: with overlap off, resolveClipStart
+        // pushes a clip to the next free gap and the two differ.
+        double placed = target.start;
+        startOf(target.id, &placed);
+        if (qAbs(placed - target.start) < 0.0005) {
+            skip(target.id, "unchanged");
+            continue;
+        }
+        moved.append(QVariantMap{{QStringLiteral("clip"), target.id},
+                                 {QStringLiteral("from"), target.start},
+                                 {QStringLiteral("to"), placed}});
+    }
+    m_mcpController->endBatch(QStringLiteral("Snap clips to beats"), !moved.isEmpty());
+    return QVariantMap{{QStringLiteral("moved"), moved}, {QStringLiteral("skipped"), skipped}};
+}
+
+int AppController::addBookmarksAtTimes(const QList<double> &times, double from, double to, bool ranged,
+                                       const QString &labelPrefix, const QString &undoText)
+{
+    if (times.isEmpty())
+        return 0;
+
+    const drift::Project before = m_project;
+    QList<drift::Bookmark> marks = m_project.bookmarks();
+    int added = 0;
+    int n = 1;
+    for (double t : times) {
+        if (t < from || (ranged && t > to)) {
+            ++n;
+            continue;
+        }
+        const drift::TimeUs at = drift::secondsToUs(t);
+        // Bookmarks are snap targets themselves; stacking several inside one snap threshold
+        // would make the magnet ambiguous rather than stronger.
+        const bool crowded = std::any_of(marks.cbegin(), marks.cend(),
+                                         [at](const drift::Bookmark &b) {
+                                             return qAbs(b.timeUs - at) < drift::kSnapThresholdUs;
+                                         });
+        if (crowded) {
+            ++n;
+            continue;
+        }
+        marks.append(drift::Bookmark{at, QStringLiteral("%1 %2").arg(labelPrefix).arg(n)});
+        ++added;
+        ++n;
+    }
+    if (added == 0)
+        return 0;
+
+    std::sort(marks.begin(), marks.end(),
+              [](const drift::Bookmark &a, const drift::Bookmark &b) { return a.timeUs < b.timeUs; });
+    m_project.bookmarks() = marks;
+    pushProjectEdit(before, undoText);
+    finishEdit(undoText);
+    return added;
+}
+
+int AppController::bookmarkBeats(double startSeconds, double durSeconds, const QString &unit,
+                                 double minStrength, const QString &labelPrefix)
+{
+    const double from = qMax(0.0, startSeconds);
+    return addBookmarksAtTimes(beatTimes(unit, minStrength), from, from + durSeconds, durSeconds > 0.0,
+                               labelPrefix, QStringLiteral("Bookmark beats"));
+}
+
+void AppController::splitSelectionOnBeats(int trackIndex, int clipIndex, const QString &unit)
+{
+    const QStringList ids = clipIdsForAction(trackIndex, clipIndex);
+    const QList<double> times = beatTimes(unit, 0.0);
+    if (times.isEmpty()) {
+        setLastMessage(tr("Detect beats first"), QStringLiteral("warning"));
+        return;
+    }
+    int made = 0;
+    QString failure;
+    m_mcpController->beginBatch();
+    for (const QString &id : ids) {
+        const QPair<int, int> at = m_mcpController->locateClip(id);
+        const QVariantMap result = splitClipAtTimes(at.first, at.second, times, 0.1, tr("Split on beats"),
+                                                    tr("No beats fall inside the clip"));
+        if (result.contains(QStringLiteral("error")))
+            failure = result.value(QStringLiteral("message")).toString();
+        else
+            made += result.value(QStringLiteral("at")).toList().size();
+    }
+    m_mcpController->endBatch(tr("Split on beats"), made > 0);
+    if (made > 0)
+        setLastMessage(tr("Split on %n beat(s)", nullptr, made));
+    else
+        setLastMessage(failure.isEmpty() ? tr("No cuts were made") : failure, QStringLiteral("warning"));
+}
+
+void AppController::snapSelectionToBeats(int trackIndex, int clipIndex, const QString &unit)
+{
+    const QVariantMap result = snapClipsToBeats(clipIdsForAction(trackIndex, clipIndex), std::nullopt, unit,
+                                                0.0, 0.25);
+    if (result.contains(QStringLiteral("error"))) {
+        setLastMessage(result.value(QStringLiteral("message")).toString(), QStringLiteral("warning"));
+        return;
+    }
+    const int moved = result.value(QStringLiteral("moved")).toList().size();
+    if (moved > 0)
+        setLastMessage(tr("Snapped %n clip(s) to the beat", nullptr, moved));
+    else
+        setLastMessage(tr("No clips were close enough to a beat"), QStringLiteral("warning"));
+}
+
+void AppController::addMarkersAtBeats(const QString &unit)
+{
+    const int added = bookmarkBeats(0.0, 0.0, unit, 0.0, tr("Beat"));
+    if (added > 0)
+        setLastMessage(tr("Added %n marker(s)", nullptr, added));
+    else
+        setLastMessage(tr("No new markers to add"), QStringLiteral("warning"));
+}
+
+QStringList AppController::clipIdsForAction(int trackIndex, int clipIndex) const
+{
+    QStringList ids;
+    if (m_selection.contains({trackIndex, clipIndex}) && m_selection.size() > 1) {
+        for (const QPair<int, int> &pair : m_selection) {
+            if (isValidClipIndex(pair.first, pair.second))
+                ids.append(m_project.tracks().at(pair.first).clips.at(pair.second).id);
+        }
+    } else if (isValidClipIndex(trackIndex, clipIndex)) {
+        ids.append(m_project.tracks().at(trackIndex).clips.at(clipIndex).id);
+    }
+    return ids;
+}
+
+void AppController::closeGapsInWorkArea(int trackIndex)
+{
+    const bool ranged = m_project.hasWorkArea();
+    const GapCloseResult result = closeGapsRippled(trackIndex, ranged ? m_project.workAreaInUs() : 0,
+                                                   ranged ? m_project.workAreaOutUs() : -1);
+    if (!result.error.isEmpty()) {
+        setLastMessage(result.error, QStringLiteral("warning"));
+        return;
+    }
+    if (result.closed.isEmpty()) {
+        setLastMessage(result.skipped.isEmpty() ? tr("No gaps to close") : tr("Gaps are blocked by linked clips"),
+                       QStringLiteral("warning"));
+        return;
+    }
+    setLastMessage(tr("Closed %n gap(s)", nullptr, result.closed.size()));
 }

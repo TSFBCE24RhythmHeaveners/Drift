@@ -80,8 +80,13 @@ QHash<QString, QString> defaultShortcuts()
         {QStringLiteral("pasteEffects"), QStringLiteral("Ctrl+Shift+V")},
         {QStringLiteral("pasteAttributes"), QStringLiteral("Ctrl+Alt+V")},
         {QStringLiteral("addTransitionAtPlayhead"), QStringLiteral("Ctrl+Shift+D")},
+        // S splits the selection when there is one and every track when there is not, so the
+        // common case needs no modifier either way. Shift+S is the explicit selection-only cut,
+        // and splitAllTracks is the explicit all-tracks one — unbound, since S already is it
+        // whenever nothing is selected.
         {QStringLiteral("split"), QStringLiteral("S")},
         {QStringLiteral("splitSelection"), QStringLiteral("Shift+S")},
+        {QStringLiteral("splitAllTracks"), QString()},
         {QStringLiteral("merge"), QStringLiteral("Ctrl+M")},
         {QStringLiteral("unlink"), QStringLiteral("Ctrl+Shift+U")},
         {QStringLiteral("link"), QStringLiteral("Ctrl+Shift+L")},
@@ -142,6 +147,9 @@ QHash<QString, QString> defaultShortcuts()
         // preview or it has focus or hover (never in 3D mode), so they stay free on the timeline.
         {QStringLiteral("maskingPolygonTool"), QStringLiteral("P")},
         {QStringLiteral("maskingAiTool"), QStringLiteral("A")},
+        {QStringLiteral("maskingLassoTool"), QStringLiteral("F")},
+        {QStringLiteral("maskingScissorsTool"), QStringLiteral("C")},
+        {QStringLiteral("maskingWandTool"), QStringLiteral("U")},
         {QStringLiteral("maskingBrushSmaller"), QStringLiteral("[")},
         {QStringLiteral("maskingBrushLarger"), QStringLiteral("]")},
         {QStringLiteral("maskingBrushToggleErase"), QStringLiteral("X")},
@@ -150,6 +158,9 @@ QHash<QString, QString> defaultShortcuts()
         {QStringLiteral("trackBackward"), QStringLiteral("Ctrl+Shift+T")},
         {QStringLiteral("trackFrameForward"), QStringLiteral("Ctrl+Shift+Right")},
         {QStringLiteral("trackFrameBackward"), QStringLiteral("Ctrl+Shift+Left")},
+        // Unbound by default, but it has to be a key here or setShortcut refuses it and the
+        // keymap row for it silently does nothing.
+        {QStringLiteral("trackBoth"), QString()},
         // Timeline zoom is QML state too, so these take the same route as the tool modes.
         {QStringLiteral("zoomIn"), QStringLiteral("Ctrl+=")},
         {QStringLiteral("zoomOut"), QStringLiteral("Ctrl+-")},
@@ -160,6 +171,7 @@ QHash<QString, QString> defaultShortcuts()
         {QStringLiteral("multicam"), QStringLiteral("Ctrl+Shift+C")},
         {QStringLiteral("transformTogether"), QStringLiteral("Ctrl+G")},
         {QStringLiteral("selectTransformLayer"), QStringLiteral("Shift+G")},
+        {QStringLiteral("workspace.restoreWindows"), QString()},
         {QStringLiteral("workspace.next"), QStringLiteral("Ctrl+Alt+Right")},
         {QStringLiteral("workspace.prev"), QStringLiteral("Ctrl+Alt+Left")},
         {QStringLiteral("workspace.1"), QStringLiteral("Alt+1")},
@@ -545,6 +557,34 @@ QVariantList AppController::adjustmentLanes(int trackIndex) const
     return out;
 }
 
+QString AppController::localizedTrackLabel(const drift::Track &track) const
+{
+    if (!track.name.isEmpty())
+        return track.name;
+    if (track.isCameraLayer())
+        return tr("Camera");
+    if (track.isAdjustmentLane()) {
+        const drift::AdjustmentKind kind = track.clips.isEmpty() ? drift::AdjustmentKind::VideoEffects
+                                                                 : track.clips.first().adjustmentKind;
+        return kind == drift::AdjustmentKind::AudioEffects ? tr("Audio FX")
+               : kind == drift::AdjustmentKind::Mask       ? tr("Mask")
+                                                           : tr("Effects");
+    }
+    if (track.number <= 0)
+        return drift::trackDefaultLabel(track);
+    if (track.isTransformLayer())
+        return tr("Transform %1").arg(track.number);
+    switch (track.type) {
+    case drift::TrackType::Video: return tr("Video %1").arg(track.number);
+    case drift::TrackType::Audio: return tr("Audio %1").arg(track.number);
+    case drift::TrackType::Text: return tr("Text %1").arg(track.number);
+    case drift::TrackType::Subtitle: return tr("Subtitle %1").arg(track.number);
+    case drift::TrackType::Shape: return tr("Graphic %1").arg(track.number);
+    case drift::TrackType::Adjustment: return tr("Adjustment %1").arg(track.number);
+    }
+    return drift::trackDefaultLabel(track);
+}
+
 QString AppController::adjustmentLaneKind(int laneIndex) const
 {
     if (laneIndex < 0 || laneIndex >= m_project.tracks().size())
@@ -798,6 +838,9 @@ QVariantList AppController::bookmarks() const
         result.append(QVariantMap{
             {QStringLiteral("seconds"), drift::usToSeconds(bookmark.timeUs)},
             {QStringLiteral("label"), bookmark.label},
+            // Empty when unset: the marker falls back to the theme colour rather than carrying
+            // a resolved one, so a theme change recolours every uncoloured flag with it.
+            {QStringLiteral("color"), bookmark.color.isValid() ? bookmark.color.name() : QString()},
         });
     }
     return result;
@@ -921,6 +964,25 @@ void AppController::updateBookmark(int index, double seconds, const QString &lab
     bookmark.label = resolvedLabel;
     pushProjectEdit(before, tr("Edit bookmark"));
     finishEdit(tr("Bookmark updated"));
+}
+
+void AppController::setBookmarkColor(int index, const QString &color)
+{
+    if (index < 0 || index >= m_project.bookmarks().size())
+        return;
+
+    const QColor resolved = color.isEmpty() || !QColor::isValidColorName(color) ? QColor()
+                                                                               : QColor(color);
+    // Snapshot before binding the reference: bookmarks are a plain QList, so a later copy would
+    // share the buffer the reference writes into.
+    const drift::Project before = m_project;
+    drift::Bookmark &bookmark = m_project.bookmarks()[index];
+    if (bookmark.color == resolved)
+        return;
+
+    bookmark.color = resolved;
+    pushProjectEdit(before, tr("Colour bookmark"));
+    finishEdit(tr("Bookmark colour changed"));
 }
 
 void AppController::goToBookmark(int index)
@@ -1079,9 +1141,10 @@ void AppController::removeBookmarkNearPlayhead()
 QString AppController::projectMediaDir(const QString &projectId)
 {
     const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (base.isEmpty())
+    const QString key = drift::projectPathKey(projectId);
+    if (base.isEmpty() || key.isEmpty())
         return {};
-    const QString dir = QDir(base).filePath(QStringLiteral("projects/%1/media").arg(projectId));
+    const QString dir = QDir(base).filePath(QStringLiteral("projects/%1/media").arg(key));
     return QDir().mkpath(dir) ? dir : QString();
 }
 
@@ -1762,6 +1825,8 @@ void AppController::triggerAction(const QString &actionId)
     else if (actionId == QStringLiteral("pasteAttributes"))
         requestPasteAttributes();
     else if (actionId == QStringLiteral("split"))
+        splitAtPlayheadForSelection();
+    else if (actionId == QStringLiteral("splitAllTracks"))
         splitAtPlayhead();
     else if (actionId == QStringLiteral("toggleClipEnabled"))
         toggleSelectedClipsEnabled();
@@ -2228,21 +2293,44 @@ QVariantList AppController::subtitleWaveformPeaks(double startSeconds, double du
 }
 
 // Everything the AudioMixer reads, and nothing else — so a transform keyframe edit does not
-// invalidate a beat grid while moving, trimming, retiming or muting the music does.
+// invalidate a beat grid while moving, trimming, retiming, or muting, hiding or soloing the music
+// does.
 QByteArray AppController::audioLayoutFingerprint() const
 {
     QCryptographicHash hash(QCryptographicHash::Sha1);
+    const bool anySolo = drift::anyTrackSoloed(m_project.tracks());
     for (const drift::Track &track : m_project.tracks()) {
         if (track.type != drift::TrackType::Audio && track.type != drift::TrackType::Video)
             continue;
-        hash.addData(track.muted ? "m" : "-");
-        for (const drift::Clip &clip : track.clips) {
+        hash.addData(drift::trackAudible(track, anySolo) ? "a" : "-");
+        // A plain cut leaves the mix untouched, so consecutive pieces that continue one another
+        // hash as the single clip they came from — otherwise split_on_beats drops its own grid.
+        const auto plain = [](const drift::Clip &c) {
+            return !c.reverse && !c.loops() && !c.hasSpeedCurve() && c.volume.keyframes().isEmpty();
+        };
+        for (qsizetype i = 0; i < track.clips.size(); ++i) {
+            const drift::Clip &clip = track.clips.at(i);
+            drift::TimeUs runDuration = clip.timelineDuration;
+            drift::TimeUs runSrcOut = clip.srcOut;
+            while (plain(clip) && i + 1 < track.clips.size()) {
+                const drift::Clip &next = track.clips.at(i + 1);
+                if (!plain(next) || next.assetId != clip.assetId
+                    || next.timelineStart != clip.timelineStart + runDuration
+                    || next.srcIn != runSrcOut || next.speed != clip.speed
+                    || next.suppressEmbeddedAudio != clip.suppressEmbeddedAudio
+                    || next.audioEffects.size() != clip.audioEffects.size() || next.pan != clip.pan) {
+                    break;
+                }
+                runDuration += next.timelineDuration;
+                runSrcOut = next.srcOut;
+                ++i;
+            }
             const QString row = QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10")
                                     .arg(clip.assetId)
                                     .arg(clip.timelineStart)
-                                    .arg(clip.timelineDuration)
+                                    .arg(runDuration)
                                     .arg(clip.srcIn)
-                                    .arg(clip.srcOut)
+                                    .arg(runSrcOut)
                                     .arg(clip.speed)
                                     .arg(clip.reverse ? 1 : 0)
                                     .arg(clip.suppressEmbeddedAudio ? 1 : 0)

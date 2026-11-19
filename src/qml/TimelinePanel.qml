@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Window
 import Drift
+import "components/timeline/TimelineWheel.js" as TimelineWheel
 PanelFrame {
     id: root
 
@@ -219,6 +220,8 @@ PanelFrame {
             "disabledScrim": Theme.c.timelineClipItem.disabledScrim,
             "disabledStripe": Theme.c.timelineClipItem.disabledStripe,
             "gapOutline": Theme.c.timelineClipItem.gapOutline,
+            "keyframeMarker": Theme.c.timelineClipItem.keyframeMarker,
+            "keyframeMarkerRim": Theme.c.timelineClipItem.keyframeMarkerRim,
             "fontFamily": Theme.fontFamily,
             "fontSizeTiny": Theme.fontSizeTiny,
             "fontSizeXs": Theme.fontSizeXs,
@@ -242,7 +245,8 @@ PanelFrame {
             "editFriendlyTooltip": qsTr("Converted to a constant frame rate for smooth editing"),
             "vfrTooltip": qsTr("Variable frame rate. This clip can drift out of sync with its audio. Right-click it and choose Convert to edit-friendly format."),
             "missingTooltip": qsTr("Media file not found. Use Replace media… on this item to point it at the file again."),
-            "spanToolTip": qsTr("Transform layer: moves, scales and turns every track its bracket covers")
+            "spanToolTip": qsTr("Transform layer: moves, scales and turns every track its bracket covers"),
+            "keyframeToolTip": qsTr("Keyframe. Right-click for easing presets, or to open the Keyframes tab.")
         })
     }
 
@@ -1059,64 +1063,17 @@ PanelFrame {
         placeAt(0, atSeconds, target)
     }
 
-    function handleTimelineWheel(wheel) {
-        const pixelScroll = wheel.pixelDelta.x !== 0 || wheel.pixelDelta.y !== 0
-        if (pixelScroll && !(wheel.modifiers & Qt.ControlModifier)) {
-            // The OS has already applied natural-scrolling direction to pixelDelta.
-            const maxY = Math.max(0, flick.contentHeight - flick.height)
-            panTimelineBy(wheel.pixelDelta.x, maxY > 0 ? wheel.pixelDelta.y : 0)
-            return
-        }
-        if (wheel.modifiers & Qt.ControlModifier) {
-            // Wheel MouseAreas live in content space, so wheel.x is already a
-            // content X — keep that time fixed under the cursor.
-            const anchorSeconds = Math.max(0, wheel.x / pxPerSecond)
-            const viewportX = wheel.x - flick.contentX
-            const factor = pixelScroll ? Math.pow(1.0015, wheel.pixelDelta.y)
-                                       : (wheel.angleDelta.y > 0 ? 1.15 : 1.0 / 1.15)
-            setZoomAround(zoom * factor, anchorSeconds, viewportX)
-            return
-        }
-
-        const dy = wheel.angleDelta.y
-        const dx = wheel.angleDelta.x
-        const invert = EditorState.preferences.invertTimelineScroll
-
-        // Invert (Kdenlive-style): wheel pans along time, Shift+wheel moves
-        // between tracks. Trackpad horizontal motion always pans time.
-        if (invert) {
-            if (wheel.modifiers & Qt.ShiftModifier) {
-                const delta = dy !== 0 ? dy : dx
-                panTimelineBy(0, delta)
-                return
-            }
-            if (dx !== 0)
-                panTimelineBy(dx, 0)
-            if (dy !== 0)
-                panTimelineBy(dy, 0)
-            return
-        }
-
-        // Shift forces horizontal scrolling regardless of overflow.
-        if (wheel.modifiers & Qt.ShiftModifier) {
-            const delta = dy !== 0 ? dy : dx
-            panTimelineBy(delta, 0)
-            return
-        }
-
-        // Trackpad horizontal component always scrolls horizontally.
-        if (dx !== 0)
-            panTimelineBy(dx, 0)
-
-        // Vertical wheel scrolls the tracks when they overflow the viewport;
-        // otherwise it falls back to horizontal so short timelines keep the
-        // previous wheel-to-pan behaviour.
-        if (dy !== 0) {
-            const maxY = Math.max(0, flick.contentHeight - flick.height)
-            if (maxY > 0)
-                panTimelineBy(0, dy)
-            else
-                panTimelineBy(dy, 0)
+    function handleTimelineWheel(wheel, zoomAtPlayhead) {
+        const r = TimelineWheel.route(TimelineWheel.input(wheel, PointerDevice.TouchPad),
+                                      EditorState.preferences.invertTimelineScroll,
+                                      flick.contentHeight > flick.height)
+        if (r.zoom !== 1) {
+            if (zoomAtPlayhead)          // from the track headers: no time under the pointer
+                setZoom(zoom * r.zoom)
+            else                         // wheel MouseAreas are in content space: keep wheel.x's time fixed
+                setZoomAround(zoom * r.zoom, Math.max(0, wheel.x / pxPerSecond), wheel.x - flick.contentX)
+        } else if (r.x !== 0 || r.y !== 0) {
+            panTimelineBy(r.x, r.y)
         }
     }
 
@@ -1149,6 +1106,10 @@ PanelFrame {
 
     function requestReplaceClip(trackIndex, clipIndex) {
         replaceClipDialog.openFor(trackIndex, clipIndex)
+    }
+
+    function requestAutoReframe(trackIndex, clipIndex) {
+        autoReframeDialog.openFor(trackIndex, clipIndex)
     }
 
     function requestRenameClip(trackIndex, clipIndex) {
@@ -1519,6 +1480,7 @@ PanelFrame {
                     resizable: true
                     tracks: root.tracks
                     contentY: flick.contentY
+                    onTimelineWheel: (wheel) => root.handleTimelineWheel(wheel, true)
                     onScrollRequested: (dy) => {
                         flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height,
                                                               flick.contentY + dy))
@@ -1623,13 +1585,15 @@ PanelFrame {
                         }
                     }
 
-                    // Horizontal scroll / zoom wheel over track rows (below the drop overlay).
+                    // Wheel (scroll / zoom) and middle-drag pan over the track rows and the empty
+                    // space below the last track (below the drop overlay).
                     MouseArea {
                         id: tracksWheelArea
                         x: 0
                         y: Theme.timelineRulerHeight + Theme.timelineBookmarkRowHeight
                         width: parent.width
-                        height: Math.max(root.totalTracksHeightCached, Theme.trackHeightVideo)
+                        height: Math.max(root.totalTracksHeightCached,
+                                         flick.contentHeight - flick.headerHeight)
                         z: 150
                         acceptedButtons: Qt.MiddleButton
                         preventStealing: true
@@ -2368,7 +2332,7 @@ PanelFrame {
             icon.name: Theme.icons.clipboardPaste
             enabled: trackAreaContextMenu.canPaste
             onTriggered: {
-                EditorState.setPlayheadSeconds(root.areaMenuSeconds)
+                EditorState.playheadSeconds = root.areaMenuSeconds
                 EditorState.pasteAtPlayhead()
             }
         }
@@ -2378,6 +2342,20 @@ PanelFrame {
             text: qsTr("Close Gap")
             icon.name: Theme.icons.chevronsRightLeft
             onTriggered: EditorState.closeGap(root.areaMenuTrack, root.areaMenuGapStart)
+        }
+        ThemedMenuItem {
+            visible: root.areaMenuGapStart >= 0
+            height: visible ? implicitHeight : 0
+            text: qsTr("Close Gap on All Tracks")
+            icon.name: Theme.icons.chevronsRightLeft
+            onTriggered: EditorState.closeGapOnAllTracks(root.areaMenuTrack, root.areaMenuGapStart)
+        }
+        ThemedMenuItem {
+            visible: trackAreaContextMenu.track !== null
+            height: visible ? implicitHeight : 0
+            text: EditorState.workAreaActive ? qsTr("Close gaps in work area") : qsTr("Close all gaps on track")
+            icon.name: Theme.icons.chevronsRightLeft
+            onTriggered: EditorState.closeGapsInWorkArea(root.areaMenuTrack)
         }
         ThemedMenuItem {
             text: qsTr("Add bookmark here")
@@ -2504,6 +2482,10 @@ PanelFrame {
 
     TimelineReplaceClipDialog {
         id: replaceClipDialog
+    }
+
+    TimelineAutoReframeDialog {
+        id: autoReframeDialog
     }
 
     ThemedDialog {

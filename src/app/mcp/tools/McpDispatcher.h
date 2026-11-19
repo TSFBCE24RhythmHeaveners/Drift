@@ -85,6 +85,7 @@ private:
     QJsonObject opSetSequence(const QJsonObject &args);
     QJsonObject opSetDuration(const QJsonObject &args);
     QJsonObject opSetTrim(const QJsonObject &args);
+    QJsonObject opSlipClip(const QJsonObject &args);
     QJsonObject opMoveToTrack(const QJsonObject &args);
     QJsonObject opSplitClip(const QJsonObject &args);
     QJsonObject opDeleteClip(const QJsonObject &args);
@@ -105,6 +106,7 @@ private:
     QJsonObject opListEffects(const QJsonObject &args) const;
     QJsonObject opListAudioEffects(const QJsonObject &args) const;
     QJsonObject opListTransitions(const QJsonObject &args) const;
+    QJsonObject opListAnimations(const QJsonObject &args) const;
     QJsonObject opAddEffect(const QJsonObject &args);
     QJsonObject opRemoveEffect(const QJsonObject &args);
     QJsonObject opCopyEffects(const QJsonObject &args);
@@ -147,6 +149,10 @@ private:
     QJsonObject opCameraMove(const QJsonObject &args);
     // create_proxies, proxy_status, remove_proxies, cancel_proxies.
     QJsonObject opProxies(const QString &tool, const QJsonObject &args);
+    // list_bakes, bake_range, rebake, delete_bake, cancel_bake.
+    QJsonObject opBakes(const QString &tool, const QJsonObject &args);
+    // export_video / export_with_preset: {bakes: mode, bakes_reused: {n, stale, stale_skipped}}.
+    QJsonObject bakeReuseReply(const QString &mode, const QVariantMap &map) const;
     // The camera clip a camera tool acts on: the named one, else the one covering `at`. Fills
     // `state` (cameraStateAt) and returns an error object, or {} on success.
     QJsonObject resolveCamera(const QJsonObject &args, double at, QVariantMap *state);

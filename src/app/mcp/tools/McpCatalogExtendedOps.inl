@@ -1,7 +1,9 @@
         ,
         { "remove_asset", "media", "Delete a bin row",
-          "Remove an asset from the media bin. Clips already placed on the timeline keep playing and "
-          "are NOT deleted.",
+          "Remove an asset from the media bin. Refused with in_use while any clip uses it, on any "
+          "timeline; list_assets({usage:true}) counts them. A composite asset is a whole timeline: "
+          "removing it deletes that timeline and everything in it and closes its tab (editing falls "
+          "back to the main timeline); refused with locked when that timeline has a locked track. One undo step.",
           objectSchema({{QStringLiteral("asset"), assetRefProp()}},
                        {QStringLiteral("asset")}),
           false, true },
@@ -151,27 +153,54 @@
         { "make_composite", "timeline", "Collapse clips into one composite clip",
           "Move the selected clips (with their linked audio and pinned adjustments) into a new nested "
           "timeline and put one composite clip in their place, plus a composite item in the bin. "
-          "Acts on the current selection — call select_clips first. Only on the main timeline, and "
+          "Acts on the current selection — call select_clips first. Only on the main timeline (one "
+          "level of nesting: not inside a composite or a new_timeline timeline), and "
           "the selection must not already contain a composite. Returns {clip, sequence, asset}.",
           objectSchema({}) },
         { "dissolve_composite", "timeline", "Turn a composite back into its clips",
           "Release the selected composite clip's inner clips onto the main timeline at their original "
           "times, cut to the composite's trim, and remove the composite. The composite's own effects, "
           "transform, fades and keyframes are discarded. Fails when the composite is ramped, reversed "
-          "or not at 1x. Acts on the current selection — call select_clip first.",
+          "or not at 1x, and with locked when a locked track would be changed or deleted (a main-timeline "
+          "track the clips land on, or the composite's own timeline when this is its last instance). Acts on the current selection — call select_clip first.",
           objectSchema({}) },
         { "open_composite", "timeline", "Edit inside a composite",
           "Open a composite's timeline in its own tab and make it the timeline every other op edits "
-          "(tracks, clips, inspect). Name it by a composite clip (clip or track+index), by sequence "
-          "id, or pass main:true to return to the main timeline. Export always renders the main "
-          "timeline. Not an undo step.",
+          "(tracks, clips, inspect). Composites are the project's other timelines: the ones "
+          "make_composite collapses clips into and the ones new_timeline starts. Name it by a "
+          "composite clip (clip or track+index), by sequence id, or pass main:true to return to the "
+          "main timeline; close_timeline closes a tab. Export always renders the main timeline. "
+          "Not an undo step.",
           objectSchema(mergeProps({{QStringLiteral("sequence"), stringProp(QStringLiteral("Sequence id from list_composites"))},
                                    {QStringLiteral("main"), boolProp(QStringLiteral("Switch back to the main timeline"))}},
                                   clipRefProps())) },
         { "list_composites", "timeline", "Composites, their tabs and which is open",
-          "List every composite: {sequence, asset, name, duration, open, active}. active marks the "
-          "timeline being edited; activeSequence is empty on the main timeline.",
+          "List every composite, which means every timeline besides the main one (from make_composite "
+          "or new_timeline, empty ones included): {sequence, asset, name, duration, open, active}. "
+          "open: its tab is open; active marks the timeline being edited; activeSequence is empty on "
+          "the main timeline. rename_asset({asset, name}) renames one; remove_asset deletes one no "
+          "clip uses.",
           objectSchema({}), true },
+        { "new_timeline", "timeline", "Start an empty timeline (a Short, alt cut)",
+          "Create an empty timeline, as Assets panel \u2192 New timeline does: a composite with one video "
+          "track at the project's canvas size and fps, plus its composite item in the bin. name "
+          "defaults to the first free \"Timeline N\"; names need not be unique, and rename_asset "
+          "renames it later. open (default true) opens its tab and makes it the timeline every other "
+          "op edits (tracks, clips, inspect), as open_composite does; open:false leaves the edited "
+          "timeline as it was. One undo step; redo recreates it without reopening it. It uses the project's canvas, fps and export settings, "
+          "and export_video still renders only the main timeline. Returns {sequence, asset, name, "
+          "activeSequence}.",
+          objectSchema({{QStringLiteral("name"), stringProp(QStringLiteral("Timeline name (default: the first free \"Timeline N\")"))},
+                        {QStringLiteral("open"), boolProp(QStringLiteral("Open its tab and edit it (default true)"))},
+                        {QStringLiteral("folder"), stringProp(QStringLiteral("Bin folder id (or unique name) for its bin item; \"\" for the bin root. Default: the folder the user is viewing"))}}) },
+        { "close_timeline", "timeline", "Close a timeline's tab",
+          "Close a composite timeline's tab (sequence from list_composites or new_timeline). When it "
+          "is the timeline being edited, every op goes back to the main timeline. The timeline, its "
+          "clips and its bin item stay; open_composite({sequence}) reopens it. The main timeline has "
+          "no tab. A sequence whose tab isn't open is a no-op (closed:false). Not an undo step, and "
+          "never makes the project unsaved on its own. Returns {closed, activeSequence}.",
+          objectSchema({{QStringLiteral("sequence"), stringProp(QStringLiteral("Sequence id from list_composites"))}},
+                       {QStringLiteral("sequence")}) },
         { "flatten_composite", "timeline", "Render a composite clip to a video file",
           "Render the composite clip's range to a new video file, add it to the bin and swap the "
           "clip (and audio separated from it) over to it. Async: returns {started:true}; poll "
@@ -258,7 +287,9 @@
           "Read a video or image clip's crop. Returns crop: {x, y, w, h} as fractions 0..1 of the "
           "displayed (rotation-corrected) source, angle (straighten, degrees clockwise), cropped "
           "false for the full, unturned frame, and, when the "
-          "source size is known, sourceWidth/sourceHeight and the same window in source pixels. The "
+          "source size is known, sourceWidth/sourceHeight, the same window in source pixels, and "
+          "covered (true when every point of the window shows picture, false when a straighten "
+          "leaves transparent corners in it). The "
           "top-level positionX/positionY/scaleX/scaleY/frameW/frameH/box are the clip's canvas placement, not the crop.",
           objectSchema(clipRefProps()),
           true, false, true },
@@ -268,8 +299,12 @@
           "source size (see get_clip_crop). Omitted fields keep their current value; reset: true "
           "restores the full, unturned frame. angle straightens: the picture turns clockwise by that "
           "many degrees about its centre (negative = anticlockwise) and the window is cut from the "
-          "turned picture, so a tilted horizon can be levelled; corners the turned picture does not "
-          "reach are transparent, so shrink w/h to hide them. Omit angle to keep the current one. "
+          "turned picture, so a tilted horizon can be levelled. When angle is given without x/y/w/h, "
+          "the window is refit to stay inside the turned picture: it keeps its centre and aspect and "
+          "shrinks only as much as it must (fit, default true then; false keeps the window as is and "
+          "leaves transparent corners). With an explicit window, fit defaults to false; fit: true "
+          "fits that window. Turning back to 0 does not regrow the window: pass the window or reset. "
+          "Omit angle to keep the current one. "
           "The window is clamped inside the source. The clip's frame "
           "(its fit size) follows the new crop's aspect, the way the inspector does it. Does not crop "
           "the project canvas (apply_canvas_crop). Returns crop as get_clip_crop does.",
@@ -282,7 +317,8 @@
                                     propWithDefault(enumProp(QStringLiteral("Units of x/y/w/h"),
                                                              {QStringLiteral("normalized"), QStringLiteral("pixels")}),
                                                     QStringLiteral("normalized"))},
-                                   {QStringLiteral("reset"), boolProp(QStringLiteral("Restore the full frame; ignores x/y/w/h/angle"))}},
+                                   {QStringLiteral("fit"), boolProp(QStringLiteral("Refit the window inside the turned picture; default true when only angle is given"))},
+                                   {QStringLiteral("reset"), boolProp(QStringLiteral("Restore the full frame; ignores x/y/w/h/angle/fit"))}},
                                   clipRefProps())) },
         { "set_blend_mode", "canvas", "Blend a clip onto the layers below",
           "Set how the clip composites over the layers below it. Unrecognised values silently fall back "
@@ -308,10 +344,33 @@
           "Set the clip's mask. This REPLACES the whole mask — it is not a patch. Every omitted key "
           "reverts to its default, and omitting `shape` turns the mask off entirely, so read the "
           "current mask from inspect({clips:true,detail:true}) and send it back with your changes "
-          "merged in.",
+          "merged in. lockAspect is the exception: omitted, the clip's current aspect lock is kept. "
+          "To turn clips themselves into a mask, see use_as_mask and convert_clip_to_mask.",
           objectSchema(mergeProps({{QStringLiteral("mask"), maskSchema()}},
                                   clipRefProps()),
                        {QStringLiteral("mask")}) },
+        { "use_as_mask", "canvas", "Make clips a live mask over the track below",
+          "Use clips as a live mask, as the timeline's Use as mask (nested timeline) does: the clips move "
+          "(with their linked partners) into a new composite timeline, and a mask clip over the same span "
+          "on the first video track below the lowest of them renders that timeline live (its alpha), so "
+          "it masks that track: a title or shape becomes a window onto the footage below. Main timeline "
+          "only. Video, image, text, shape, vector and PDF clips; composites, audio, subtitles, adjustments, 3D "
+          "and procedural clips are refused (type_mismatch), and so are clips with no video track below "
+          "(bad_args). One undo step. Returns {sequence, asset, mask_clip}. open_composite({sequence}) "
+          "edits what the mask shows. To change the mask (mediaChannel alpha|luma, fit, invert), read the "
+          "whole mask from inspect, change the field and send it all back to set_mask: a partial mask "
+          "turns it off. inspect shows sequence on the mask clip's row as sequenceId.",
+          objectSchema({{QStringLiteral("clips"),
+                         arrayProp(stringProp(QStringLiteral("Clip UUID")),
+                                   QStringLiteral("The clips that become the mask, on the main timeline"))}},
+                       {QStringLiteral("clips")}) },
+        { "convert_clip_to_mask", "canvas", "Turn a video or image clip into a matte below",
+          "Replace a video or image clip (and its linked audio) with a luma matte over the same span on "
+          "the first video track below it, as the timeline's Convert to mask does: bright areas of the "
+          "picture let the track below show. Refused for a retimed or reversed clip and with no video "
+          "track below (bad_args with the reason), and for other clip kinds (type_mismatch; use_as_mask "
+          "takes titles and shapes). One undo step. Returns {mask_clip}.",
+          objectSchema(clipRefProps()), false, true },
         { "set_fade", "canvas", "Fade a clip's audio/video in or out over N seconds",
           "Set fade-in and fade-out lengths in seconds. Omitted ends keep their current value. A fade "
           "reveals the canvas background (the project background colour or blur), not black. Use "
@@ -384,13 +443,10 @@
                                                                        {QStringLiteral("animIn"),
                                                                         QStringLiteral("animOut")})},
                                    {QStringLiteral("kind"),
-                                    enumProp(QStringLiteral("Animation kind; fade turns on the edge fade instead"),
-                                             {QStringLiteral("none"), QStringLiteral("fade"),
-                                              QStringLiteral("slideUp"), QStringLiteral("slideDown"),
-                                              QStringLiteral("slideLeft"), QStringLiteral("slideRight"),
-                                              QStringLiteral("zoomIn"), QStringLiteral("zoomOut"),
-                                              QStringLiteral("pop"), QStringLiteral("spinCW"),
-                                              QStringLiteral("spinCCW"), QStringLiteral("bounce")})},
+                                    stringProp(QStringLiteral("Animation kind: none, fade (turns on the edge fade "
+                                                              "instead), slideUp, slideDown, slideLeft, slideRight, "
+                                                              "zoomIn, zoomOut, pop, spinCW, spinCCW, bounce, or an "
+                                                              "animation package id from list_animations"))},
                                    {QStringLiteral("duration"), numberProp(QStringLiteral("Seconds"))},
                                    {QStringLiteral("ease"),
                                     enumProp(QStringLiteral("Easing; unknown values fall back to easeOut"),
@@ -1207,7 +1263,8 @@
           "Segment a clip with explicit points in a single call — no session needed. Prefer this over "
           "the session ops for scripted use. Async and with no progress field: re-read "
           "inspect({clips:true,detail:true}) and compare to detect completion. points are required for "
-          "the sam2 backend and ignored by rvm, which finds people on its own.",
+          "the sam2 backend and ignored by rvm, which finds people on its own. Works on video and image "
+          "clips; an image gets a single matte that covers its whole duration.",
           objectSchema(mergeProps(
               {{QStringLiteral("points"),
                 arrayProp(objectSchema({{QStringLiteral("x"), numberProp(QStringLiteral("X, 0..1 across the frame"))},
@@ -1299,13 +1356,13 @@
           "embedded audio is not suppressed — with per-clip volume keyframe count, audio effect "
           "count, fades, and the asset's sampleRate/channels/hasAudio. Cheaper and far smaller than "
           "inspect({clips:true,detail:true}) when all you need is a range worth analysing. Also "
-          "returns beats.{analysed, bpm, stale, gridVisible, onsetsVisible}.",
+          "returns beats.{analysed, bpm, stale, gridVisible, onsetsVisible}, and soloed:[tracks] when any is soloed.",
           objectSchema({}), true, false, true },
         { "get_waveform", "audio", "See the amplitude",
           "Amplitude peaks as an array of numbers in 0..1, one per bucket, evenly spaced across the "
           "range. Three modes: pass clip (or track+index) for that clip's trimmed source window, "
           "asset for a media file, or neither (with start and duration) for the MIXED TIMELINE — "
-          "every track summed with volume, fades and mutes applied. WARNING: clip and asset mode "
+          "every track summed with volume, fades, mutes and solo applied. WARNING: clip and asset mode "
           "read the source file, so clip speed, reverse and volume are NOT applied; only timeline "
           "mode is what you would actually hear. Silence reads as a true 0, so this is usable for "
           "finding dead air. Blocks while decoding, so the data is there on the first call. "
@@ -1393,7 +1450,7 @@
           "TIMELINE second, which is how you ramp or duck. WARNING: once a clip has more than one "
           "volume keyframe, a call without `at` retargets the key nearest the playhead rather than "
           "flattening the animation — read the keys back with list_keyframes({prop:\"volume\"}). "
-          "Track-level volume does not exist; mute a whole lane with set_track instead.",
+          "Track-level volume does not exist; mute a whole lane with set_track, or hear one alone with its solo.",
           objectSchema(mergeProps(
               {{QStringLiteral("value"), numberProp(QStringLiteral("Volume (1 = unity, 2 = mixer maximum)"), 0, 2)},
                {QStringLiteral("at"), numberProp(QStringLiteral("Timeline seconds for a keyframe; omit to set the constant level"))}},
@@ -1485,7 +1542,12 @@
           "user can choose always (Settings › Preview), since it transcodes every later import. "
           "useProxies makes preview read proxies where they exist (create them with create_proxies); "
           "export always reads the original media. proxySize is the short side of new proxies; "
-          "proxies made at another size aren't used until made again. "
+          "proxies made at another size aren't used until made again. proxyLocation sets where new "
+          "proxies and reversed renders are saved: beside (next to the original, default; Drift's cache "
+          "when that folder refuses a write), cache (Drift's cache, pruned past its size limit) or "
+          "folder (proxyFolder, an existing writable folder; Drift's cache while it's missing). Changing "
+          "the folder moves or deletes nothing, but proxies in the previous folder are no longer found "
+          "(choose it again to find them). "
           "Returns the resulting flags plus theme {overridden, dark}.",
           objectSchema({{QStringLiteral("autoKey"), boolProp(QStringLiteral("Auto-keyframe: transform edits create keyframes at the playhead"))},
                         {QStringLiteral("mediaGrid"), boolProp(QStringLiteral("Media bin grid mode"))},
@@ -1498,7 +1560,11 @@
                          enumProp(QStringLiteral("What imports do with footage that would preview slowly: ask (a notification offers proxies; default) or never. always is user-only. Global, kept across sessions"),
                                   {QStringLiteral("ask"), QStringLiteral("never")})},
                         {QStringLiteral("useProxies"), boolProp(QStringLiteral("Preview reads proxies where they exist (Settings › Preview › Use proxies). Global, kept across sessions"))},
-                        {QStringLiteral("proxySize"), integerProp(QStringLiteral("Short side of new proxies: 360, 540, 720 or 1080. Global, kept across sessions"))}}) },
+                        {QStringLiteral("proxySize"), integerProp(QStringLiteral("Short side of new proxies: 360, 540, 720 or 1080. Global, kept across sessions"))},
+                        {QStringLiteral("proxyLocation"),
+                         enumProp(QStringLiteral("Where new proxies and reversed clips are saved. Global, kept across sessions"),
+                                  {QStringLiteral("beside"), QStringLiteral("cache"), QStringLiteral("folder")})},
+                        {QStringLiteral("proxyFolder"), stringProp(QStringLiteral("Absolute path of an existing writable folder for proxyLocation folder. Global, kept across sessions"))}}) },
 
         { "get_camera_state", "timeline", "Read the scene camera's pose at a time",
           "The camera clip covering `at` (default the playhead), or `clip`, as it is posed then, "
@@ -1615,9 +1681,16 @@
           "the first clip, which moves the track to the start of the timeline). Linked A/V partners "
           "follow. With overlap off this is how you delete without leaving a hole, or how you put an "
           "intro at the front: place then close_gap behind. When moving several clips toward zero with "
-          "overlap off, sequence back-to-front or each move is pushed into the clip ahead.",
+          "overlap off, sequence back-to-front or each move is pushed into the clip ahead. "
+          "With all_tracks:true, every track that is empty over the gap closes it too, so unlinked "
+          "audio, titles and layers keep their timing. A track with a clip in the gap stays (with the "
+          "tracks linked to it), as does a locked track. The reply lists moved_tracks, "
+          "skipped_tracks:[{track, reason: clip_in_gap|locked|linked, blocker}] and moved:[{id, start}]. "
+          "Refused (nothing changes) when this track's own group cannot close, or when it is an "
+          "adjustment track. `at` within a millisecond of a clip's end counts as that end.",
           objectSchema({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
-                        {QStringLiteral("at"), numberProp(QStringLiteral("Left edge of the hole, timeline seconds"))}},
+                        {QStringLiteral("at"), numberProp(QStringLiteral("Left edge of the hole, timeline seconds"))},
+                        {QStringLiteral("all_tracks"), boolProp(QStringLiteral("Also close the gap on every other track that is empty over it"))}},
                        {QStringLiteral("track"), QStringLiteral("at")}) },
         { "close_gaps", "timeline", "Close every hole on a track",
           "Close every gap on `track` within [from, to] (seconds; default the whole track) in one undo "
@@ -1626,10 +1699,13 @@
           "stays in sync. A gap that a clip on such a track sits in (or whose close would drag "
           "an earlier linked clip along, or past 0) is left open and listed in skipped with that clip; "
           "a locked track or an adjustment track refuses the op. Returns closed:[{at, width}] and "
-          "skipped:[{at, width, blocker}] at their positions before the op, and moved:[{id, start}].",
+          "skipped:[{at, width, blocker}] at their positions before the op, and moved:[{id, start}]. "
+          "all_tracks:true closes each gap on every track that is empty over it as well; moved_tracks "
+          "and skipped_tracks:[{track, at, reason, blocker}] are added to the reply.",
           objectSchema({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
                         {QStringLiteral("from"), numberProp(QStringLiteral("Only gaps starting at or after this time (seconds)"))},
-                        {QStringLiteral("to"), numberProp(QStringLiteral("Only gaps ending at or before this time (seconds)"))}},
+                        {QStringLiteral("to"), numberProp(QStringLiteral("Only gaps ending at or before this time (seconds)"))},
+                        {QStringLiteral("all_tracks"), boolProp(QStringLiteral("Also close each gap on every other track that is empty over it"))}},
                        {QStringLiteral("track")}) },
         { "set_snap", "timeline", "Turn magnetic snapping on or off",
           "Editor snap-to-clips/beats/bookmarks. Not undoable.",
@@ -1792,8 +1868,9 @@
                        {QStringLiteral("path")}) },
         { "effect_authoring_guide", "effects", "How to write a custom effect",
           "Read before create_effect. Returns {guide} — manifest grammar for effects, transitions and "
-          "audio effects, every parameter type and the inspector control it becomes, GLSL rules and "
-          "a working example — plus {processors:[{processor, examples, params}]} for audio effects.",
+          "audio effects, every parameter type and the inspector control it becomes, GLSL rules, "
+          "time effects (history: earlier source frames; previousOutput: the effect's last output) and "
+          "working examples — plus {processors:[{processor, examples, params}]} for audio effects.",
           objectSchema({{QStringLiteral("kind"), effectKindProp()}}), true, false, true },
         { "create_effect", "effects", "Write a new effect into My Effects",
           "Create a GPU video effect, transition or audio effect from a manifest and shader sources. "
@@ -1862,9 +1939,11 @@
           objectSchema({}), true, false, true },
         { "export_with_preset", "project", "Export using a named size",
           "Start an async encode with a scale preset from list_export_presets. Same polling as "
-          "export_video.",
+          "export_video, and the same bakes argument and bakes / bakes_reused reply.",
           objectSchema({{QStringLiteral("path"), stringProp(QStringLiteral("Absolute output path"))},
-                        {QStringLiteral("preset"), stringProp(QStringLiteral("Scale preset id from list_export_presets"))}},
+                        {QStringLiteral("preset"), stringProp(QStringLiteral("Scale preset id from list_export_presets"))},
+                        {QStringLiteral("bakes"), enumProp(QStringLiteral("As export_video: fresh (default), all or none"),
+                                                           {QStringLiteral("fresh"), QStringLiteral("all"), QStringLiteral("none")})}},
                        {QStringLiteral("path"), QStringLiteral("preset")}) },
         { "stabilize_clip", "canvas", "Stabilise shaky footage",
           "Start a two-pass stabilise on a video clip's source range. bake renders a '<name> (stabilized)' "
@@ -2035,6 +2114,28 @@
                         {QStringLiteral("language"), stringProp(QStringLiteral("Chatterbox language code (local_tts_status); omitted = the last used"))},
                         {QStringLiteral("exaggeration"), numberProp(QStringLiteral("Expressiveness; omitted = the last used"), 0.25, 2)}}),
                        {}) },
+        { "get_teleprompter", "voice", "Read the teleprompter script and its settings",
+          "Read the Teleprompter panel: {script, lines, chars, speed, font_size, overlay, "
+          "follow_recording, playing, position}. script is saved with the project. speed (lines per "
+          "second), font_size, overlay (the script shown over the preview) and follow_recording "
+          "(scrolling starts, pauses and stops with audio recording) are the user's global settings. "
+          "playing and position (lines scrolled) are the live scroll.",
+          objectSchema({}), true, false, true },
+        { "set_teleprompter", "voice", "Put a script in the teleprompter for the user to read",
+          "Put a script in the Teleprompter panel for the user to read while recording a voice-over "
+          "themselves, and set how it scrolls. Only supplied keys change. The script is saved with the "
+          "project and, as in the panel, is not undoable: replacing a non-empty script that differs "
+          "fails conflict unless replace:true, so read it with get_teleprompter first. A new script "
+          "stops the scroll and starts from the top. speed, font_size, overlay and follow_recording are "
+          "the user's global settings, kept across sessions. Returns the settings plus lines and chars "
+          "(not the script).",
+          objectSchema({{QStringLiteral("script"), stringProp(QStringLiteral("The whole script; \"\" clears it. Line breaks are kept (\\r\\n becomes \\n)"))},
+                        {QStringLiteral("replace"), boolProp(QStringLiteral("Allow replacing a different, non-empty script (default false)"))},
+                        {QStringLiteral("speed"), numberProp(QStringLiteral("Scroll speed in lines per second (panel default 0.6)"), 0.1, 5)},
+                        {QStringLiteral("font_size"), integerProp(QStringLiteral("Text size in pixels (panel default 32)"), 12, 96)},
+                        {QStringLiteral("overlay"), boolProp(QStringLiteral("Show the script over the preview"))},
+                        {QStringLiteral("follow_recording"), boolProp(QStringLiteral("Scrolling starts, pauses and stops with audio recording"))}}),
+          false, true },
         { "get_job", "ai", "Progress of a background job",
           "State of a job started by transcribe, diarize, tts_generate, sfx_generate, add_voice or voiceover_from_subtitles: {id, kind, "
           "target, active, progress, status}; once active is false, ok plus result or error. "
@@ -2237,13 +2338,21 @@
               clipRefProps())) },
         { "duck_under", "audio", "Lower music under speech",
           "Write volume keyframes on this (music) clip that dip whenever speech is present on "
-          "over_track or over_clips. amount is the volume multiplier during speech. One undo step.",
+          "over_track or over_clips (all other tracks are ignored). Speech is found with the "
+          "Silero voice model when installed (method auto/vad), otherwise by loudness (energy). "
+          "amount is the volume multiplier during speech, or give reduce_db. Pauses shorter than "
+          "hold + attack + release stay ducked. Re-running replaces the previous pass. One undo "
+          "step. Returns {keys, speech, rest, ducked, method}.",
           objectSchema(mergeProps(
               {{QStringLiteral("over_track"), integerProp(QStringLiteral("Track whose non-silent ranges drive the duck"))},
                {QStringLiteral("over_clips"), arrayProp(stringProp(QStringLiteral("Clip UUID")), QStringLiteral("Speech clips; wins over over_track"))},
                {QStringLiteral("amount"), propWithDefault(numberProp(QStringLiteral("Multiplier during speech"), 0, 1), 0.3)},
                {QStringLiteral("attack"), propWithDefault(numberProp(QStringLiteral("Seconds to ramp down before speech")), 0.12)},
-               {QStringLiteral("release"), propWithDefault(numberProp(QStringLiteral("Seconds to ramp back after speech")), 0.25)}},
+               {QStringLiteral("release"), propWithDefault(numberProp(QStringLiteral("Seconds to ramp back after speech")), 0.25)},
+               {QStringLiteral("reduce_db"), numberProp(QStringLiteral("Reduction in dB (<= 0); overrides amount"), -60, 0)},
+               {QStringLiteral("hold"), propWithDefault(numberProp(QStringLiteral("Pauses shorter than this stay ducked, seconds"), 0, 10), 0.5)},
+               {QStringLiteral("sensitivity"), propWithDefault(numberProp(QStringLiteral("0 = only loud speech, 1 = quiet speech too"), 0, 1), 0.5)},
+               {QStringLiteral("method"), propWithDefault(stringProp(QStringLiteral("auto, energy (loudness) or vad (voice model)")), QStringLiteral("auto"))}},
               clipRefProps())) },
         { "setup_multicam", "multicam", "Open a multi-camera session",
           "With two or more video clips selected, start punching those as angles. Otherwise place "

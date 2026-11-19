@@ -1,5 +1,6 @@
 #include "app/editor/appcontroller/AppControllerInternal.h"
 #include <QCoreApplication>
+#include "engine/packages/animations/AnimationCatalog.h"
 #include "engine/decode/probe/MediaProbe.h"
 #include "app/mcp/McpController.h"
 #include "app/bin/MediaBinController.h"
@@ -804,6 +805,13 @@ void AppController::dissolveComposite(int trackIndex, int clipIndex)
     setPlaying(false);
     const drift::Project before = m_project.detachedCopy();
     m_project.ensureTrackIds();
+    // The selection is rewritten below with post-dissolve indices; a lock refusal puts the project
+    // back, so it has to put the selection back too.
+    const auto savedSelection = m_selection;
+    const int savedSelectedTrack = m_selectedTrack;
+    const int savedSelectedClip = m_selectedClip;
+    const int savedTransitionTrack = m_selectedTransitionTrack;
+    const int savedTransitionLeftClip = m_selectedTransitionLeftClip;
 
     const drift::TimeUs shift = composite.timelineStart - composite.srcIn;
     QHash<QString, QString> newClipIds;
@@ -997,6 +1005,15 @@ void AppController::dissolveComposite(int trackIndex, int clipIndex)
     m_selectedTransitionLeftClip = -1;
 
     pushProjectEdit(before, tr("Dissolve composite"));
+    if (m_editRefusedByLock) {
+        m_selection = savedSelection;
+        m_selectedTrack = savedSelectedTrack;
+        m_selectedClip = savedSelectedClip;
+        m_selectedTransitionTrack = savedTransitionTrack;
+        m_selectedTransitionLeftClip = savedTransitionLeftClip;
+        resyncAfterLockRefusal(tr("A locked track would be changed or deleted. Unlock it first"));
+        return;
+    }
     if (discarding) {
         setLastMessage(tr("Composite effects and transform were discarded"), QStringLiteral("warning"));
         // No finishEdit on this path: the revision (and the change feed) moves here.
@@ -1420,37 +1437,48 @@ QVariantList AppController::compositeSequences() const
     return sequences;
 }
 
-void AppController::newTimeline()
+QString AppController::createTimeline(const QString &name, const QString &folderId)
 {
     setPlaying(false);
     const drift::Project before = m_project.detachedCopy();
 
-    QSet<QString> names;
-    for (const drift::MediaAsset &existing : m_project.assets())
-        names.insert(existing.name);
-    int number = 1;
-    while (names.contains(tr("Timeline %1").arg(number)))
-        ++number;
+    QString timelineName = name.trimmed();
+    if (timelineName.isEmpty()) {
+        QSet<QString> names;
+        for (const drift::MediaAsset &existing : m_project.assets())
+            names.insert(existing.name);
+        int number = 1;
+        while (names.contains(tr("Timeline %1").arg(number)))
+            ++number;
+        timelineName = tr("Timeline %1").arg(number);
+    }
 
     drift::TrackList tracks;
     tracks.append(drift::Track{.type = drift::TrackType::Video});
     drift::MediaAsset asset;
     asset.kind = drift::MediaKind::Composite;
-    asset.name = tr("Timeline %1").arg(number);
+    asset.name = timelineName;
     asset.sequenceId = m_project.addSequence(tracks);
     asset.durationUs = 0;
     asset.width = m_project.width();
     asset.height = m_project.height();
     asset.fps = m_project.fps();
-    asset.folderId = m_bin->currentFolderId();
-    const QString sequenceId = asset.sequenceId;
-    m_project.addAsset(asset);
+    asset.folderId = folderId;
+    const QString assetId = m_project.addAsset(asset);
 
     if (m_assetLibrary)
         m_assetLibrary->syncToProject();
     pushProjectEdit(before, tr("Timeline created"));
     finishEdit(tr("Timeline created"));
-    openSequence(sequenceId);
+    // A lock refusal resets m_project, so the asset is the proof the edit landed.
+    return m_project.asset(assetId) ? assetId : QString();
+}
+
+void AppController::newTimeline()
+{
+    const QString assetId = createTimeline(QString(), m_bin->currentFolderId());
+    if (const drift::MediaAsset *asset = m_project.asset(assetId))
+        openSequence(asset->sequenceId);
 }
 
 void AppController::openSequence(const QString &sequenceId)
@@ -1544,8 +1572,8 @@ bool AppController::flattenComposite(int trackIndex, int clipIndex)
     const drift::TimeUs srcInUs = clip.srcIn;
     const drift::TimeUs durationUs = clip.srcOut - clip.srcIn;
 
-    (void)QtConcurrent::run([this, source, settings, outputPath, clipId, sequenceId, name, srcInUs,
-                             durationUs]() {
+    m_exportFuture = QtConcurrent::run([this, source, settings, outputPath, clipId, sequenceId, name,
+                                        srcInUs, durationUs]() {
         Exporter::BackgroundHold hold(QStringLiteral("Flattening composite"), /*cancellable=*/true);
         QString error;
         const auto report = [this](double fraction) {
@@ -1685,7 +1713,8 @@ void AppController::pruneOrphanSequences()
         if (id == active) {
             clearSelection();
             m_project.activateSequence(QString());
-            m_mcpController->bumpEditRevision();
+            // No revision bump here: every caller bumps it (or finishEdit does) once pushProjectEdit
+            // has accepted the edit, and a refused removal must not move it.
             notifyTracksChanged();
         }
         m_project.removeSequence(id);
@@ -1693,6 +1722,23 @@ void AppController::pruneOrphanSequences()
     }
     if (changed)
         emit sequenceTabsChanged();
+}
+
+// pushProjectEdit put m_project back after a lock refusal, but a bin removal had already told
+// the bin model and the timeline tabs that rows and sequences went away. Resync them from the
+// restored project. Not syncAfterProjectSwap: that marks the project dirty and restores the
+// selection from an undo snapshot, and nothing changed here.
+void AppController::resyncAfterLockRefusal(const QString &message)
+{
+    m_editRefusedByLock = false;
+    if (m_assetLibrary)
+        m_assetLibrary->syncToProject();
+    m_bin->folderModel()->syncToProject();
+    normalizeSelection();
+    notifyTracksChanged();
+    notifySelectionChanged();
+    emit sequenceTabsChanged();
+    setLastMessage(message, QStringLiteral("warning"));
 }
 
 void AppController::syncCompositeAssetDurations()
@@ -2050,9 +2096,13 @@ void AppController::setClipAnimation(int trackIndex, int clipIndex, const QStrin
 
     drift::ClipAnimation next = isIn ? clip.animIn : clip.animOut;
     if (patch.contains(QStringLiteral("kind"))) {
+        const QString previousKind = next.kindId;
         next.kindId = patch.value(QStringLiteral("kind")).toString();
         if (next.kindId == QLatin1String("none"))
             next.kindId.clear();
+        const AnimationPresetEntry *pkg = animationDefForId(next.kindId);
+        if (pkg && next.kindId != previousKind && !patch.contains(QStringLiteral("duration")))
+            next.durationUs = qint64(pkg->defaultDurationMs) * 1000;
     }
     if (patch.contains(QStringLiteral("duration")))
         next.durationUs =
@@ -2099,6 +2149,16 @@ QVariantList AppController::clipAnimationKinds() const
         out.append(QVariantMap{
             {QStringLiteral("id"), info.id},
             {QStringLiteral("label"), QCoreApplication::translate("ClipAnimation", info.label)},
+            {QStringLiteral("directions"), QStringList{QStringLiteral("in"), QStringLiteral("out")}},
+        });
+    }
+    for (const AnimationPresetEntry &entry : animationCatalog()) {
+        out.append(QVariantMap{
+            {QStringLiteral("id"), entry.meta.id},
+            {QStringLiteral("label"), entry.meta.displayName},
+            {QStringLiteral("category"), entry.meta.category},
+            {QStringLiteral("directions"), entry.directions},
+            {QStringLiteral("package"), true},
         });
     }
     return out;
@@ -2141,6 +2201,8 @@ void AppController::applyClipAnimationPreset(int trackIndex, int clipIndex, cons
         } else {
             if (anim.isNone() || anim.durationUs <= 0)
                 anim.durationUs = 500000;
+            if (const AnimationPresetEntry *pkg = animationDefForId(kind); pkg && anim.kindId != kind)
+                anim.durationUs = qint64(pkg->defaultDurationMs) * 1000;
             anim.kindId = kind;
             anim.durationUs = qMin(anim.durationUs, clip.timelineDuration);
             if (fadeUs <= 0) {

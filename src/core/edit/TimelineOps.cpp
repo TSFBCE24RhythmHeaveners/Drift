@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cmath>
 #include <optional>
+#include <utility>
 
 namespace drift {
 
@@ -1690,6 +1691,155 @@ bool closeRippleRanges(Project &project, const QList<RippleRange> &ranges, QStri
     return true;
 }
 
+namespace {
+
+// A free adjustment clip counts for an all-tracks gap; one pinned to a clip (an effect, mask or
+// audio FX lane clip) follows that clip instead.
+bool countsForGap(const Track &track, const Clip &clip)
+{
+    return !track.isAdjustment() || clip.linkedClipId.isEmpty() || clip.adjustmentKind == AdjustmentKind::Transform;
+}
+
+} // namespace
+
+bool closeGapOnEmptyTracks(Project &project, int origin, TimeUs s, TimeUs e, EmptyTracksGapClose *result,
+                           GapTrackSkip *originSkip)
+{
+    const int count = int(project.tracks().size());
+    if (origin < 0 || origin >= count || e <= s || project.tracks().at(origin).isAdjustmentLane())
+        return false;
+
+    // Groups, the origin's first. Nested lanes follow their parent clip, so they are in none.
+    QList<QSet<int>> groups;
+    QSet<int> seen;
+    QList<int> order{origin};
+    for (int t = 0; t < count; ++t)
+        order.append(t);
+    for (const int t : std::as_const(order)) {
+        if (seen.contains(t) || project.tracks().at(t).isAdjustmentLane())
+            continue;
+        QSet<int> group = project.tracks().at(t).isAdjustment() ? QSet<int>{t} : rippleTrackGroup(project, t);
+        group.insert(t);
+        seen.unite(group);
+        groups.append(group);
+    }
+
+    EmptyTracksGapClose out;
+    QStringList movedIds;
+    for (int g = 0; g < groups.size(); ++g) {
+        const QSet<int> &group = groups.at(g);
+        QList<int> members = group.values();
+        std::sort(members.begin(), members.end());
+        const bool isOrigin = g == 0;
+
+        // Why the group stays, if it does; filled per track below.
+        QString groupReason;
+        QString groupBlocker;
+        int causeTrack = -1;
+        QList<int> withContent; // tracks with something after the gap
+        for (const int t : std::as_const(members)) {
+            const Track &track = project.tracks().at(t);
+            bool after = false;
+            for (const Clip &clip : track.clips) {
+                if (!countsForGap(track, clip))
+                    continue;
+                if (clip.timelineEnd() > s)
+                    after = true;
+                if (groupReason.isEmpty() && clip.timelineStart < e && clip.timelineEnd() > s) {
+                    groupReason = QStringLiteral("clip_in_gap");
+                    groupBlocker = clip.id;
+                    causeTrack = t;
+                }
+            }
+            if (after)
+                withContent.append(t);
+        }
+        if (withContent.isEmpty() && !isOrigin)
+            continue;
+        for (const int t : std::as_const(members)) {
+            if (project.tracks().at(t).locked) {
+                groupReason = QStringLiteral("locked");
+                groupBlocker.clear();
+                causeTrack = t;
+                break;
+            }
+        }
+
+        bool closed = false;
+        QStringList groupMoved;
+        if (groupReason.isEmpty()) {
+            if (project.tracks().at(*members.begin()).isAdjustment()) {
+                const int t = *members.begin();
+                QSet<QString> pinned;
+                for (const Clip &clip : project.tracks().at(t).clips)
+                    if (!countsForGap(project.tracks().at(t), clip))
+                        pinned.insert(clip.id);
+                groupMoved = rippleTracks(project, QSet<int>{t}, e, -(e - s), pinned);
+                closed = true;
+            } else {
+                QString blocker;
+                if (closeRippleRanges(project, {{members.first(), s, e}}, &blocker, &groupMoved)) {
+                    closed = true;
+                } else {
+                    groupReason = QStringLiteral("linked");
+                    groupBlocker = blocker;
+                }
+            }
+        }
+        if (closed) {
+            for (const int t : std::as_const(members))
+                for (const Clip &clip : project.tracks().at(t).clips)
+                    if (groupMoved.contains(clip.id)) {
+                        out.movedTracks.append(t);
+                        break;
+                    }
+            movedIds.append(groupMoved);
+            continue;
+        }
+        // The group stays: say so for each of its tracks that has something after the gap.
+        QList<GapTrackSkip> skips;
+        for (const int t : std::as_const(withContent)) {
+            GapTrackSkip skip;
+            skip.track = t;
+            if (t == causeTrack) {
+                skip.reason = groupReason;
+                skip.blocker = groupBlocker;
+            } else if (groupReason == QLatin1String("locked") && project.tracks().at(t).locked) {
+                skip.reason = groupReason;
+            } else {
+                skip.reason = groupReason == QLatin1String("linked") ? groupReason : QStringLiteral("linked");
+                skip.blocker = groupBlocker;
+            }
+            skips.append(skip);
+        }
+        if (causeTrack >= 0 && !withContent.contains(causeTrack)) {
+            GapTrackSkip skip;
+            skip.track = causeTrack;
+            skip.reason = groupReason;
+            skip.blocker = groupBlocker;
+            skips.append(skip);
+        }
+        if (isOrigin) {
+            if (originSkip) {
+                GapTrackSkip skip;
+                skip.track = causeTrack >= 0 ? causeTrack : origin;
+                skip.reason = groupReason;
+                skip.blocker = groupBlocker;
+                *originSkip = skip;
+            }
+            return false;
+        }
+        out.skipped.append(skips);
+    }
+    std::sort(out.movedTracks.begin(), out.movedTracks.end());
+    std::sort(out.skipped.begin(), out.skipped.end(),
+              [](const GapTrackSkip &a, const GapTrackSkip &b) { return a.track < b.track; });
+    out.moved = movedIds;
+    if (result)
+        *result = out;
+    return true;
+}
+
 QPair<QString, int> splitLabel(const QString &label)
 {
     const int dot = label.lastIndexOf(QLatin1Char('.'));
@@ -2073,7 +2223,8 @@ std::optional<TimeUs> retimedTime(const QList<RetimedClip> &changes, const QStri
 
 } // namespace
 
-void retimeLinkedSubtitles(const Project &before, Project &project, const QHash<QString, QString> &replaced)
+void retimeLinkedSubtitles(const Project &before, Project &project, const QHash<QString, QString> &replaced,
+                           bool dropCollapsed)
 {
     QHash<QString, Clip> after;
     for (const Track &track : project.tracks()) {
@@ -2145,8 +2296,17 @@ void retimeLinkedSubtitles(const Project &before, Project &project, const QHash<
                 else if (other.timelineEnd() <= sub.timelineStart)
                     start = qMax(start, other.timelineEnd());
             }
-            if (end <= start)
-                continue;
+            bool collapsed = false;
+            if (end <= start) {
+                if (!dropCollapsed)
+                    continue;
+                // Every word of the clip left its source window (a slip by at least its length): keep
+                // the old span and rebase the cues against it, so the ones that slipped out (zero length
+                // now) are dropped below.
+                collapsed = true;
+                start = sub.timelineStart;
+                end = sub.timelineEnd();
+            }
 
             QList<SubtitleCue> rebased;
             for (SubtitleCue cue : cues) {
@@ -2157,6 +2317,12 @@ void retimeLinkedSubtitles(const Project &before, Project &project, const QHash<
             }
             sortSubtitleCues(rebased);
 
+            if (dropCollapsed && rebased.isEmpty()) {
+                // Nothing of the captions is left: remove the clip (undo restores it).
+                track.clips.removeAt(i);
+                --i;
+                continue;
+            }
             Clip &out = track.clips[i];
             out.timelineStart = start;
             out.timelineDuration = end - start;
@@ -2171,6 +2337,7 @@ void retimeLinkedSubtitles(const Project &before, Project &project, const QHash<
 void muteAllButClip(Project &snap, const QString &clipId)
 {
     for (Track &track : snap.tracks()) {
+        track.solo = false;
         bool has = false;
         for (Clip &clip : track.clips) {
             if (clip.id == clipId) {
@@ -2202,6 +2369,28 @@ QList<ClipRef> linkedPartners(const Project &project, const Clip &clip)
         }
     }
     return out;
+}
+
+SlipLimits slipLimits(const Clip &clip, TimeUs mediaDurationUs)
+{
+    if (clip.loops())
+        return {std::numeric_limits<TimeUs>::min() / 4, std::numeric_limits<TimeUs>::max() / 4};
+    return {-qMax<TimeUs>(0, clip.srcIn), qMax<TimeUs>(0, mediaDurationUs - clip.srcOut)};
+}
+
+void slipClipSource(Clip &clip, TimeUs sourceDeltaUs)
+{
+    if (sourceDeltaUs == 0)
+        return;
+    if (clip.loops()) {
+        // loopOffsetUs runs in playback order, so a reversed clip's later source is a smaller offset.
+        const TimeUs range = clip.srcOut - clip.srcIn;
+        const TimeUs d = (clip.reverse ? -sourceDeltaUs : sourceDeltaUs) % range;
+        clip.loopOffsetUs = ((clip.loopOffsetUs + d) % range + range) % range;
+        return;
+    }
+    clip.srcIn += sourceDeltaUs;
+    clip.srcOut += sourceDeltaUs;
 }
 
 void syncLinkedTiming(Clip &dst, const Clip &src)
@@ -2360,8 +2549,11 @@ namespace {
 // Every clip-relative curve a clip can carry, in one place so the operations below cannot forget
 // one. TextAnimator curves are deliberately absent: their key "times" are animation progress, not
 // clip time, so moving them would distort the animation rather than move it.
-template<typename Fn>
-void forEachKeyframeTrack(Clip &clip, Fn &&fn)
+//
+// ClipT is Clip or const Clip, so a read-only pass (clipKeyTimes) and a rewriting one
+// (shiftClipKeyframes) walk the very same list.
+template<typename ClipT, typename Fn>
+void visitKeyframeTracks(ClipT &clip, Fn &&fn)
 {
     fn(clip.opacity);
     fn(clip.positionX);
@@ -2377,13 +2569,13 @@ void forEachKeyframeTrack(Clip &clip, Fn &&fn)
     fn(clip.anchorY);
     fn(clip.anchorZ);
     fn(clip.volume);
-    const auto visitMap = [&fn](QMap<QString, KeyframeTrack<double>> &tracks) {
+    const auto visitMap = [&fn](auto &tracks) {
         for (auto it = tracks.begin(); it != tracks.end(); ++it)
             fn(it.value());
     };
-    for (Effect &effect : clip.effects)
+    for (auto &effect : clip.effects)
         visitMap(effect.paramKeyframes);
-    for (Effect &effect : clip.audioEffects)
+    for (auto &effect : clip.audioEffects)
         visitMap(effect.paramKeyframes);
     visitMap(clip.mask.keyframes);
     visitMap(clip.shapeStyle.keyframes);
@@ -2394,6 +2586,12 @@ void forEachKeyframeTrack(Clip &clip, Fn &&fn)
     visitMap(clip.procedural.paramKeyframes);
 }
 
+template<typename Fn>
+void forEachKeyframeTrack(Clip &clip, Fn &&fn)
+{
+    visitKeyframeTracks(clip, std::forward<Fn>(fn));
+}
+
 } // namespace
 
 void shiftClipKeyframes(Clip &clip, TimeUs delta)
@@ -2401,6 +2599,28 @@ void shiftClipKeyframes(Clip &clip, TimeUs delta)
     if (delta == 0)
         return;
     forEachKeyframeTrack(clip, [delta](KeyframeTrack<double> &track) { track.shiftBy(delta); });
+}
+
+QList<TimeUs> clipKeyTimes(const Clip &clip)
+{
+    QSet<TimeUs> times;
+    visitKeyframeTracks(clip, [&times](const KeyframeTrack<double> &track) {
+        // A lone key at 0 is a property's resting value, not an animation — the inspector's
+        // diamond reads it that way too (clipAnimatedProperties), so it gets no marker.
+        if (track.keyframes().size() == 1 && track.keyframes().firstKey() == 0)
+            return;
+        for (auto it = track.keyframes().cbegin(); it != track.keyframes().cend(); ++it)
+            times.insert(it.key());
+    });
+    // An animated mask shape is one key per vertex list, keyed on the carrying adjustment's own
+    // start like the scalar tracks above.
+    for (auto it = clip.mask.pathKeys.cbegin(); it != clip.mask.pathKeys.cend(); ++it) {
+        if (clip.mask.pathKeys.size() > 1 || it.key() != 0)
+            times.insert(it.key());
+    }
+    QList<TimeUs> out(times.cbegin(), times.cend());
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 void rebaseKeyframesForSplitTail(Clip &tail, TimeUs offset)

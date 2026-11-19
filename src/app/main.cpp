@@ -2,6 +2,10 @@
 #include "core/base/CacheRoot.h"
 #include "app/bin/MediaBinController.h"
 #include "app/editor/PreferencesController.h"
+#include "app/forge/AudioForgeController.h"
+#include "app/forge/ForgeController.h"
+#include "ui/nodes/NodeGraphController.h"
+#include "ui/nodes/NodeGridItem.h"
 #include "app/procedural/ProceduralEditorController.h"
 #include "app/procedural/ProceduralHighlighter.h"
 #include "app/editor/ProjectFileController.h"
@@ -27,6 +31,7 @@
 #include "engine/addons/AddonRegistry.h"
 #include "app/platform/Haptics.h"
 #include "app/platform/PointerDevices.h"
+#include "app/platform/PlatformDrag.h"
 #include "app/platform/PrimaryDisplay.h"
 #include "app/GraphicsApiChoice.h"
 #include "app/StartupSplash.h"
@@ -94,6 +99,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlNetworkAccessManagerFactory>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QQmlEngine>
@@ -113,6 +119,8 @@
 #include <QTime>
 #include <memory>
 #include <mutex>
+#include <atomic>
+#include <chrono>
 #include <thread>
 
 #ifdef Q_OS_WIN
@@ -779,6 +787,24 @@ int main(int argc, char *argv[])
 #endif
 
     QApplication app(argc, argv);
+    // Declared right after app so it runs once every other local is gone but while QApplication
+    // still exists: the GL thread's offscreen surface has to die on the GUI thread, and the
+    // post routine that would otherwise do it runs inside ~QCoreApplication.
+    const auto glShutdown = qScopeGuard([] { drift::gl::runtime().shutdown(); });
+    // Joined before glShutdown: a warm-up past ensureReady() would otherwise post into a GL
+    // thread that is already gone. It may be waiting on this thread to create the offscreen
+    // surface, so keep delivering events while waiting.
+    std::thread glWarmup;
+    std::atomic_bool glWarmupDone{false};
+    const auto joinGlWarmup = qScopeGuard([&glWarmup, &glWarmupDone] {
+        if (!glWarmup.joinable())
+            return;
+        while (!glWarmupDone.load()) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        glWarmup.join();
+    });
     // A missing image plugin is silent everywhere else: the reader just returns a null QImage,
     // so the bin card is blank and the clip renders as nothing with no hint why. On a released
     // APK this line is the only way to tell that from a corrupt file, over adb logcat.
@@ -916,24 +942,30 @@ int main(int argc, char *argv[])
     qmlRegisterType<KeyframeCurvesItem>("Drift", 1, 0, "KeyframeCurvesItem");
     qmlRegisterType<TrackerOverlayItem>("Drift", 1, 0, "TrackerOverlayItem");
     qmlRegisterType<ConfidenceStripItem>("Drift", 1, 0, "ConfidenceStripItem");
+    qmlRegisterType<NodeGridItem>("Drift", 1, 0, "NodeGridItem");
+    qmlRegisterUncreatableType<NodeGraphController>("Drift", 1, 0, "NodeGraphController",
+                                                     QStringLiteral("Subclassed by the graph workspaces"));
     TimelineTrackItem::installAccessibility();
 
     step(StartupSplash::tr("Starting the playback and audio engines…"), 0.12);
-    static AssetLibrary assetLibrary;
-    static EditorState editorState(&assetLibrary);
+    AssetLibrary assetLibrary;
+    EditorState editorState(&assetLibrary);
     step(StartupSplash::tr("Loading add-ons and themes…"), 0.36);
-    static FileDialogs fileDialogs;
-    static AddonManager addonManager;
-    static UpdateChecker updateChecker;
-    static LayoutStore layoutStore;
-    static WorkspaceStore workspaceStore;
-    static SearchIndex searchIndex;
-    static ProceduralEditorController proceduralEditor(&editorState);
-    static drift::Haptics haptics;
-    static drift::PointerDevices pointerDevices;
-    static CrashReporter crashReporter;
+    FileDialogs fileDialogs;
+    AddonManager addonManager;
+    UpdateChecker updateChecker;
+    LayoutStore layoutStore;
+    WorkspaceStore workspaceStore;
+    SearchIndex searchIndex;
+    ProceduralEditorController proceduralEditor(&editorState);
+    ForgeController forge(&editorState, &workspaceStore);
+    AudioForgeController audioForge(&editorState, &workspaceStore);
+    drift::Haptics haptics;
+    drift::PointerDevices pointerDevices;
+    drift::PlatformDrag platformDrag;
+    CrashReporter crashReporter;
     editorState.setAddonManager(&addonManager);
-    static MarketServices market(assetLibrary, editorState, addonManager);
+    MarketServices market(assetLibrary, editorState, addonManager);
     editorState.setMarketplace(market.context());
     DownloadCenter *downloads = DownloadCenter::instance();
     bridgeUpdates(downloads, &updateChecker);
@@ -941,6 +973,8 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("Drift", 1, 0, "BinFolderModel", editorState.bin()->folderModel());
     qmlRegisterSingletonInstance("Drift", 1, 0, "EditorState", &editorState);
     qmlRegisterSingletonInstance("Drift", 1, 0, "ProceduralEditor", &proceduralEditor);
+    qmlRegisterSingletonInstance("Drift", 1, 0, "Forge", &forge);
+    qmlRegisterSingletonInstance("Drift", 1, 0, "AudioForge", &audioForge);
     qmlRegisterSingletonInstance("Drift", 1, 0, "AppController", &editorState);
     qmlRegisterSingletonInstance("Drift", 1, 0, "FileDialogs", &fileDialogs);
     qmlRegisterSingletonInstance("Drift", 1, 0, "Addons", &addonManager);
@@ -960,6 +994,7 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("Drift", 1, 0, "SearchIndex", &searchIndex);
     qmlRegisterSingletonInstance("Drift", 1, 0, "Haptics", &haptics);
     qmlRegisterSingletonInstance("Drift", 1, 0, "PointerDevices", &pointerDevices);
+    qmlRegisterSingletonInstance("Drift", 1, 0, "PlatformDrag", &platformDrag);
     qmlRegisterSingletonInstance("Drift", 1, 0, "CrashReports", &crashReporter);
     // QML_ELEMENT on ThemeManager is recorded in qml_register_types_Drift(), and
     // that callback runs only when an import is the first thing to touch the
@@ -975,7 +1010,7 @@ int main(int argc, char *argv[])
     if (const QString themeOverride = qEnvironmentVariable("DRIFT_THEME"); !themeOverride.isEmpty())
         ThemeManager::shared()->applySessionOverride(themeOverride);
 
-    app.installEventFilter(new FileOpenFilter(&editorState, &app));
+    app.installEventFilter(new FileOpenFilter(&editorState, &editorState));
     {
         // Hoisted deliberately: QCoreApplication::arguments() rebuilds and returns a QStringList
         // BY VALUE on every call, so `const QString &arg = app.arguments().at(i)` bound a
@@ -1000,8 +1035,8 @@ int main(int argc, char *argv[])
             editorState.mcp()->setEnabled(true);
     }
 
+    CachedNetworkAccessManagerFactory networkFactory;
     QQmlApplicationEngine engine;
-    static CachedNetworkAccessManagerFactory networkFactory;
     engine.setNetworkAccessManagerFactory(&networkFactory);
     QObject::connect(editorState.preferences(), &PreferencesController::uiLanguageChanged,
                      &engine, &QQmlEngine::retranslate);
@@ -1082,7 +1117,7 @@ int main(int argc, char *argv[])
     };
     // Per-window startup hooks. `first` is the window the splash waits on; `editor` is the shell
     // window, the only one worth warming the compositor for.
-    [[maybe_unused]] const auto hookWindow = [&app, splash, graphicsApiGuarded](QQuickWindow *window, bool first,
+    [[maybe_unused]] const auto hookWindow = [&app, &glWarmup, &glWarmupDone, splash, graphicsApiGuarded](QQuickWindow *window, bool first,
                                                                               bool editor) {
 #if !defined(Q_OS_ANDROID) && !defined(Q_OS_WASM)
         if (window)
@@ -1128,15 +1163,18 @@ int main(int argc, char *argv[])
             // The compositor's GL context and Skia otherwise come up on the first preview frame,
             // blocking the GUI thread as a project opens. Bring them up off the GUI thread once the
             // window is on screen, so the start screen is not held back and the first open is quick.
-            QObject::connect(window, &QQuickWindow::frameSwapped, &app, [] {
-                std::thread([] {
+            QObject::connect(window, &QQuickWindow::frameSwapped, &app, [&glWarmup, &glWarmupDone] {
+                if (glWarmup.joinable())
+                    return;
+                glWarmup = std::thread([&glWarmupDone] {
                     drift::gl::GlRuntime &rt = drift::gl::runtime();
 #ifdef DRIFT_WITH_SKIA
                     rt.exec([&rt] { drift::skia::SkiaRuntime::acquire(rt); });
 #else
                     rt.available();
 #endif
-                }).detach();
+                    glWarmupDone.store(true);
+                });
             }, static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::SingleShotConnection));
         }
 #else
@@ -1145,8 +1183,11 @@ int main(int argc, char *argv[])
     };
     const auto loadShell = [&engine, resolvedShell, windowOf, hookWindow](bool first) {
         engine.setInitialProperties({{QStringLiteral("shellPreference"), resolvedShell}});
+        const qsizetype rootsBefore = engine.rootObjects().size();
         engine.loadFromModule("Drift", "Shell");
-        hookWindow(windowOf(engine.rootObjects().constLast()), first, true);
+        // A Shell.qml that fails to load adds no root; objectCreationFailed then exits.
+        const QList<QObject *> roots = engine.rootObjects();
+        hookWindow(windowOf(roots.size() > rootsBefore ? roots.constLast() : nullptr), first, true);
     };
 
     const auto startEditor = [&](bool first) {
@@ -1158,7 +1199,7 @@ int main(int argc, char *argv[])
             step(StartupSplash::tr("Opening setup…"), 1.0);
             hookWindow(windowOf(setupRoot), first, false);
             QObject::connect(editorState.preferences(), &PreferencesController::quickSetupCompleted, &app,
-                             [loadShell, setupRoot] {
+                             [loadShell, setupRoot, &editorState] {
                 PreferencesController *prefs = editorState.preferences();
                 if (prefs->uiScaleNeedsRestart() && prefs->canRestart()) {
                     prefs->restartApp();

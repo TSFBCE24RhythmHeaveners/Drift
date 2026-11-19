@@ -1,5 +1,6 @@
 #include "app/jobs/render/BakeController.h"
 
+#include "app/bin/AssetLibrary.h"
 #include "app/editor/AppController.h"
 #include "app/jobs/JobRegistry.h"
 #include "app/jobs/render/BakeFingerprint.h"
@@ -8,17 +9,21 @@
 #include "engine/encode/bake/BakeFile.h"
 #include "engine/encode/bake/BakeReader.h"
 #include "engine/encode/bake/BakeWriter.h"
+#include "engine/encode/export/Exporter.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonObject>
 #include <QPointer>
+#include <QSet>
 #include <QSettings>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -26,14 +31,54 @@ constexpr qint64 kCompactMinBytes = 256ll * 1024 * 1024;
 constexpr auto kProgressInterval = std::chrono::milliseconds(250);
 constexpr int kStaleDebounceMs = 300;
 
+// Named by projectPathKey, never the raw id, and checked to stay in the bakes folder: the id comes
+// from the project file. Empty when there's no safe name.
 QString bakePath(const QString &projectId)
 {
-    return QDir(drift::cacheRoot()).filePath(QStringLiteral("bakes/%1.driftbake").arg(projectId));
+    const QString key = drift::projectPathKey(projectId);
+    if (key.isEmpty())
+        return {};
+    const QString dir = QDir(QDir(drift::cacheRoot()).filePath(QStringLiteral("bakes"))).absolutePath();
+    const QString path = QDir::cleanPath(dir + QLatin1Char('/') + key + QStringLiteral(".driftbake"));
+    return QFileInfo(path).absolutePath() == dir ? path : QString();
 }
 
 qint64 usForFrame(qint64 frame, int fps)
 {
     return std::llround(double(frame) * 1e6 / qMax(1, fps));
+}
+
+// Each bake's size, counting a GOP once per file: a split leaves the GOPs across the cut in both
+// pieces (they're needed to decode), and they go on the earlier piece.
+QHash<QString, quint64> bakeBytes(const drift::BakeIndex &index)
+{
+    QHash<QString, quint64> out;
+    QSet<quint64> seen;
+    for (const drift::Bake &bake : index.bakes) {
+        quint64 &bytes = out[bake.id];
+        for (const drift::BakeGop &gop : bake.gops) {
+            if (!seen.contains(gop.offset)) {
+                seen.insert(gop.offset);
+                bytes += gop.size;
+            }
+        }
+    }
+    return out;
+}
+
+// The bake's span in microseconds, rounded outward to whole microseconds.
+QPair<drift::TimeUs, drift::TimeUs> bakeSpanUs(const drift::Bake &bake)
+{
+    return {bake.startFrame * 1000000 / bake.fps, (bake.endFrame * 1000000 + bake.fps - 1) / bake.fps};
+}
+
+bool overlapsAny(const drift::Bake &bake, const QList<QPair<drift::TimeUs, drift::TimeUs>> &spans)
+{
+    if (bake.fps <= 0)
+        return !spans.isEmpty();
+    const auto [start, end] = bakeSpanUs(bake);
+    return std::any_of(spans.begin(), spans.end(),
+                       [&](const auto &span) { return span.first < end && start < span.second; });
 }
 
 QString qualityLabel(int preset)
@@ -79,6 +124,22 @@ BakeController::BakeController(AppController *app, QObject *parent)
         syncProject();
         scheduleStaleCheck();
     });
+    // Sources are stamped by size and mtime, and nothing watches them: re-check when the user comes
+    // back to the app (a file re-rendered elsewhere) and when a source is re-probed.
+    if (qGuiApp) {
+        connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+            // Not mid-bake (older bakes are already trimmed but keep their old fingerprints until the
+            // job ends, so they'd read as stale; onJobDone re-checks), and at most once per 5 s.
+            if (state != Qt::ApplicationActive || m_busy)
+                return;
+            if (m_focusCheck.isValid() && !m_focusCheck.hasExpired(5000))
+                return;
+            m_focusCheck.start();
+            scheduleStaleCheck();
+        });
+    }
+    if (AssetLibrary *library = m_app->assetLibrary())
+        connect(library, &AssetLibrary::sourceContentChanging, this, [this]() { scheduleStaleCheck(); });
     connect(m_app, &AppController::projectReset, this, [this]() {
         m_queue.clear();
         m_afterJob.clear();
@@ -121,7 +182,7 @@ void BakeController::syncProject()
         return;
     // Opening creates the file, so a project that never bakes leaves nothing behind.
     const QString path = bakePath(id);
-    if (QFile::exists(path))
+    if (!path.isEmpty() && QFile::exists(path))
         m_file = drift::BakeFile::open(path);
     publish();
     scheduleStaleCheck();
@@ -134,6 +195,8 @@ bool BakeController::ensureFile()
     if (m_boundId.isEmpty())
         return false;
     const QString path = bakePath(m_boundId);
+    if (path.isEmpty())
+        return false;
     QDir().mkpath(QFileInfo(path).absolutePath());
     m_file = drift::BakeFile::open(path);
     if (!m_file)
@@ -165,6 +228,8 @@ void BakeController::scheduleStaleCheck()
 void BakeController::recomputeStale()
 {
     m_staleTimer.stop();
+    if (m_detached)
+        return;
     QSet<QString> stale;
     if (m_index) {
         const drift::Project &project = m_app->m_project;
@@ -194,11 +259,8 @@ void BakeController::recomputeStale()
 
 // --- QML model --------------------------------------------------------------
 
-QVariantMap BakeController::bakeMap(const drift::Bake &bake, const QString &state) const
+QVariantMap BakeController::bakeMap(const drift::Bake &bake, const QString &state, quint64 bytes) const
 {
-    quint64 bytes = 0;
-    for (const drift::BakeGop &gop : bake.gops)
-        bytes += gop.size;
     const double fps = qMax(1, bake.fps);
     return {
         {QStringLiteral("id"), bake.id},
@@ -222,13 +284,15 @@ QVariantList BakeController::bakes() const
         return {};
     QList<QVariantMap> rows;
     bool sawActive = false;
+    const auto bytes = bakeBytes(*m_index);
     for (const drift::Bake &bake : m_index->bakes) {
         const bool baking = m_busy && !m_activePreIds.contains(bake.id) && bake.startFrame >= m_activeStart
             && bake.endFrame <= m_activeEnd;
         sawActive = sawActive || baking;
         rows.append(bakeMap(bake, baking                           ? QStringLiteral("baking")
                                   : m_staleIds.contains(bake.id) ? QStringLiteral("stale")
-                                                                 : QStringLiteral("fresh")));
+                                                                 : QStringLiteral("fresh"),
+                              bytes.value(bake.id)));
     }
     if (m_busy && !sawActive) {
         drift::Bake pending;
@@ -239,7 +303,7 @@ QVariantList BakeController::bakes() const
         pending.width = m_app->m_project.width();
         pending.height = m_app->m_project.height();
         pending.preset = bakeQuality();
-        rows.append(bakeMap(pending, QStringLiteral("baking")));
+        rows.append(bakeMap(pending, QStringLiteral("baking"), 0));
     }
     std::stable_sort(rows.begin(), rows.end(), [](const QVariantMap &a, const QVariantMap &b) {
         return a.value(QStringLiteral("start")).toDouble() < b.value(QStringLiteral("start")).toDouble();
@@ -258,12 +322,13 @@ QVariantList BakeController::staleBakesIn(double startSeconds, double endSeconds
     QVariantList out;
     if (m_detached || !m_index)
         return out;
+    const auto bytes = bakeBytes(*m_index);
     for (const drift::Bake &bake : m_index->bakes) {
         if (!m_staleIds.contains(bake.id))
             continue;
         const double fps = qMax(1, bake.fps);
         if (double(bake.startFrame) / fps < endSeconds && double(bake.endFrame) / fps > startSeconds)
-            out.append(bakeMap(bake, QStringLiteral("stale")));
+            out.append(bakeMap(bake, QStringLiteral("stale"), bytes.value(bake.id)));
     }
     return out;
 }
@@ -304,11 +369,11 @@ qint64 BakeController::estimateBytesPerMinute(int preset) const
 
 // --- jobs -------------------------------------------------------------------
 
-BakeController::Request BakeController::requestForUs(qint64 startUs, qint64 endUs) const
+BakeController::Request BakeController::requestForUs(qint64 startUs, qint64 endUs, bool floorStart) const
 {
     const int fps = qMax(1, m_app->m_project.fps());
     qint64 start = drift::BakeReaderPool::frameForTime(startUs, fps);
-    if (usForFrame(start, fps) < startUs)
+    if (!floorStart && usForFrame(start, fps) < startUs)
         ++start;
     const qint64 limitUs = qMin<qint64>(endUs, m_app->m_project.sequenceDurationUs({}));
     qint64 end = drift::BakeReaderPool::frameForTime(limitUs, fps);
@@ -317,31 +382,77 @@ BakeController::Request BakeController::requestForUs(qint64 startUs, qint64 endU
     return end > start ? Request{start, end} : Request{};
 }
 
+QPair<qint64, qint64> BakeController::bakeRange(qint64 startUs, qint64 endUs)
+{
+    syncProject();
+    // The range widens: the start floors to the frame that contains it.
+    const Request request = requestForUs(startUs, endUs, true);
+    if (request.endFrame <= request.startFrame)
+        return {};
+    enqueue(request);
+    return {request.startFrame, request.endFrame};
+}
+
 void BakeController::bakeWorkArea()
 {
+    // Bakes are of the main timeline, and the work area is project-wide: from a composite's tab this
+    // would bake the main timeline at that tab's In/Out, which neither tab plays.
+    if (!m_app->activeSequenceId().isEmpty()) {
+        m_app->setLastMessage(tr("Bakes are of the main timeline. Switch to it to bake."), QStringLiteral("warning"));
+        return;
+    }
     if (!m_app->m_project.hasWorkArea()) {
         m_app->setLastMessage(tr("Set a work area to bake"), QStringLiteral("warning"));
         return;
     }
-    enqueue(requestForUs(m_app->m_project.workAreaInUs(), m_app->m_project.workAreaOutUs()));
+    bakeRange(m_app->m_project.workAreaInUs(), m_app->m_project.workAreaOutUs());
 }
 
-void BakeController::rebake(const QString &id)
+QPair<qint64, qint64> BakeController::rebakeRange(const QString &id)
 {
     if (!m_index)
-        return;
-    if (const drift::Bake *bake = m_index->bakeById(id))
-        enqueue(requestForUs(usForFrame(bake->startFrame, bake->fps), usForFrame(bake->endFrame, bake->fps)));
+        return {};
+    const drift::Bake *bake = m_index->bakeById(id);
+    if (!bake)
+        return {};
+    // syncProject() inside bakeRange may reset m_index, so read the bake first.
+    const qint64 startUs = usForFrame(bake->startFrame, bake->fps);
+    const qint64 endUs = usForFrame(bake->endFrame, bake->fps);
+    return bakeRange(startUs, endUs);
 }
 
-void BakeController::rebakeAllStale()
+int BakeController::rebakeAllStale()
 {
-    if (!m_index)
-        return;
+    // While a bake runs, older bakes are already trimmed but keep their old fingerprints until
+    // onJobDone (which re-checks), so they'd read as stale: queue nothing now.
+    if (m_busy)
+        return 0;
+    // The re-check after an edit waits 300 ms: run it now, or a bake that just went stale is missed.
+    refreshStale();
+    if (m_detached || !m_index)
+        return 0;
+    QList<QPair<qint64, qint64>> spans;
     for (const drift::Bake &bake : m_index->bakes) {
         if (m_staleIds.contains(bake.id))
-            enqueue(requestForUs(usForFrame(bake.startFrame, bake.fps), usForFrame(bake.endFrame, bake.fps)));
+            spans.append({usForFrame(bake.startFrame, bake.fps), usForFrame(bake.endFrame, bake.fps)});
     }
+    int queued = 0;
+    for (const auto &span : std::as_const(spans)) {
+        const Request request = requestForUs(span.first, span.second);
+        if (request.endFrame <= request.startFrame)
+            continue;
+        enqueue(request);
+        ++queued;
+    }
+    return queued;
+}
+
+void BakeController::refreshStale()
+{
+    if (m_detached)
+        return;
+    syncProject();
+    recomputeStale();
 }
 
 void BakeController::enqueue(Request request)
@@ -554,6 +665,9 @@ void BakeController::deleteAllBakes()
     m_queue.clear();
     if (m_busy)
         m_app->m_jobs->cancel(m_jobId);
+    // Detached: the file still belongs to the old project, whose bakes stay.
+    if (m_detached)
+        return;
     whenIdle([this]() {
         if (!m_file)
             return;
@@ -596,29 +710,59 @@ void BakeController::setWorkAreaToBake(const QString &id)
 std::shared_ptr<drift::BakeReaderPool> BakeController::exportPool(bool includeStale,
                                                                   const QList<QPair<drift::TimeUs, drift::TimeUs>> &skip)
 {
+    m_lastExportPoolBakes = 0;
     if (m_detached || !m_file || !m_index || m_index->bakes.empty())
         return nullptr;
-    if (includeStale && skip.isEmpty())
+    if (includeStale && skip.isEmpty()) {
+        m_lastExportPoolBakes = int(m_index->bakes.size());
         return m_app->playback()->bakeReaderPool();
+    }
     if (!includeStale && m_staleTimer.isActive())
         recomputeStale();
-    const auto overlapsSkip = [&skip](const drift::Bake &bake) {
-        if (bake.fps <= 0)
-            return !skip.isEmpty();
-        const drift::TimeUs start = bake.startFrame * 1000000 / bake.fps;
-        const drift::TimeUs end = (bake.endFrame * 1000000 + bake.fps - 1) / bake.fps;
-        return std::any_of(skip.begin(), skip.end(),
-                           [&](const auto &span) { return span.first < end && start < span.second; });
-    };
     auto filtered = std::make_shared<drift::BakeIndex>(*m_index);
     std::erase_if(filtered->bakes, [&](const drift::Bake &bake) {
-        return (!includeStale && m_staleIds.contains(bake.id)) || overlapsSkip(bake);
+        return (!includeStale && m_staleIds.contains(bake.id)) || overlapsAny(bake, skip);
     });
     if (filtered->bakes.empty())
         return nullptr;
+    m_lastExportPoolBakes = int(filtered->bakes.size());
     auto pool = std::make_shared<drift::BakeReaderPool>();
     pool->setSource(m_file->path(), std::move(filtered));
     return pool;
+}
+
+BakeController::ExportBakeUse BakeController::exportBakeUse(bool includeStale,
+                                                            const QList<QPair<drift::TimeUs, drift::TimeUs>> &skip,
+                                                            drift::TimeUs startUs, drift::TimeUs endUs, int targetHeight)
+{
+    ExportBakeUse use;
+    if (m_detached || !m_index)
+        return use;
+    const drift::Project &project = m_app->m_project;
+    // FrameCompositor::prepareFromBake reads no bake above project size or on a transparent
+    // background; BakeReaderPool::read only serves a bake of the project's size and fps.
+    if (project.background().kind == drift::BackgroundKind::Transparent
+        || Exporter::rendersAboveProjectSize(project.width(), project.height(), targetHeight))
+        return use;
+    if (m_staleTimer.isActive())
+        recomputeStale();
+    const drift::TimeUs end = endUs > 0 ? endUs : std::numeric_limits<drift::TimeUs>::max();
+    for (const drift::Bake &bake : m_index->bakes) {
+        if (bake.fps <= 0 || bake.width != project.width() || bake.height != project.height()
+            || bake.fps != project.fps())
+            continue;
+        const auto [bs, be] = bakeSpanUs(bake);
+        if (be <= startUs || bs >= end || overlapsAny(bake, skip))
+            continue;
+        const bool stale = m_staleIds.contains(bake.id);
+        if (stale && !includeStale) {
+            ++use.staleSkipped;
+            continue;
+        }
+        ++use.reused;
+        use.stale += stale ? 1 : 0;
+    }
+    return use;
 }
 
 #include "moc_BakeController.cpp"

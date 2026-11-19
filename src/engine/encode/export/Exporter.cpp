@@ -60,13 +60,16 @@ extern "C" {
 
 namespace {
 
-// Matches what FrameCompositor and AudioMixer render: hidden tracks draw nothing, muted audio is silent.
-bool outputsToExport(const drift::Track &track)
+// Matches what FrameCompositor and AudioMixer render: hidden tracks draw nothing, and an audio
+// track the mixer drops (muted, or silenced by another track's solo) adds no sound.
+bool outputsToExport(const drift::Track &track, bool anySolo)
 {
     if (track.hidden)
         return false;
-    return !(track.type == drift::TrackType::Audio && track.muted);
+    return !(track.type == drift::TrackType::Audio && !drift::trackAudible(track, anySolo));
 }
+
+} // namespace
 
 void resolveExportRange(const drift::Project &project, const ExportSettings &settings,
                         drift::TimeUs *startUsOut, drift::TimeUs *endUsOut, QString *errorOut)
@@ -84,8 +87,9 @@ void resolveExportRange(const drift::Project &project, const ExportSettings &set
         drift::TimeUs visibleStart = 0;
         drift::TimeUs visibleEnd = 0;
         drift::TimeUs hiddenStart = 0;
+        const bool anySolo = drift::anyTrackSoloed(project.tracks());
         for (const drift::Track &track : project.tracks()) {
-            const bool trackVisible = outputsToExport(track);
+            const bool trackVisible = outputsToExport(track, anySolo);
             for (const drift::Clip &clip : track.clips) {
                 if (trackVisible && clip.enabled) {
                     visibleStart = anyVisible ? qMin(visibleStart, clip.timelineStart) : clip.timelineStart;
@@ -131,7 +135,14 @@ void resolveExportRange(const drift::Project &project, const ExportSettings &set
     *endUsOut = endUs;
 }
 
-} // namespace
+drift::TimeUs renderedDurationUs(const drift::Project &project, const ExportSettings &settings)
+{
+    drift::TimeUs startUs = 0;
+    drift::TimeUs endUs = 0;
+    QString error;
+    resolveExportRange(project, settings, &startUs, &endUs, &error);
+    return error.isEmpty() && endUs > startUs ? endUs - startUs : project.durationUs();
+}
 
 namespace {
 
@@ -1691,6 +1702,14 @@ const QList<ExportScalePreset> &Exporter::scalePresets()
     return kPresets;
 }
 
+bool Exporter::rendersAboveProjectSize(int projW, int projH, int targetHeight)
+{
+    int outW = 0;
+    int outH = 0;
+    scaleSize(projW, projH, targetHeight, outW, outH);
+    return outH > projH && GpuCompositor::maxCanvasDimension() >= qMax(outW, outH);
+}
+
 const ExportScalePreset *Exporter::scalePresetById(const QString &id)
 {
     for (const ExportScalePreset &preset : scalePresets()) {
@@ -2074,7 +2093,7 @@ bool Exporter::run(const drift::Project &project, const ExportSettings &settings
     scaleSize(projW, projH, settings.targetHeight, outW, outH);
 
     // Past the driver's texture limit the canvas stays at project size and sws upscales.
-    const bool renderAtOutput = outH > projH && GpuCompositor::maxCanvasDimension() >= qMax(outW, outH);
+    const bool renderAtOutput = Exporter::rendersAboveProjectSize(projW, projH, settings.targetHeight);
     const int canvasW = renderAtOutput ? outW : projW;
     const int canvasH = renderAtOutput ? outH : projH;
 

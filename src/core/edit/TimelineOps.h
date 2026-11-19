@@ -353,6 +353,33 @@ struct RippleRange
 bool closeRippleRanges(Project &project, const QList<RippleRange> &ranges, QString *blocker = nullptr,
                        QStringList *moved = nullptr, const Project *groupSource = nullptr);
 
+// Why a track did not close an all-tracks gap.
+struct GapTrackSkip
+{
+    int track = -1;
+    QString reason;  // "clip_in_gap", "locked", "linked"
+    QString blocker; // the clip in the way (empty for "locked")
+};
+
+struct EmptyTracksGapClose
+{
+    QList<int> movedTracks;      // tracks on which a clip moved
+    QList<GapTrackSkip> skipped; // tracks with something after the gap that stayed
+    QStringList moved;           // clip ids
+};
+
+// Closes [startUs, endUs) by its full width on every track that is empty over it. Tracks joined by
+// linked clips (rippleTrackGroup) close together or not at all. A group with a locked track, or a
+// clip in the range on any of its tracks, stays. So does a group whose close would push a linked
+// clip onto another or before 0 ("linked"). A free-standing adjustment track (a transform or
+// camera layer, an all-below adjustment track) is a group of its own. Only its unpinned clips
+// count and move; pinned adjustments follow their clip when the edit is normalised. Nested effect
+// lanes belong to no group: a pinned lane clip follows its parent clip, and a free (unpinned)
+// lane clip stays where it is, as in closeGap and the ripple ops. Returns false, and changes nothing, when originTrack's group
+// cannot close; `originSkip` then says why.
+bool closeGapOnEmptyTracks(Project &project, int originTrack, TimeUs startUs, TimeUs endUs,
+                           EmptyTracksGapClose *result, GapTrackSkip *originSkip = nullptr);
+
 
 // Repoint `dst` at the media `src` carries while keeping dst's timeline placement. The source
 // time is read from `src` at dst's timeline start, so the two stay in timeline sync — which is
@@ -363,6 +390,21 @@ bool closeRippleRanges(Project &project, const QList<RippleRange> &ranges, QStri
 // the new source range; dst's timeline duration shrinks if the media runs out before its slot
 // does.
 void retargetClipToSource(Clip &dst, const Clip &src, TimeUs srcMediaDurationUs);
+
+// Slip: shows another stretch of the source in the same slot. The clip's start, length, speed,
+// ramp, fades and keyframes stay; only the source range [srcIn, srcOut] moves.
+// slipLimits gives the source-time deltas the range can take inside [0, mediaDurationUs]
+// (min <= 0 <= max). A looped clip has no limit: its range stays and slipping shifts where the
+// repeat starts (loopOffsetUs), so the picture moves the same way.
+struct SlipLimits
+{
+    TimeUs minUs = 0;
+    TimeUs maxUs = 0;
+};
+SlipLimits slipLimits(const Clip &clip, TimeUs mediaDurationUs);
+// Applies an in-range delta (callers clamp with slipLimits). Positive = later in the media,
+// whatever the clip's direction.
+void slipClipSource(Clip &clip, TimeUs sourceDeltaUs);
 
 // True when `left` ends where `right` begins, shares media + reverse/speed, and source ranges abut.
 bool clipsCanMerge(const Clip &left, const Clip &right);
@@ -386,11 +428,15 @@ QString subtitleSourceKey(const Clip &clip);
 // reverse). For every video/audio clip whose timing differs between `before` and `project`, cues
 // tied to its media that sat inside its old span are mapped old timeline -> source -> new
 // timeline, and a subtitle clip edge inside that span moves with it. `replaced` maps the id of a
-// clip that was swapped out to the id of the clip that took its place.
+// clip that was swapped out to the id of the clip that took its place. A subtitle clip whose edges
+// would collapse onto each other is left alone, unless `dropCollapsed` (slip: all its words left the
+// window): then its cues are rebased on its old span, the ones that slipped out are dropped, and a
+// clip left with no cues is removed.
 void retimeLinkedSubtitles(const Project &before, Project &project,
-                           const QHash<QString, QString> &replaced = {});
+                           const QHash<QString, QString> &replaced = {}, bool dropCollapsed = false);
 
-// Silences every clip in `snap` except `clipId`, so mixing it yields only that clip's sound.
+// Silences every clip in `snap` except `clipId`, so mixing it yields only that clip's sound,
+// whatever the tracks' solo state.
 void muteAllButClip(Project &snap, const QString &clipId);
 
 // All clips sharing `clip.linkId` (excluding `clip` itself).
@@ -465,6 +511,12 @@ void shiftClipKeyframes(Clip &clip, TimeUs delta);
 // Carry a split tail's curves back onto its own start, keeping the value they held at the cut so
 // the animation continues rather than restarting.
 void rebaseKeyframesForSplitTail(Clip &tail, TimeUs offset);
+
+// Every distinct time a clip carries a key at, on any of its own curves, sorted and clip-relative.
+// The union across properties, so one entry is "there is a keyframe here" — which is what the
+// timeline draws a marker for. Covers the same curves shiftClipKeyframes moves, so a key the
+// engine would carry with the clip is a key the timeline shows.
+QList<TimeUs> clipKeyTimes(const Clip &clip);
 
 bool sliceClipToTimelineRange(const Clip &src, TimeUs start, TimeUs end, Clip &out, double fps = 0);
 

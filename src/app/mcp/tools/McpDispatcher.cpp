@@ -1,4 +1,6 @@
 #include "app/mcp/tools/McpDispatcher.h"
+#include "engine/packages/animations/AnimationCatalog.h"
+#include "app/forge/PackageInstaller.h"
 #include "engine/packages/audio/AudioEffectCatalog.h"
 #include "engine/packages/effects/EffectCatalog.h"
 #include "core/base/CacheRoot.h"
@@ -15,6 +17,7 @@
 #include "core/animation/Easing.h"
 #include "core/animation/EasingPresetStore.h"
 #include "app/editor/AppController.h"
+#include "app/jobs/render/BakeController.h"
 #include "app/editor/ProjectFileController.h"
 #include "app/bin/AssetLibrary.h"
 #include "app/bin/MediaBinController.h"
@@ -316,7 +319,9 @@ QVariantMap mergedExportSettings(AppController *c)
         // Carrying a codec or a bitrate over is a convenience. Carrying a *mode* over is a trap:
         // one build asked for a video export, left audio_only out of the args, inherited the true
         // from an earlier audio-only mix check, and got an audio file back with no warning.
-        if (it.key() == QLatin1String("audioOnly") || it.key() == QLatin1String("gifExport"))
+        // The bake mode is one too: a stale "all" must not come back.
+        if (it.key() == QLatin1String("audioOnly") || it.key() == QLatin1String("gifExport")
+            || it.key() == QLatin1String("bakes") || it.key() == QLatin1String("useBakes"))
             continue;
         merged.insert(it.key(), it.value());
     }
@@ -1044,7 +1049,7 @@ QJsonObject McpDispatcher::checkOp(const QString &tool, QJsonObject *args, QStri
 }
 
 // dry_run: what checkOp checks, plus the clips, assets and tracks the args name, by key: clip /
-// clips / before / after (clip ids, or track+index), asset, track. Nothing runs. An id an earlier
+// clips / before / after (clip ids, or track+index), asset, track, sequence. Nothing runs. An id an earlier
 // op of the batch would create can't be known yet, so it reads as not_found.
 QJsonObject McpDispatcher::dryRunOp(const QString &tool, const QJsonObject &args) const
 {
@@ -1106,6 +1111,17 @@ QJsonObject McpDispatcher::dryRunOp(const QString &tool, const QJsonObject &args
         return err("not_found", QStringLiteral("No clip %1 on track %2").arg(index).arg(t));
     if (takes(QStringLiteral("asset")) && resolveAsset(checked.value(QStringLiteral("asset"))) < 0)
         return err("not_found", QStringLiteral("No asset %1").arg(checked.value(QStringLiteral("asset")).toVariant().toString()));
+    // A sequence id, trimmed as the ops read it. Empty is the main timeline, which exists, except
+    // that close_timeline refuses it and open_composite reads it as unknown; main:true names none.
+    if (takes(QStringLiteral("sequence")) && checked.value(QStringLiteral("sequence")).isString()
+        && !(tool == QLatin1String("open_composite") && jsonBool(checked.value(QStringLiteral("main")), false))) {
+        const QString sequenceId = checked.value(QStringLiteral("sequence")).toString().trimmed();
+        if (sequenceId.isEmpty() && tool == QLatin1String("close_timeline"))
+            return err("bad_args", QStringLiteral("sequence required; the main timeline has no tab to close"));
+        if ((sequenceId.isEmpty() && tool == QLatin1String("open_composite")) || (!sequenceId.isEmpty() && !project.hasSequence(sequenceId)))
+            return err("not_found", QStringLiteral("No sequence %1 (unless an earlier op in this batch creates it)")
+                                        .arg(sequenceId));
+    }
     QJsonObject result = ok({});
     if (!ignored.isEmpty())
         result.insert(QStringLiteral("ignored"), QJsonArray::fromStringList(ignored));
@@ -1150,9 +1166,9 @@ QJsonObject McpDispatcher::applyOneUnchecked(const QString &tool, const QJsonObj
     if (tool == QLatin1String("remove_unused_assets"))
         return opRemoveUnusedAssets(args);
     if (tool == QLatin1String("list_missing_media"))
-        return m_controller->mcp()->missingMedia();
+        return m_controller->bin()->missingMedia();
     if (tool == QLatin1String("relink_media"))
-        return m_controller->mcp()->relinkMedia(args);
+        return m_controller->bin()->relinkMedia(args);
     if (tool == QLatin1String("rename_asset"))
         return opRenameAsset(args);
     if (tool == QLatin1String("add_track"))
@@ -1183,6 +1199,8 @@ QJsonObject McpDispatcher::applyOneUnchecked(const QString &tool, const QJsonObj
         return opSetDuration(args);
     if (tool == QLatin1String("set_trim"))
         return opSetTrim(args);
+    if (tool == QLatin1String("slip_clip"))
+        return opSlipClip(args);
     if (tool == QLatin1String("move_to_track"))
         return opMoveToTrack(args);
     if (tool == QLatin1String("split_clip"))
@@ -1223,6 +1241,8 @@ QJsonObject McpDispatcher::applyOneUnchecked(const QString &tool, const QJsonObj
         return opListAudioEffects(args);
     if (tool == QLatin1String("list_transitions"))
         return opListTransitions(args);
+    if (tool == QLatin1String("list_animations"))
+        return opListAnimations(args);
     if (tool == QLatin1String("add_effect"))
         return opAddEffect(args);
     if (tool == QLatin1String("remove_effect"))
@@ -1270,7 +1290,7 @@ QJsonObject McpDispatcher::applyOneUnchecked(const QString &tool, const QJsonObj
     if (tool == QLatin1String("wait_idle"))
         return opWaitIdle(args);
     if (tool == QLatin1String("validate_project"))
-        return ok(m_controller->mcp()->validateProject(jsonInt(args.value(QStringLiteral("limit")), 200)));
+        return ok(m_controller->bin()->validateProject(jsonInt(args.value(QStringLiteral("limit")), 200)));
     if (tool == QLatin1String("list_animated_properties"))
         return opListAnimatedProperties(args);
     if (tool == QLatin1String("list_keyframes"))
@@ -1627,52 +1647,7 @@ QJsonObject McpDispatcher::opListAssets(const QJsonObject &args) const
 
 QJsonObject McpDispatcher::opRemoveUnusedAssets(const QJsonObject &args)
 {
-    AssetLibrary *lib = m_controller->assetLibrary();
-    if (!lib)
-        return err("unsupported", QStringLiteral("No media library"));
-    const bool dryRun = jsonBool(args.value(QStringLiteral("dry_run")), false);
-    const QHash<QString, int> counts = m_controller->clipCountsByAsset();
-    const QHash<QString, int> derived = m_controller->derivedAssetCounts();
-    QStringList ids;
-    QJsonArray listed;
-    int composites = 0;
-    int sources = 0;
-    for (int i = 0; i < lib->count(); ++i) {
-        const QVariantMap a = lib->assetAt(i);
-        const QString id = a.value(QStringLiteral("id")).toString();
-        if (id.isEmpty() || counts.value(id) > 0)
-            continue;
-        // A composite is a whole nested timeline, not media: removing an unplaced one would
-        // delete that timeline, so it stays (remove_asset takes it explicitly).
-        if (a.value(QStringLiteral("kind")).toString() == QLatin1String("composite")) {
-            ++composites;
-            continue;
-        }
-        // The original of a stabilized render: re-stabilizing reads it, and a re-import would
-        // not reconnect it (it gets a new id).
-        if (derived.value(id) > 0) {
-            ++sources;
-            continue;
-        }
-        ids.append(id);
-        listed.append(QJsonObject{{QStringLiteral("id"), id},
-                                  {QStringLiteral("name"), a.value(QStringLiteral("name")).toString()},
-                                  {QStringLiteral("kind"), a.value(QStringLiteral("kind")).toString()}});
-    }
-    QJsonObject reply{{QStringLiteral("assets"), listed},
-                      {QStringLiteral("dry_run"), dryRun},
-                      {QStringLiteral("kept_composites"), composites},
-                      {QStringLiteral("kept_sources"), sources}};
-    if (dryRun || ids.isEmpty()) {
-        reply.insert(QStringLiteral("removed"), 0);
-        return ok(reply);
-    }
-    // One undo step for the lot; refused as a whole if a clip started using one meanwhile.
-    const int removed = m_controller->removeAssets(ids);
-    if (removed == 0)
-        return err("conflict", QStringLiteral("An asset came into use; list again"));
-    reply.insert(QStringLiteral("removed"), removed);
-    return ok(reply);
+    return m_controller->bin()->removeUnusedAssets(jsonBool(args.value(QStringLiteral("dry_run")), false));
 }
 
 QJsonObject McpDispatcher::opRenameAsset(const QJsonObject &args)
@@ -1849,18 +1824,26 @@ QJsonObject McpDispatcher::opSetTrack(const QJsonObject &args)
         if (t.isTransformLayer() || t.isCameraLayer())
             return err("bad_args", QStringLiteral("A transform or camera layer can't be left out of export: everything under it would export reframed"));
     }
+    if (args.contains(QStringLiteral("solo")) && jsonBool(args.value(QStringLiteral("solo")))) {
+        const drift::Track &t = m_controller->project()->tracks().at(track);
+        if (t.type != drift::TrackType::Audio && t.type != drift::TrackType::Video)
+            return err("bad_args", QStringLiteral("Only an audio or video track carries sound: soloing this one would silence the whole mix"));
+    }
     if (args.contains(QStringLiteral("muted")))
         m_controller->setTrackMuted(track, jsonBool(args.value(QStringLiteral("muted"))));
     if (args.contains(QStringLiteral("hidden")))
         m_controller->setTrackHidden(track, jsonBool(args.value(QStringLiteral("hidden"))));
     if (args.contains(QStringLiteral("locked")))
         m_controller->setTrackLocked(track, jsonBool(args.value(QStringLiteral("locked"))));
+    if (args.contains(QStringLiteral("solo")))
+        m_controller->setTrackSolo(track, jsonBool(args.value(QStringLiteral("solo"))));
     if (args.contains(QStringLiteral("exclude_from_export")))
         m_controller->setTrackExcludedFromExport(track, jsonBool(args.value(QStringLiteral("exclude_from_export"))));
     return ok({{QStringLiteral("track"), track},
                {QStringLiteral("muted"), m_controller->trackMuted(track)},
                {QStringLiteral("hidden"), m_controller->trackHidden(track)},
                {QStringLiteral("locked"), m_controller->trackLocked(track)},
+               {QStringLiteral("solo"), m_controller->trackSolo(track)},
                {QStringLiteral("exclude_from_export"), m_controller->trackExcludedFromExport(track)}});
 }
 
@@ -2189,6 +2172,45 @@ QJsonObject McpDispatcher::opSetTrim(const QJsonObject &args)
     return ok(clipFeedback(after, {{QStringLiteral("moved"), moved}}));
 }
 
+QJsonObject McpDispatcher::opSlipClip(const QJsonObject &args)
+{
+    const ClipRef ref = resolveClip(args);
+    if (!ref.valid())
+        return clipRefError(args);
+    const bool hasBy = args.contains(QStringLiteral("by"));
+    const bool hasIn = args.contains(QStringLiteral("in"));
+    if (hasBy == hasIn)
+        return err("bad_args", QStringLiteral("give exactly one of by, in"));
+    const QString key = hasBy ? QStringLiteral("by") : QStringLiteral("in");
+    if (!args.value(key).isDouble())
+        return err("bad_args", QStringLiteral("%1 must be a number of seconds").arg(key));
+    const drift::Clip &clip = m_controller->project()->tracks().at(ref.track).clips.at(ref.clip);
+    const double requested = args.value(key).toDouble();
+    if (hasIn && clip.loops())
+        return err("bad_args", QStringLiteral("A looped clip repeats its whole range: slip it with by"));
+    const drift::TimeUs requestedUs = qRound64(requested * 1e6);
+    const drift::TimeUs delta = hasBy ? requestedUs : requestedUs - clip.srcIn;
+    const AppController::SlipResult r = m_controller->slipClip(ref.track, ref.clip, delta);
+    if (!r.error.isEmpty())
+        return err(r.errorCode.toLatin1().constData(), r.error);
+    const ClipRef after = resolveClip(QJsonObject{{QStringLiteral("clip"), ref.id}});
+    QJsonObject extra{{QStringLiteral("requested"), requested},
+                      {QStringLiteral("slipped"), drift::mcpdetail::round3(drift::usToSeconds(r.appliedUs))}};
+    if (r.limit != 0)
+        extra.insert(QStringLiteral("reason"),
+                     r.limit < 0 ? QStringLiteral("media_start") : QStringLiteral("media_end"));
+    const drift::Clip &now = m_controller->project()->tracks().at(after.track).clips.at(after.clip);
+    if (now.loops())
+        extra.insert(QStringLiteral("loop_offset"), drift::mcpdetail::round3(drift::usToSeconds(now.loopOffsetUs)));
+    if (!r.sourceData.isEmpty())
+        extra.insert(QStringLiteral("source_data"), QJsonArray::fromStringList(r.sourceData));
+    if (!r.bakedKeys.isEmpty())
+        extra.insert(QStringLiteral("baked_keys"), QJsonArray::fromStringList(r.bakedKeys));
+    if (!r.retimedSubtitles.isEmpty())
+        extra.insert(QStringLiteral("retimed_subtitles"), QJsonArray::fromStringList(r.retimedSubtitles));
+    return ok(clipFeedback(after, extra));
+}
+
 QJsonObject McpDispatcher::opMoveToTrack(const QJsonObject &args)
 {
     const ClipRef ref = resolveClip(args);
@@ -2506,6 +2528,33 @@ QVariantList McpDispatcher::transitionCatalog() const
 QJsonObject McpDispatcher::opListTransitions(const QJsonObject &args) const
 {
     return catalogListing(transitionCatalog(), args, "transitions", "transition", "list_transitions");
+}
+
+QJsonObject McpDispatcher::opListAnimations(const QJsonObject &args) const
+{
+    const QString id = args.value(QStringLiteral("id")).toString().trimmed();
+    const QString q = args.value(QStringLiteral("q")).toString().trimmed();
+    const auto kind = forge::packageKind(QStringLiteral("animation"));
+    QJsonArray rows;
+    for (const AnimationPresetEntry &entry : animationCatalog()) {
+        if (!id.isEmpty() && entry.meta.id != id)
+            continue;
+        if (!q.isEmpty() && !entry.meta.id.contains(q, Qt::CaseInsensitive)
+            && !entry.meta.displayName.contains(q, Qt::CaseInsensitive)
+            && !entry.meta.category.contains(q, Qt::CaseInsensitive))
+            continue;
+        QJsonObject row{{QStringLiteral("id"), entry.meta.id},
+                        {QStringLiteral("displayName"), entry.meta.displayName},
+                        {QStringLiteral("category"), entry.meta.category},
+                        {QStringLiteral("directions"), QJsonArray::fromStringList(entry.directions)},
+                        {QStringLiteral("defaultDurationMs"), entry.defaultDurationMs}};
+        if (forge::isUserDir(*kind, entry.gpu.packageDir))
+            row.insert(QStringLiteral("user"), true);
+        rows.append(row);
+    }
+    if (!id.isEmpty() && rows.isEmpty())
+        return err("not_found", QStringLiteral("No animation package with id \"%1\". Call list_animations").arg(id));
+    return ok({{QStringLiteral("animations"), rows}, {QStringLiteral("n"), rows.size()}});
 }
 
 QJsonObject McpDispatcher::opAddEffect(const QJsonObject &args)
@@ -2930,6 +2979,27 @@ QJsonObject McpDispatcher::opListExportOptions() const
     });
 }
 
+// export_video / export_with_preset: the bake mode (default fresh) and what it reuses in the range.
+// GIF and audio-only exports never read bakes, so they get no bakes_reused.
+QJsonObject McpDispatcher::bakeReuseReply(const QString &mode, const QVariantMap &map) const
+{
+    if (map.value(QStringLiteral("audioOnly")).toBool() || map.value(QStringLiteral("gifExport")).toBool())
+        return {{QStringLiteral("bakes"), mode}};
+    BakeController::ExportBakeUse use;
+    if (mode != QLatin1String("none")) {
+        m_controller->bakes()->refreshStale();
+        use = m_controller->bakes()->exportBakeUse(
+            mode == QLatin1String("all"), m_controller->exportReviewSpans(),
+            drift::TimeUs(map.value(QStringLiteral("startUs"), 0.0).toDouble()),
+            drift::TimeUs(map.value(QStringLiteral("endUs"), 0.0).toDouble()),
+            map.value(QStringLiteral("targetHeight")).toInt());
+    }
+    return {{QStringLiteral("bakes"), mode},
+            {QStringLiteral("bakes_reused"), QJsonObject{{QStringLiteral("n"), use.reused},
+                                                         {QStringLiteral("stale"), use.stale},
+                                                         {QStringLiteral("stale_skipped"), use.staleSkipped}}}};
+}
+
 QJsonObject McpDispatcher::opExportVideo(const QJsonObject &args)
 {
     QJsonObject patched = args;
@@ -2950,6 +3020,8 @@ QJsonObject McpDispatcher::opExport(const QJsonObject &args)
     QString error;
     if (!applyExportPatch(m_controller, map, args, &error))
         return err("bad_args", error);
+    // The schema's enum has already refused anything but fresh, all or none.
+    const QString bakeMode = args.value(QStringLiteral("bakes")).toString(QStringLiteral("fresh"));
 
     const QJsonObject compact = compactExportSettings(m_controller, map);
     const QString suffix = compact.value(QStringLiteral("suffix")).toString();
@@ -2985,8 +3057,12 @@ QJsonObject McpDispatcher::opExport(const QJsonObject &args)
     // Remember what the agent chose in the agent's own store, so the export dialog still
     // offers the user what they last picked themselves.
     m_controller->mcp()->rememberExportSettings(map);
+    QVariantMap run = map;
+    run.insert(QStringLiteral("bakes"), bakeMode);
+    // Counted before the export starts, while the project is still the one it will render.
+    const QJsonObject reuse = bakeReuseReply(bakeMode, run);
     m_controller->setExportRequestedByAgent(true);
-    m_controller->exportWithSettings(QUrl::fromLocalFile(info.absoluteFilePath()), map,
+    m_controller->exportWithSettings(QUrl::fromLocalFile(info.absoluteFilePath()), run,
                                      /*rememberChoice=*/false);
     m_controller->setExportRequestedByAgent(false);
 
@@ -2994,9 +3070,12 @@ QJsonObject McpDispatcher::opExport(const QJsonObject &args)
         QObject::disconnect(conn);
         if (finished && !success)
             return err("export_failed", m_controller->lastMessage());
-        return ok({{QStringLiteral("started"), true},
-                   {QStringLiteral("path"), info.absoluteFilePath()},
-                   {QStringLiteral("busy"), m_controller->exportInProgress()}});
+        QJsonObject started{{QStringLiteral("started"), true},
+                            {QStringLiteral("path"), info.absoluteFilePath()},
+                            {QStringLiteral("busy"), m_controller->exportInProgress()}};
+        for (auto it = reuse.begin(); it != reuse.end(); ++it)
+            started.insert(it.key(), it.value());
+        return ok(started);
     }
 
     if (!finished) {
@@ -3016,6 +3095,8 @@ QJsonObject McpDispatcher::opExport(const QJsonObject &args)
         return err("export_failed", m_controller->lastMessage());
 
     QJsonObject extra = compact;
+    for (auto it = reuse.begin(); it != reuse.end(); ++it)
+        extra.insert(it.key(), it.value());
     extra.insert(QStringLiteral("path"), info.absoluteFilePath());
     extra.insert(QStringLiteral("bytes"), QFile(info.absoluteFilePath()).size());
     return ok(extra);
@@ -3507,6 +3588,8 @@ QJsonObject McpDispatcher::opGetUiPreferences() const
         {QStringLiteral("proxySuggestion"), m_controller->preferences()->proxySuggestion()},
         {QStringLiteral("useProxies"), m_controller->playback()->useProxies()},
         {QStringLiteral("proxySize"), m_controller->playback()->proxySize()},
+        {QStringLiteral("proxyLocation"), m_controller->preferences()->proxyLocation()},
+        {QStringLiteral("proxyFolder"), m_controller->preferences()->proxyFolder()},
     });
 }
 

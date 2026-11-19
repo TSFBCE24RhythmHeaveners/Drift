@@ -26,14 +26,6 @@ Column {
 
     readonly property string thumb: root.modelData.thumbnailPath || ""
 
-    Drag.active: presetDrag.active
-    Drag.dragType: Drag.Automatic
-    Drag.supportedActions: Qt.CopyAction
-    Drag.keys: ["application/x-drift-effect"]
-    Drag.mimeData: ({ "application/x-drift-effect": root.modelData.id })
-    Drag.hotSpot.x: width / 2
-    Drag.hotSpot.y: cardSize / 2
-
     Rectangle {
         width: cardSize
         height: cardSize
@@ -134,6 +126,11 @@ Column {
             // drag has no touch gesture and cannot leave the sheet.
             acceptedButtons: Qt.LeftButton
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
+            onActiveChanged: {
+                if (active)
+                    PlatformDrag.start({ "application/x-drift-effect": root.modelData.id },
+                                       Qt.point(root.width / 2, root.cardSize / 2))
+            }
         }
 
         // Hold to carry the preset onto a specific clip; tap still
@@ -151,8 +148,12 @@ Column {
             id: cardMenu
 
             property bool favorited: false
+            property bool editable: false
 
-            onAboutToShow: favorited = EditorState.isAssetFavorite("effects", root.modelData.id)
+            onAboutToShow: {
+                favorited = EditorState.isAssetFavorite("effects", root.modelData.id)
+                editable = Forge.canEdit("effect", root.modelData.id)
+            }
 
             ThemedMenuItem {
                 text: qsTr("Apply to selected clip")
@@ -164,6 +165,12 @@ Column {
                 text: cardMenu.favorited ? qsTr("Remove from favorites") : qsTr("Add to favorites")
                 icon.name: Theme.icons.star
                 onTriggered: EditorState.toggleAssetFavorite("effects", root.modelData.id)
+            }
+            ThemedMenuItem {
+                visible: cardMenu.editable && !ShellBridge.phoneShell
+                text: qsTr("Edit in Forge")
+                icon.name: Theme.icons.pencil
+                onTriggered: Forge.openPackage("effect", root.modelData.id)
             }
             ThemedMenuSeparator { visible: root.modelData.user === true }
             ThemedMenuItem {

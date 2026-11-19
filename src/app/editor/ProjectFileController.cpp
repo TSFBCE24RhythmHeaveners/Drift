@@ -18,6 +18,7 @@
 #include "engine/addons/AddonRegistry.h"
 #include "engine/platform/AndroidUri.h"
 #include "engine/encode/writers/AudioFileWriter.h"
+#include "engine/packages/animations/AnimationCatalog.h"
 #include "engine/packages/effects/EffectCatalog.h"
 #include "engine/encode/export/Exporter.h"
 #include "engine/project/ProjectDependencies.h"
@@ -146,7 +147,7 @@ void collectJsonStrings(const QJsonValue &value, QSet<QString> *out)
 }
 } // namespace
 
-// Every packaged project ever opened leaves its media unpacked under <AppData>/projects/<id>. Drop
+// Every packaged project ever opened leaves its media unpacked under <AppData>/projects/<projectPathKey(id)>. Drop
 // the ones no project in the recents list can still be pointing at, old stabilized renders nothing
 // points at, and on Android the derived artifacts nothing points at either.
 void ProjectFileController::sweepExtractionDirs()
@@ -198,6 +199,7 @@ void ProjectFileController::sweepExtractionDirs()
             continue;
         }
         live.insert(info->projectId);
+        live.insert(drift::bundleMediaKey(info->projectId, path));
         for (const drift::bundle::MediaEntry &media : info->media) {
             // Only referencing entries name a path on this machine; an embedded one records where
             // the file was on whatever machine packed it, and keepOwnerOf simply will not match.
@@ -219,9 +221,12 @@ void ProjectFileController::sweepExtractionDirs()
     liveFiles.unite(m_app->historyMediaPaths());
 #ifdef Q_OS_ANDROID
     const QString recoveryId = recovery.value(QStringLiteral("id")).toString();
-    if (!recoveryId.isEmpty())
+    if (!recoveryId.isEmpty()) {
         live.insert(recoveryId);
+        live.insert(drift::projectPathKey(recoveryId));
+    }
     live.insert(m_app->m_project.id());
+    live.insert(drift::projectPathKey(m_app->m_project.id()));
 #endif
 
     // A recent project whose manifest can't be read right now (a Flatpak document-portal path
@@ -375,12 +380,18 @@ void ProjectFileController::reportMissingCatalogEntries()
 {
     QSet<QString> missingEffects;
     QSet<QString> missingTransitions;
+    QSet<QString> missingAnimations;
 
     for (const drift::Track &track : m_app->m_project.tracks()) {
         for (const drift::Clip &clip : track.clips) {
             for (const drift::Effect &effect : clip.effects) {
                 if (!effect.catalogId.isEmpty() && !effectDefForId(effect.catalogId))
                     missingEffects.insert(effect.catalogId);
+            }
+            for (const drift::ClipAnimation *anim : {&clip.animIn, &clip.animOut}) {
+                if (!anim->isNone() && !drift::isBuiltinClipAnimation(anim->kindId)
+                    && !animationDefForId(anim->kindId))
+                    missingAnimations.insert(anim->kindId);
             }
         }
         for (const drift::Transition &transition : track.transitions) {
@@ -389,19 +400,20 @@ void ProjectFileController::reportMissingCatalogEntries()
         }
     }
 
-    const int total = missingEffects.size() + missingTransitions.size();
+    const int total = missingEffects.size() + missingTransitions.size() + missingAnimations.size();
     if (total == 0)
         return;
 
     QStringList names = QStringList(missingEffects.begin(), missingEffects.end())
-                        + QStringList(missingTransitions.begin(), missingTransitions.end());
+                        + QStringList(missingTransitions.begin(), missingTransitions.end())
+                        + QStringList(missingAnimations.begin(), missingAnimations.end());
     names.sort();
     const QString sample = names.mid(0, 3).join(QStringLiteral(", "));
 
     m_app->setLastMessage(total == 1
                        ? tr("This project uses \"%1\", which isn’t installed — it "
                             "won’t show. Open Extras to install it.").arg(sample)
-                       : tr("This project uses %1 effects or transitions that aren’t "
+                       : tr("This project uses %1 effects, transitions or animations that aren’t "
                             "installed (%2%3) — they won’t show. Open Extras to install them.")
                              .arg(total)
                              .arg(sample, names.size() > 3 ? tr(", …") : QString()));
@@ -1477,8 +1489,8 @@ void ProjectFileController::loadProject(const QUrl &url)
             };
             // Named by the project's own id, which survives the round-trip, so reopening the same
             // bundle lands on the files it already unpacked.
-            const QString destDir =
-                QDir(base).filePath(QStringLiteral("projects/%1/media").arg(info->projectId));
+            const QString destDir = QDir(base).filePath(
+                QStringLiteral("projects/%1/media").arg(drift::bundleMediaKey(info->projectId, path)));
             if (!drift::bundle::extract(path, destDir, progress, &result->remap, &result->error)) {
                 deliver();
                 return;
@@ -1829,7 +1841,7 @@ QVariantList ProjectFileController::recentProjects() const
                 idsChanged = true;
             }
         }
-        const QString thumbPath = id.isEmpty() ? QString() : QDir(thumbDir).filePath(id + QStringLiteral(".jpg"));
+        const QString thumbPath = id.isEmpty() ? QString() : QDir(thumbDir).filePath(drift::projectPathKey(id) + QStringLiteral(".jpg"));
         const QString thumbnail =
             !thumbPath.isEmpty() && QFileInfo::exists(thumbPath) ? QUrl::fromLocalFile(thumbPath).toString()
                                                                  : QString();
@@ -1871,7 +1883,10 @@ void ProjectFileController::queueSaveThumbnail(const QString &location)
     if (base.isEmpty())
         return;
     const QString projectId = m_app->m_project.id();
-    const QString outPath = QDir(base).filePath(QStringLiteral("thumbs/%1.jpg").arg(projectId));
+    const QString key = drift::projectPathKey(projectId);
+    if (key.isEmpty())
+        return;
+    const QString outPath = QDir(base).filePath(QStringLiteral("thumbs/%1.jpg").arg(key));
     {
         QSettings settings;
         QVariantMap ids = settings.value(QStringLiteral("recentProjectIds")).toMap();

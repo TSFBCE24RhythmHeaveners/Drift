@@ -1,3 +1,4 @@
+#include "core/project/media/SourceFrameFit.h"
 #include "app/editor/appcontroller/AppControllerInternal.h"
 #include "engine/packages/effects/EffectCatalog.h"
 #include "engine/packages/procedurals/ProceduralCatalog.h"
@@ -278,6 +279,7 @@ QVariantMap maskToMap(const drift::Mask &m, drift::TimeUs timelineStart)
         {QStringLiteral("feather"), m.feather},
         {QStringLiteral("roundness"), m.roundness},
         {QStringLiteral("invert"), m.invert},
+        {QStringLiteral("lockAspect"), m.lockAspect},
         {QStringLiteral("points"), points},
         {QStringLiteral("mediaPath"), m.mediaPath},
         {QStringLiteral("mediaFgrPath"), m.mediaFgrPath},
@@ -1146,6 +1148,10 @@ TimelineClipsModel::Row AppController::clipRow(const drift::Clip &clip,
         }
     }
     row.effectsLabel = effectNames.join(QStringLiteral(" · "));
+    const QList<drift::TimeUs> keyTimes = drift::clipKeyTimes(clip);
+    row.keyTimes.reserve(keyTimes.size());
+    for (const drift::TimeUs at : keyTimes)
+        row.keyTimes.append(drift::usToSeconds(at));
     for (const auto &kv : clip.volume.keyframes().asKeyValueRange())
         row.volumeKeys.append(QVariantMap{
             {QStringLiteral("t"), drift::usToSeconds(kv.first)},
@@ -1403,6 +1409,10 @@ bool AppController::removeAsset(int assetIndex)
     // start now points at the wrong asset.
     setDraggingAssetIndex(-1);
     pushProjectEdit(before, tr("Media removed"));
+    if (m_editRefusedByLock) {
+        resyncAfterLockRefusal(tr("A locked track would be changed or deleted. Unlock it first"));
+        return false;
+    }
     // An undo step without finishEdit: the revision (and the change feed) moves here.
     m_mcpController->bumpEditRevision();
     settleUndoRefresh();
@@ -1446,6 +1456,10 @@ int AppController::removeAssets(const QStringList &assetIds)
 
     setDraggingAssetIndex(-1);
     pushProjectEdit(before, removed == 1 ? tr("Media removed") : tr("%n items removed", "", removed));
+    if (m_editRefusedByLock) {
+        resyncAfterLockRefusal(tr("A locked track would be changed or deleted. Unlock it first"));
+        return 0;
+    }
     // An undo step without finishEdit: the revision (and the change feed) moves here.
     m_mcpController->bumpEditRevision();
     settleUndoRefresh();
@@ -1527,6 +1541,10 @@ int AppController::removeAssetsAndClips(const QStringList &assetIds)
         removedAssets == 1
             ? tr("Media and referenced clips removed")
             : tr("%n media items and referenced clips removed", "", removedAssets));
+    if (m_editRefusedByLock) {
+        resyncAfterLockRefusal(tr("A locked track would be changed or deleted. Unlock it first"));
+        return 0;
+    }
 
     finishEdit(
         removedClips == 1
@@ -1605,6 +1623,17 @@ bool AppController::setClipSourceFrame(const QString &clipId, double x, double y
         }
     }
     return false;
+}
+
+QVariantMap AppController::fitSourceFrameToStraighten(double x, double y, double w, double h, double angle,
+                                                      int srcW, int srcH) const
+{
+    const QRectF base = drift::normalizedSourceFrame(x, y, w, h);
+    const QRectF fit = drift::fitCropInsideRotation(base, drift::normalizedSourceAngle(angle), srcW, srcH);
+    return {{QStringLiteral("x"), fit.x()},
+            {QStringLiteral("y"), fit.y()},
+            {QStringLiteral("width"), fit.width()},
+            {QStringLiteral("height"), fit.height()}};
 }
 
 int AppController::assetIndexForClip(const drift::Clip &clip) const
@@ -1759,8 +1788,9 @@ QVariantList AppController::actions() const
         action(QStringLiteral("copyEffects"), tr("Copy effects from clip")),
         action(QStringLiteral("pasteEffects"), tr("Paste effects onto clip")),
         action(QStringLiteral("pasteAttributes"), tr("Paste attributes…")),
-        action(QStringLiteral("split"), tr("Split at current time")),
+        action(QStringLiteral("split"), tr("Split selection, or every track, at current time")),
         action(QStringLiteral("splitSelection"), tr("Split selected clip at current time")),
+        action(QStringLiteral("splitAllTracks"), tr("Split every track at current time")),
         action(QStringLiteral("addTransitionAtPlayhead"), tr("Add transition at playhead")),
         action(QStringLiteral("merge"), tr("Merge adjacent clips")),
         action(QStringLiteral("transformTogether"), tr("Transform selection together")),
@@ -1806,6 +1836,9 @@ QVariantList AppController::actions() const
         action(QStringLiteral("bladeTool"), tr("Cut tool / Brush mask")),
         action(QStringLiteral("maskingPolygonTool"), tr("Polygon mask tool")),
         action(QStringLiteral("maskingAiTool"), tr("AI object mask tool")),
+        action(QStringLiteral("maskingLassoTool"), tr("Lasso mask tool")),
+        action(QStringLiteral("maskingScissorsTool"), tr("Intelligent scissors mask tool")),
+        action(QStringLiteral("maskingWandTool"), tr("Magic wand mask tool")),
         action(QStringLiteral("maskingBrushSmaller"), tr("Decrease brush size")),
         action(QStringLiteral("maskingBrushLarger"), tr("Increase brush size")),
         action(QStringLiteral("maskingBrushToggleErase"), tr("Brush: switch paint / erase")),

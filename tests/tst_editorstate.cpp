@@ -2,7 +2,11 @@
 #include "app/bin/AssetPreviewController.h"
 #include "app/color/ColorController.h"
 #include "app/jobs/audio/DenoiseController.h"
+#include "app/jobs/render/BakeController.h"
 #include "app/jobs/render/BakeFingerprint.h"
+#include "core/base/CacheRoot.h"
+#include "engine/encode/MediaEditor.h"
+#include "engine/encode/bake/BakeFile.h"
 #include "app/jobs/audio/AudioAlignController.h"
 #include "app/jobs/vision/DepthController.h"
 #include "app/jobs/vision/FaceTrackingController.h"
@@ -22,6 +26,8 @@
 #include "ui/preview/Outliner3dModel.h"
 #include <QtTest>
 
+#include "core/project/media/SourceFrameFit.h"
+
 #include <QAccessible>
 #include <QDir>
 #include <QFile>
@@ -35,6 +41,7 @@
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QUrl>
+#include <QUuid>
 #include <QByteArray>
 #include <QCryptographicHash>
 #include <QBuffer>
@@ -135,8 +142,14 @@ class EditorStateTest : public QObject
     Q_OBJECT
 
 private slots:
+    void bakeFingerprintTracksTransitionPartner();
+    void unsafeProjectIdStaysInItsFolders();
     void bakeFingerprintTracksRangeEdits();
+    void bakeFingerprintIgnoresMixAndExportFlags();
+    void bakeStaysFreshAfterMuteSoloAndExclude();
+    void bakeFingerprintTracksTransformSpanEndMoves();
     void snapTimeEnabled();
+    void addingAPositionKeyframeKeepsTheClipWhereItIs();
     void compositeFromSelectionUndoRedo();
     void compositeClipGetsAPreviewBox();
     void cameraMovesThePreviewOverlayWithThePicture();
@@ -156,6 +169,8 @@ private slots:
     void removeEmptyTracksKeepsPopulatedAndUndoes();
     void compositeSeparateAudioAndRemoval();
     void newTimelineCreatesEmptyComposite();
+    void createTimelineKeepsActiveTimeline();
+    void newTimelineKeepsPreviousTimeline();
     void dissolveCompositeRoundTrip();
     void dissolveCompositeKeepsTrackNumbers();
     void replaceInterruptedByNewProjectClearsBusyRow();
@@ -168,6 +183,7 @@ private slots:
     void audioEffectParamsKeyframeThroughTheGenericApi();
     void pastedUnknownEffectIsKeptAndReported();
     void clipboardHasEffectsIgnoresOrdinaryText();
+    void copyTextPutsTextOnClipboard();
     void savedEffectPresetAppliesToAnotherClip();
     void multiTrackAudioSelectionAndExtraction();
     void panAndChannelWaveformsPersistAndUndo();
@@ -291,6 +307,7 @@ private slots:
     void decodeModePickerListsOnlyWorkingBackends();
     void decodeModePickerMarksOffGpuBackends();
     void exportFrameRatePersistsAcrossSessions();
+    void fitSourceFrameToStraightenInvokable();
     void exportAudioOnlyIsExposedWhileExporting();
     void lastExportSettingsNormalisesStringTypedValues();
     void textStyleBlendModeKeyframesAndEffects();
@@ -380,7 +397,15 @@ private slots:
     void denoiseAddsCleanedClipOnTrackAbove();
     void audioRecordingVoiceoverWorkflow();
     void lockedTrackRejectsEdits();
+    void splitShortcutFollowsSelection();
+    void lockedTimelineRemovalRefusedWhicheverTimelineIsOpen();
+    void removeAssetsRefusesLockedTimeline();
+    void dissolveLastInstanceOfLockedTimelineRefused();
+    void dissolveWithOtherInstancesLeftIgnoresLockedInnerTrack();
+    void lockInOtherTimelineLeavesUnrelatedEditsAlone();
     void audioMixerTrackControlsAndMetering();
+    void activeAudioClipFollowsSolo();
+    void beatGridStaleOnSolo();
     void speedCurveOnAudioClipRetimesAndReplaces();
     void waveformPeaksForSourceRangeSlicesToTheTrimmedWindow();
     void speedCurveSessionExposesTrimmedSourceWindow();
@@ -389,6 +414,14 @@ private slots:
     void replaceSourceRebindsClipsAndClampsTrim();
     void linkProxyValidatesAndCountsMatches();
     void proxyGenerationWritesBesideSource();
+    void proxyGenerationWritesToChosenFolder();
+    void chosenFolderProxyIsFoundAfterReload();
+    void proxiesInPreviousFolderAreNotFoundUntilChosenAgain();
+    void besideProxyIsStillFoundAfterSwitchingToFolder();
+    void missingProxyFolderFallsBackToCache();
+    void removingProxiesDeletesFolderAndBesideCopies();
+    void reverseRenderFallsBackToCacheWhenFolderIsMissing();
+    void reverseRenderWritesToChosenFolder();
     void proxyGenerationFallsBackToCacheWhenFolderIsReadOnly();
     void reverseRenderWritesBesideSource();
     void reverseRenderFallsBackToCacheWhenFolderIsReadOnly();
@@ -481,6 +514,7 @@ private slots:
     void trackingFrameKeepsAGhostMarkerOffTheTrackedSpan();
     void maskStackModelListsRolesAndShapeKeys();
     void trackerShortcutsAreRegistered();
+    void everyListedActionCanBeBound();
     void trackingClipIdOverloadsMatchTheIndexCalls();
     void maskStackModelCarriesTrackerRoles();
     void maskingBlurAreaMovesMaskToEffectLayerInOneUndoStep();
@@ -519,6 +553,11 @@ private slots:
     void clipsModelInsertsAndRemovesWithoutReset();
     void clipsModelDerivesGapsAndOverlaps();
     void closeGapBeforeFirstClipMovesTrackToStart();
+    void closeGapOnAllTracksKeepsUnlinkedAudioInSync();
+    void closeGapOnAllTracksReportsBlockedAndLockedTracks();
+    void closeGapOnAllTracksActsOnOpenTimelineOnly();
+    void closeGapOnAllTracksFindsAClipEndingOnTheGapStart();
+    void closeGapOnAllTracksRefusesWithNamesAndChangesNothing();
     void timelineLayoutCullsTilesAndHits();
     void trackItemOverlaysFollowSelection();
     void trackItemExposesDrawnClipsToAccessibility();
@@ -628,6 +667,40 @@ void EditorStateTest::importFileNameStaysStorable()
     QVERIFY(cutEmoji.toUtf8().size() <= 120);
     QVERIFY(cutEmoji.endsWith(QStringLiteral(".mov")));
     QCOMPARE(cutEmoji, QString::fromUtf8(cutEmoji.toUtf8()));
+}
+
+void EditorStateTest::addingAPositionKeyframeKeepsTheClipWhereItIs()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.project()->tracks().clear();
+    state.project()->tracks().append(drift::Track{.type = drift::TrackType::Video});
+    drift::Clip clip;
+    clip.id = QStringLiteral("clip-0");
+    clip.type = drift::ClipType::Video;
+    clip.timelineDuration = drift::secondsToUs(4.0);
+    clip.srcOut = clip.timelineDuration;
+    clip.positionX.setKeyframe(0, 700.0);
+    state.project()->tracks()[0].clips.append(clip);
+    state.project()->ensureTrackIds();
+
+    const QSizeF canvas(state.project()->width(), state.project()->height());
+    const drift::TimeUs at = drift::secondsToUs(1.0);
+    const auto layout = [&] { return drift::clipLayoutAt(state.project()->tracks()[0].clips[0], at, canvas); };
+    const drift::ClipLayout before = layout();
+    QCOMPARE(before.posX, 700.0);
+    QCOMPARE(before.posY, canvas.height() / 2.0);
+
+    for (const bool linked : {true, false}) {
+        state.setPositionLinked(linked);
+        state.project()->tracks()[0].clips[0].positionY = {};
+        QVERIFY(state.setClipKeyframe(0, 0, QStringLiteral("positionX"), 1.0, before.posX));
+        QCOMPARE(layout().posX, before.posX);
+        QCOMPARE(layout().posY, before.posY);
+        QVERIFY(state.setClipKeyframe(0, 0, QStringLiteral("positionY"), 1.0, before.posY));
+        QCOMPARE(layout().posX, before.posX);
+        QCOMPARE(layout().posY, before.posY);
+    }
 }
 
 void EditorStateTest::snapTimeEnabled()
@@ -814,6 +887,24 @@ void setUpTwoClipSelection(AssetLibrary &library, AppController &state)
     state.setSelection({QVariantMap{{QStringLiteral("track"), 0}, {QStringLiteral("clip"), 0}},
                         QVariantMap{{QStringLiteral("track"), 0}, {QStringLiteral("clip"), 1}}});
 }
+
+// A timeline T with one locked track holding a text clip, its bin item unused, main open.
+// Returns T's asset id; *sequenceId gets its sequence.
+QString setUpLockedTimeline(AppController &state, QString *sequenceId)
+{
+    state.newTimeline();   // opens T
+    *sequenceId = state.activeSequenceId();
+    state.addTextClip(QStringLiteral("Inside"), 0.0);
+    state.setTrackLocked(0, true);
+    state.openSequence(QString());   // back to main
+    for (const drift::MediaAsset &asset : state.project()->assets()) {
+        if (asset.kind == drift::MediaKind::Composite && asset.sequenceId == *sequenceId)
+            return asset.id;
+    }
+    return {};
+}
+
+const QString kLockRefusal = QStringLiteral("A locked track would be changed or deleted. Unlock it first");
 
 } // namespace
 
@@ -1639,6 +1730,56 @@ void EditorStateTest::newTimelineCreatesEmptyComposite()
 
     state.undo();
     QCOMPARE(state.project()->sequenceIds().size(), 1);
+}
+
+void EditorStateTest::createTimelineKeepsActiveTimeline()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    const QString assetId = state.createTimeline(QStringLiteral("Short"), QString());
+    QVERIFY(!assetId.isEmpty());
+    QVERIFY(state.activeSequenceId().isEmpty());
+    QVERIFY(state.sequenceTabs().isEmpty());
+    QCOMPARE(state.project()->asset(assetId)->name, QStringLiteral("Short"));
+    state.undo();
+    QVERIFY(!state.project()->asset(assetId));
+}
+
+void EditorStateTest::newTimelineKeepsPreviousTimeline()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    setUpTwoClipSelection(library, state);
+
+    state.newTimeline();
+    const QString sequenceId = state.activeSequenceId();
+    QVERIFY(!sequenceId.isEmpty());
+    QVERIFY(state.project()->tracks().at(0).clips.isEmpty());
+    QCOMPARE(state.project()->rootTracks().at(0).clips.size(), 2);
+
+    state.openSequence(QString());
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 2);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).timelineStart, drift::secondsToUs(10.0));
+    state.openSequence(sequenceId);
+    QVERIFY(state.project()->tracks().at(0).clips.isEmpty());
+    state.addClipFromAssetAt(0, 0, 2.0);
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    state.openSequence(QString());
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 2);
+    state.undo();
+    QCOMPARE(state.activeSequenceId(), sequenceId);
+    QVERIFY(state.project()->tracks().at(0).clips.isEmpty());
+    state.openSequence(QString());
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 2);
+
+    const drift::Project loaded = drift::Project::fromJson(state.project()->toJson());
+    QCOMPARE(loaded.rootTracks().at(0).clips.size(), 2);
+    QVERIFY(loaded.hasSequence(sequenceId));
+
+    state.undo();
+    QVERIFY(state.activeSequenceId().isEmpty());
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 2);
+    QVERIFY(state.project()->sequenceIds().isEmpty());
 }
 
 void EditorStateTest::dissolveCompositeRoundTrip()
@@ -5239,6 +5380,24 @@ void EditorStateTest::invertTimelineScrollPersistsAcrossSessions()
 
     AppController relaunched(&library);
     QVERIFY(relaunched.preferences()->invertTimelineScroll());
+}
+
+void EditorStateTest::fitSourceFrameToStraightenInvokable()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    const QVariantMap fit = state.fitSourceFrameToStraighten(0, 0, 1, 1, 5, 1920, 1080);
+    const QRectF expected = drift::fitCropInsideRotation(QRectF(0, 0, 1, 1), 5, 1920, 1080);
+    QVERIFY(expected.width() < 1.0);
+    QCOMPARE(fit.value(QStringLiteral("x")).toDouble(), expected.x());
+    QCOMPARE(fit.value(QStringLiteral("y")).toDouble(), expected.y());
+    QCOMPARE(fit.value(QStringLiteral("width")).toDouble(), expected.width());
+    QCOMPARE(fit.value(QStringLiteral("height")).toDouble(), expected.height());
+
+    // Unknown source size: the box comes back unchanged.
+    const QVariantMap same = state.fitSourceFrameToStraighten(0.1, 0.2, 0.5, 0.5, 5, 0, 0);
+    QCOMPARE(same.value(QStringLiteral("x")).toDouble(), 0.1);
+    QCOMPARE(same.value(QStringLiteral("height")).toDouble(), 0.5);
 }
 
 void EditorStateTest::exportFrameRatePersistsAcrossSessions()
@@ -9307,6 +9466,217 @@ void EditorStateTest::lockedTrackRejectsEdits()
     QCOMPARE(start(), drift::secondsToUs(3.0));
 }
 
+// S used to cut every track under the playhead even with one clip picked, so editing a stack of
+// layers meant clearing the selection before every cut (#556).
+void EditorStateTest::splitShortcutFollowsSelection()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.setSnapEnabled(false);
+
+    // Two video tracks, one 0-4s clip on each, so a cut at 2s could land on either.
+    drift::Project &project = *state.project();
+    project.tracks().clear();
+    for (int track = 0; track < 2; ++track) {
+        project.tracks().append(drift::Track{.type = drift::TrackType::Video});
+        drift::Clip clip;
+        clip.id = QStringLiteral("clip-%1").arg(track);
+        clip.type = drift::ClipType::Video;
+        clip.name = QStringLiteral("Shot %1").arg(track);
+        clip.timelineStart = 0;
+        clip.timelineDuration = drift::secondsToUs(4.0);
+        clip.srcIn = 0;
+        clip.srcOut = clip.timelineDuration;
+        project.tracks()[track].clips.append(clip);
+    }
+    state.setPlayheadSeconds(2.0);
+
+    // Nothing selected: the scope is the whole timeline, as it always was.
+    state.clearSelection();
+    state.splitAtPlayheadForSelection();
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 2);
+    QCOMPARE(state.project()->tracks().at(1).clips.size(), 2);
+
+    state.undo();
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    QCOMPARE(state.project()->tracks().at(1).clips.size(), 1);
+
+    // One clip selected: only that track is cut.
+    state.selectClip(1, 0);
+    state.splitAtPlayheadForSelection();
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 1);
+    QCOMPARE(state.project()->tracks().at(1).clips.size(), 2);
+}
+
+void EditorStateTest::lockedTimelineRemovalRefusedWhicheverTimelineIsOpen()
+{
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        // A: main unlocked, B: main also locked, C: T open
+        AssetLibrary library;
+        AppController state(&library);
+        state.setSnapEnabled(false);
+        QString seq;
+        const QString id = setUpLockedTimeline(state, &seq);
+        QVERIFY(!id.isEmpty());
+        if (scenario == 1) {
+            state.addTextClip(QStringLiteral("Main"), 0.0);
+            state.setTrackLocked(0, true);
+        }
+        if (scenario == 2)
+            state.openSequence(seq);
+        const int count = library.count();
+        const qsizetype depth = state.undoHistory().size();
+        const bool undoable = state.undoAvailable();
+
+        QVERIFY2(!state.removeAsset(library.indexOfId(id)), qPrintable(QString::number(scenario)));
+        QVERIFY(state.project()->hasSequence(seq));
+        QCOMPARE(library.count(), count);
+        QVERIFY(library.indexOfId(id) >= 0);
+        QCOMPARE(state.undoHistory().size(), depth);
+        QCOMPARE(state.undoAvailable(), undoable);
+        QCOMPARE(state.lastMessage(), kLockRefusal);
+        const QList<drift::Track> inner = state.project()->sequenceTracks(seq);
+        QVERIFY(inner.at(0).locked);
+        QCOMPARE(inner.at(0).clips.size(), 1);
+        if (scenario == 2) {
+            QCOMPARE(state.activeSequenceId(), seq);
+            QCOMPARE(state.sequenceTabs().size(), 1);
+        }
+        if (scenario != 2) {
+            // Unlock and the same removal goes through, and undo brings the timeline back.
+            state.openSequence(seq);
+            state.setTrackLocked(0, false);
+            state.openSequence(QString());
+            if (scenario == 1)
+                state.setTrackLocked(0, false);
+            QVERIFY(state.removeAsset(library.indexOfId(id)));
+            QVERIFY(!state.project()->hasSequence(seq));
+            state.undo();
+            QVERIFY(state.project()->hasSequence(seq));
+            QVERIFY(!state.project()->sequenceTracks(seq).at(0).locked);
+        }
+    }
+}
+
+void EditorStateTest::removeAssetsRefusesLockedTimeline()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    QString seq;
+    const QString id = setUpLockedTimeline(state, &seq);
+    drift::MediaAsset other;
+    other.id = QStringLiteral("unused-1");
+    other.name = QStringLiteral("unused.mp4");
+    other.path = QStringLiteral("/tmp/unused.mp4");
+    other.kind = drift::MediaKind::Video;
+    state.project()->assets().insert(other.id, other);
+    state.project()->assetOrder().append(other.id);
+    library.syncToProject();
+    const int count = library.count();
+
+    QCOMPARE(state.removeAssets({id, other.id}), 0);
+    QCOMPARE(library.count(), count);
+    QVERIFY(library.indexOfId(id) >= 0);
+    QVERIFY(library.indexOfId(other.id) >= 0);
+    QVERIFY(state.project()->hasSequence(seq));
+
+    QCOMPARE(state.removeAssetsAndClips({id}), 0);
+    QCOMPARE(library.count(), count);
+    QVERIFY(state.project()->hasSequence(seq));
+    QCOMPARE(state.project()->sequenceTracks(seq).at(0).clips.size(), 1);
+}
+
+void EditorStateTest::dissolveLastInstanceOfLockedTimelineRefused()
+{
+    for (const bool withEffect : {false, true}) {
+        AssetLibrary library;
+        TestController state(&library);
+        setUpTwoClipSelection(library, state);
+        state.makeCompositeFromSelection();
+        const QString seq = state.project()->tracks().at(0).clips.at(0).sequenceId;
+        if (withEffect)
+            state.addEffect(0, 0, QStringLiteral("adjust.contrast"));
+        // Another clip on the composite's track: a dissolve would shift the selection's indices.
+        drift::Clip other;
+        other.id = QStringLiteral("other-clip");
+        other.type = drift::ClipType::Video;
+        other.timelineStart = drift::secondsToUs(100.0);
+        other.timelineDuration = drift::secondsToUs(1.0);
+        other.srcOut = other.timelineDuration;
+        state.project()->tracks()[0].clips.append(other);
+        state.notifyTracksChanged();
+        state.openCompositeClip(0, 0);
+        state.setTrackLocked(0, true);
+        state.openSequence(QString());
+        state.setSelection({QVariantMap{{QStringLiteral("track"), 0}, {QStringLiteral("clip"), 0}}});
+        QCOMPARE(state.selectionCount(), 1);
+
+        state.dissolveComposite(0, 0);
+        // The refused dissolve leaves the selection as it was: just the composite, not the clips
+        // the dissolve would have released.
+        QCOMPARE(state.selectionCount(), 1);
+        QCOMPARE(state.selectedTrack(), 0);
+        QCOMPARE(state.selectedClip(), 0);
+        QCOMPARE(state.project()->tracks().at(0).clips.size(), 2);
+        QCOMPARE(state.project()->tracks().at(0).clips.at(0).type, drift::ClipType::Composite);
+        QVERIFY(state.project()->hasSequence(seq));
+        QCOMPARE(state.lastMessage(), kLockRefusal);
+
+        // The refusal flag doesn't leak into the next edit.
+        state.setClipDuration(0, 0, 2.0);
+        QVERIFY(state.lastMessage() != QStringLiteral("Track is locked"));
+    }
+}
+
+// A lock inside the composite's timeline only matters when dissolving would delete that timeline:
+// with another instance still placed, the dissolve goes through.
+void EditorStateTest::dissolveWithOtherInstancesLeftIgnoresLockedInnerTrack()
+{
+    AssetLibrary library;
+    TestController state(&library);
+    setUpTwoClipSelection(library, state);
+    state.makeCompositeFromSelection();
+    const drift::Clip first = state.project()->tracks().at(0).clips.at(0);
+    drift::Clip second = first;
+    second.id = QStringLiteral("second-instance");
+    second.timelineStart = drift::secondsToUs(100.0);
+    state.project()->tracks()[0].clips.append(second);
+    state.notifyTracksChanged();
+    state.openCompositeClip(0, 0);
+    state.setTrackLocked(0, true);
+    state.openSequence(QString());
+
+    state.dissolveComposite(0, 0);
+    QVERIFY(state.lastMessage() != kLockRefusal);
+    QVERIFY(state.project()->hasSequence(first.sequenceId));
+    int composites = 0;
+    for (const drift::Clip &clip : state.project()->tracks().at(0).clips) {
+        QVERIFY(clip.id != first.id);
+        if (clip.type == drift::ClipType::Composite)
+            ++composites;
+    }
+    QCOMPARE(composites, 1);
+    QVERIFY(state.project()->sequenceTracks(first.sequenceId).at(0).locked);
+}
+
+void EditorStateTest::lockInOtherTimelineLeavesUnrelatedEditsAlone()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    state.setSnapEnabled(false);
+    state.addTextClip(QStringLiteral("Main"), 0.0);
+    QString seq;
+    setUpLockedTimeline(state, &seq);
+
+    state.moveClip(0, 0, 3.0);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(0).timelineStart, drift::secondsToUs(3.0));
+
+    state.openSequence(seq);
+    state.setTrackLocked(0, false);
+    state.addTextClip(QStringLiteral("More"), 5.0);
+    QCOMPARE(state.project()->tracks().at(0).clips.size(), 2);
+}
+
 void EditorStateTest::audioMixerTrackControlsAndMetering()
 {
     AssetLibrary library;
@@ -9388,6 +9758,91 @@ void EditorStateTest::audioMixerTrackControlsAndMetering()
     QVariantMap masterLevels = state.masterAudioLevels();
     QVERIFY(masterLevels.contains(QStringLiteral("left")));
     QVERIFY(masterLevels.contains(QStringLiteral("right")));
+}
+
+namespace {
+
+void addSoloTestAudioTrack(drift::Project &project, const QString &clipId)
+{
+    drift::Track track{.type = drift::TrackType::Audio};
+    drift::Clip clip;
+    clip.id = clipId;
+    clip.type = drift::ClipType::Audio;
+    clip.path = QStringLiteral("/tmp/%1.wav").arg(clipId);
+    clip.timelineStart = 0;
+    clip.timelineDuration = drift::secondsToUs(5.0);
+    clip.srcOut = clip.timelineDuration;
+    track.clips.append(clip);
+    project.tracks().append(track);
+}
+
+} // namespace
+
+// The preview's "Audio only" message names the clip the mixer plays: solo, mute and a video
+// clip's embedded audio all count.
+void EditorStateTest::activeAudioClipFollowsSolo()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::Project &project = *state.project();
+    project.tracks().clear();
+    addSoloTestAudioTrack(project, QStringLiteral("a0"));
+    addSoloTestAudioTrack(project, QStringLiteral("a1"));
+    project.ensureTrackIds();
+    state.setPlayheadSeconds(1.0);
+
+    const auto activeId = [&] { return state.activeAudioClipAtPlayhead().value(QStringLiteral("id")).toString(); };
+    QCOMPARE(activeId(), QStringLiteral("a1"));
+    state.setTrackSolo(0, true);
+    QCOMPARE(activeId(), QStringLiteral("a0"));
+    project.tracks()[0].muted = true;
+    QVERIFY(state.activeAudioClipAtPlayhead().isEmpty());
+    project.tracks()[0].muted = false;
+    state.setTrackSolo(0, false);
+
+    drift::Track video{.type = drift::TrackType::Video};
+    drift::Clip clip;
+    clip.id = QStringLiteral("v0");
+    clip.type = drift::ClipType::Video;
+    clip.path = QStringLiteral("/tmp/v0.mp4");
+    clip.timelineDuration = drift::secondsToUs(5.0);
+    clip.srcOut = clip.timelineDuration;
+    video.clips.append(clip);
+    project.tracks().append(video);
+    project.ensureTrackIds();
+    state.setTrackSolo(2, true);
+    QCOMPARE(activeId(), QStringLiteral("v0"));
+    project.tracks()[2].clips[0].suppressEmbeddedAudio = true;
+    QVERIFY(state.activeAudioClipAtPlayhead().isEmpty());
+}
+
+void EditorStateTest::beatGridStaleOnSolo()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    drift::Project &project = *state.project();
+    project.tracks().clear();
+    addSoloTestAudioTrack(project, QStringLiteral("a0"));
+    addSoloTestAudioTrack(project, QStringLiteral("a1"));
+    project.ensureTrackIds();
+
+    const QByteArray base = state.audioLayoutFingerprint();
+    state.setTrackSolo(1, true);
+    QVERIFY(state.audioLayoutFingerprint() != base);
+    state.setTrackSolo(1, false);
+    QCOMPARE(state.audioLayoutFingerprint(), base);
+
+    // Hiding a track silences it too.
+    project.tracks()[1].hidden = true;
+    QVERIFY(state.audioLayoutFingerprint() != base);
+    project.tracks()[1].hidden = false;
+    QCOMPARE(state.audioLayoutFingerprint(), base);
+
+    // Soloing the only audible track leaves what is heard as it was.
+    project.tracks()[0].muted = true;
+    const QByteArray onlyOne = state.audioLayoutFingerprint();
+    state.setTrackSolo(1, true);
+    QCOMPARE(state.audioLayoutFingerprint(), onlyOne);
 }
 
 void EditorStateTest::shapeStylePartialUpdateAndUndo()
@@ -9975,6 +10430,326 @@ void EditorStateTest::proxyGenerationWritesBesideSource()
     QCOMPARE(library.proxyState(id), QStringLiteral("none"));
     QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("clip_proxy_360.mp4"))));
     QVERIFY(QFileInfo::exists(source));
+}
+
+void EditorStateTest::proxyGenerationWritesToChosenFolder()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QTemporaryDir out;
+    QVERIFY(dir.isValid() && out.isValid());
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(renderTestVideo(ffmpeg, source, 2));
+
+    AssetLibrary library;
+    AppController state(&library);
+    ProxyTestScope scope(state);
+    QVERIFY(importAndAwait(library, source));
+    const QString id = library.assetIdAt(0);
+
+    // Folder mode needs a folder first, and a relative path or a missing one is refused.
+    state.preferences()->setProxyLocation(QStringLiteral("folder"));
+    QCOMPARE(state.preferences()->proxyLocation(), QStringLiteral("beside"));
+    QVERIFY(!state.preferences()->setProxyFolder(QStringLiteral("relative/dir")).isEmpty());
+    QVERIFY(!state.preferences()->setProxyFolder(out.filePath(QStringLiteral("nope"))).isEmpty());
+    QVERIFY(state.preferences()->setProxyFolder(out.path()).isEmpty());
+    state.preferences()->setProxyLocation(QStringLiteral("folder"));
+    QCOMPARE(state.preferences()->proxyLocation(), QStringLiteral("folder"));
+
+    QSignalSpy fallback(&library, &AssetLibrary::proxyLocationFallback);
+    QSignalSpy unavailable(&library, &AssetLibrary::proxyFolderUnavailable);
+    library.createProxies({id});
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(id), QStringLiteral("ready"), 120000);
+    const QString expected = drift::folderProxyPath(QDir::cleanPath(out.path()), source, 360);
+    QVERIFY(QFileInfo::exists(expected));
+    QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("clip_proxy_360.mp4"))));
+    QCOMPARE(library.proxyWhere(id), QStringLiteral("folder"));
+    QCOMPARE(library.proxyPath(id), expected);
+    QCOMPARE(fallback.count(), 0);
+    QCOMPARE(unavailable.count(), 0);
+
+    library.removeProxies({id});
+    QCOMPARE(library.proxyState(id), QStringLiteral("none"));
+    QVERIFY(!QFileInfo::exists(expected));
+    QVERIFY(QFileInfo::exists(source));
+}
+
+void EditorStateTest::chosenFolderProxyIsFoundAfterReload()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QTemporaryDir out;
+    QVERIFY(dir.isValid() && out.isValid());
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(renderTestVideo(ffmpeg, source, 2));
+
+    AssetLibrary library;
+    AppController state(&library);
+    ProxyTestScope scope(state);
+    QVERIFY(importAndAwait(library, source));
+    const QString id = library.assetIdAt(0);
+    QVERIFY(state.preferences()->setProxyFolder(out.path()).isEmpty());
+    state.preferences()->setProxyLocation(QStringLiteral("folder"));
+    library.createProxies({id});
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(id), QStringLiteral("ready"), 120000);
+
+    drift::ReverseProxyCache::instance().clearSidecars();
+    QCOMPARE(library.proxyState(id), QStringLiteral("none"));
+    library.refreshSidecars();
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(id), QStringLiteral("ready"), 30000);
+    QCOMPARE(library.proxyWhere(id), QStringLiteral("folder"));
+
+    // A source replaced since the render makes the proxy stale: it is ignored.
+    {
+        QFile touched(source);
+        QVERIFY(touched.open(QIODevice::ReadWrite));
+        QVERIFY(touched.setFileTime(QDateTime::currentDateTime().addDays(1), QFileDevice::FileModificationTime));
+    }
+    drift::ReverseProxyCache::instance().clearSidecars();
+    QSignalSpy scanned(&library, &AssetLibrary::sidecarScanFinished);
+    library.refreshSidecars();
+    // The scan has run and found nothing (not "none" only because it has not run yet).
+    QTRY_VERIFY_WITH_TIMEOUT(scanned.count() >= 1, 30000);
+    QCOMPARE(library.proxyState(id), QStringLiteral("none"));
+}
+
+void EditorStateTest::proxiesInPreviousFolderAreNotFoundUntilChosenAgain()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QTemporaryDir folderA;
+    QTemporaryDir folderB;
+    QVERIFY(dir.isValid() && folderA.isValid() && folderB.isValid());
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(renderTestVideo(ffmpeg, source, 2));
+
+    AssetLibrary library;
+    AppController state(&library);
+    ProxyTestScope scope(state);
+    QVERIFY(importAndAwait(library, source));
+    const QString id = library.assetIdAt(0);
+    QVERIFY(state.preferences()->setProxyFolder(folderA.path()).isEmpty());
+    state.preferences()->setProxyLocation(QStringLiteral("folder"));
+    library.createProxies({id});
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(id), QStringLiteral("ready"), 120000);
+    QCOMPARE(library.proxyWhere(id), QStringLiteral("folder"));
+
+    // One folder: after picking B, A's proxy is not found. A scan for A still in flight when
+    // B is chosen must not put it back.
+    QSignalSpy scanned(&library, &AssetLibrary::sidecarScanFinished);
+    library.refreshSidecars();
+    QVERIFY(state.preferences()->setProxyFolder(folderB.path()).isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(scanned.count() >= 1, 30000);
+    QCOMPARE(library.proxyState(id), QStringLiteral("none"));
+    QTest::qWait(300); // a late stale scan would show up here
+    QCOMPARE(library.proxyState(id), QStringLiteral("none"));
+    QVERIFY(QFileInfo::exists(drift::folderProxyPath(QDir::cleanPath(folderA.path()), source, 360)));
+
+    // Choosing A again finds what is still there.
+    scanned.clear();
+    QVERIFY(state.preferences()->setProxyFolder(folderA.path()).isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(scanned.count() >= 1, 30000);
+    QCOMPARE(library.proxyState(id), QStringLiteral("ready"));
+    QCOMPARE(library.proxyWhere(id), QStringLiteral("folder"));
+}
+
+void EditorStateTest::besideProxyIsStillFoundAfterSwitchingToFolder()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QTemporaryDir out;
+    QVERIFY(dir.isValid() && out.isValid());
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(renderTestVideo(ffmpeg, source, 2));
+
+    AssetLibrary library;
+    AppController state(&library);
+    ProxyTestScope scope(state);
+    QVERIFY(importAndAwait(library, source));
+    const QString id = library.assetIdAt(0);
+    library.createProxies({id});
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(id), QStringLiteral("ready"), 120000);
+    QCOMPARE(library.proxyWhere(id), QStringLiteral("beside"));
+
+    QVERIFY(state.preferences()->setProxyFolder(out.path()).isEmpty());
+    state.preferences()->setProxyLocation(QStringLiteral("folder"));
+    drift::ReverseProxyCache::instance().clearSidecars();
+    library.refreshSidecars();
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(id), QStringLiteral("ready"), 30000);
+    QCOMPARE(library.proxyWhere(id), QStringLiteral("beside"));
+    QVERIFY(QDir(out.path()).entryList(QDir::Files).isEmpty()); // nothing moved or copied
+}
+
+void EditorStateTest::missingProxyFolderFallsBackToCache()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QTemporaryDir out;
+    QVERIFY(dir.isValid() && out.isValid());
+    const QString a = dir.filePath(QStringLiteral("a.mp4"));
+    const QString b = dir.filePath(QStringLiteral("b.mp4"));
+    QVERIFY(renderTestVideo(ffmpeg, a, 2));
+    QVERIFY(QFile::copy(a, b));
+
+    AssetLibrary library;
+    AppController state(&library);
+    ProxyTestScope scope(state);
+    QVERIFY(importAndAwait(library, a));
+    QVERIFY(importAndAwait(library, b));
+    const QString idA = library.assetIdAt(0);
+    const QString idB = library.assetIdAt(1);
+
+    const QString folder = QDir::cleanPath(out.path());
+    QVERIFY(state.preferences()->setProxyFolder(folder).isEmpty());
+    state.preferences()->setProxyLocation(QStringLiteral("folder"));
+    QVERIFY(out.remove()); // the drive was unplugged
+
+    QSignalSpy unavailable(&library, &AssetLibrary::proxyFolderUnavailable);
+    library.createProxies({idA, idB});
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(idA), QStringLiteral("ready"), 120000);
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(idB), QStringLiteral("ready"), 120000);
+    QCOMPARE(unavailable.count(), 1);
+    QCOMPARE(unavailable.at(0).at(0).toString(), QDir::toNativeSeparators(folder));
+    QCOMPARE(library.proxyWhere(idA), QStringLiteral("cache"));
+    QCOMPARE(library.proxyWhere(idB), QStringLiteral("cache"));
+    QVERIFY(QDir(dir.path()).entryList({QStringLiteral("*_proxy_*")}, QDir::Files).isEmpty());
+    QVERIFY(!QFileInfo::exists(folder));
+
+    library.removeProxies({idA, idB});
+}
+
+void EditorStateTest::removingProxiesDeletesFolderAndBesideCopies()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QTemporaryDir out;
+    QVERIFY(dir.isValid() && out.isValid());
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(renderTestVideo(ffmpeg, source, 2));
+
+    AssetLibrary library;
+    AppController state(&library);
+    ProxyTestScope scope(state);
+    QVERIFY(importAndAwait(library, source));
+    const QString id = library.assetIdAt(0);
+    library.createProxies({id});
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(id), QStringLiteral("ready"), 120000);
+    const int side = drift::ReverseProxyCache::previewProxyShortSide;
+    const QString beside = drift::generatedProxyPath(source, side);
+    QVERIFY(QFileInfo::exists(beside));
+
+    // The chosen folder is the source's own folder: the beside proxy is still "beside".
+    QVERIFY(state.preferences()->setProxyFolder(dir.path()).isEmpty());
+    state.preferences()->setProxyLocation(QStringLiteral("folder"));
+    drift::ReverseProxyCache::instance().clearSidecars();
+    library.refreshSidecars();
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyState(id), QStringLiteral("ready"), 30000);
+    QCOMPARE(library.proxyWhere(id), QStringLiteral("beside"));
+
+    // Now a real folder holding a second copy: both get deleted together.
+    QVERIFY(state.preferences()->setProxyFolder(out.path()).isEmpty());
+    const QString inFolder = drift::folderProxyPath(QDir::cleanPath(out.path()), source, side);
+    QVERIFY(QFile::copy(beside, inFolder));
+    drift::ReverseProxyCache::instance().clearSidecars();
+    library.refreshSidecars();
+    QTRY_COMPARE_WITH_TIMEOUT(library.proxyWhere(id), QStringLiteral("folder"), 30000);
+
+    library.removeProxies({id});
+    QCOMPARE(library.proxyState(id), QStringLiteral("none"));
+    QVERIFY(!QFileInfo::exists(inFolder));
+    QVERIFY(!QFileInfo::exists(beside));
+    QVERIFY(QFileInfo::exists(source));
+}
+
+void EditorStateTest::reverseRenderFallsBackToCacheWhenFolderIsMissing()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QTemporaryDir out;
+    QVERIFY(dir.isValid() && out.isValid());
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(renderTestVideo(ffmpeg, source, 2));
+
+    AssetLibrary library;
+    AppController state(&library);
+    ProxyTestScope scope(state);
+    QVERIFY(importAndAwait(library, source));
+    const QString folder = QDir::cleanPath(out.path());
+    QVERIFY(state.preferences()->setProxyFolder(folder).isEmpty());
+    state.preferences()->setProxyLocation(QStringLiteral("folder"));
+    QVERIFY(out.remove()); // unplugged
+    state.addClipFromAsset(0);
+    const int track = state.selectedTrack();
+    QVERIFY(track >= 0);
+
+    QSignalSpy finished(&state, &AppController::reverseRenderFinished);
+    state.applyClipReverse(track, 0);
+    QVERIFY(finished.wait(120000));
+    QVERIFY(finished.at(0).at(0).toBool());
+    QVERIFY(state.clipHasReverseProxy(track, 0));
+    QVERIFY(!QFileInfo::exists(folder));
+    QVERIFY(QDir(dir.path()).entryList({QStringLiteral("*_reversed_*.mp4")}, QDir::Files).isEmpty());
+}
+
+void EditorStateTest::reverseRenderWritesToChosenFolder()
+{
+    const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        QSKIP("ffmpeg not available to generate a test clip");
+
+    QTemporaryDir dir;
+    QTemporaryDir out;
+    QVERIFY(dir.isValid() && out.isValid());
+    const QString source = dir.filePath(QStringLiteral("clip.mp4"));
+    QVERIFY(renderTestVideo(ffmpeg, source, 2));
+
+    AssetLibrary library;
+    AppController state(&library);
+    ProxyTestScope scope(state);
+    QVERIFY(importAndAwait(library, source));
+    QVERIFY(state.preferences()->setProxyFolder(out.path()).isEmpty());
+    state.preferences()->setProxyLocation(QStringLiteral("folder"));
+    state.addClipFromAsset(0);
+    const int track = state.selectedTrack();
+    QVERIFY(track >= 0);
+
+    QSignalSpy finished(&state, &AppController::reverseRenderFinished);
+    state.applyClipReverse(track, 0);
+    QVERIFY(finished.wait(120000));
+    QVERIFY(finished.at(0).at(0).toBool());
+
+    const QStringList written = QDir(out.path()).entryList({QStringLiteral("*_reversed_*.mp4")}, QDir::Files);
+    QCOMPARE(written.size(), 1);
+    QVERIFY(drift::parseFolderReversedName(source, written.first()));
+    QVERIFY(QDir(dir.path()).entryList({QStringLiteral("clip_reversed_*.mp4")}, QDir::Files).isEmpty());
+    QVERIFY(state.clipHasReverseProxy(track, 0));
+
+    // Still found after the in-memory index is dropped and the folder is scanned again.
+    drift::ReverseProxyCache::instance().clearSidecars();
+    QVERIFY(!state.clipHasReverseProxy(track, 0));
+    library.refreshSidecars();
+    QTRY_VERIFY_WITH_TIMEOUT(state.clipHasReverseProxy(track, 0), 30000);
 }
 
 void EditorStateTest::proxyGenerationFallsBackToCacheWhenFolderIsReadOnly()
@@ -10863,6 +11638,19 @@ void EditorStateTest::pastedUnknownEffectIsKeptAndReported()
     QCOMPARE(target.at(1).catalogId, QStringLiteral("nope.not_installed"));
     // finishEdit() clears lastMessage, so the warning has to survive being emitted after it.
     QVERIFY(state.lastMessage().contains(QStringLiteral("nope.not_installed")));
+}
+
+// The toast's Copy button (#574).
+void EditorStateTest::copyTextPutsTextOnClipboard()
+{
+    AssetLibrary library;
+    AppController state(&library);
+    const QString message = QStringLiteral("Export failed: /tmp/a b/clip.mp4");
+    QGuiApplication::clipboard()->setText(QStringLiteral("before"));
+    state.copyText(message);
+    QCOMPARE(QGuiApplication::clipboard()->text(), message);
+    state.copyText(QString());
+    QCOMPARE(QGuiApplication::clipboard()->text(), message);
 }
 
 void EditorStateTest::clipboardHasEffectsIgnoresOrdinaryText()
@@ -13543,6 +14331,18 @@ void EditorStateTest::maskLockAspectPersistsAndGatesCornerResize()
     state.undo();
     QVERIFY(!pinnedMaskClip(state).mask.lockAspect);
 
+    // The inspector edits a copy of clipAt's mask map and writes it back: the lock survives.
+    state.masking()->setMaskProperty(ref.trackIndex, ref.clipIndex, QStringLiteral("lockAspect"), true);
+    QVariantMap mapped = state.clipAt(0, 0).value(QStringLiteral("mask")).toMap();
+    QVERIFY(mapped.value(QStringLiteral("lockAspect")).toBool());
+    mapped.insert(QStringLiteral("invert"), true);
+    state.setClipMask(0, 0, mapped);
+    QVERIFY(pinnedMaskClip(state).mask.lockAspect);
+    QVERIFY(pinnedMaskClip(state).mask.invert);
+    state.undo();
+    state.undo();
+    QVERIFY(!pinnedMaskClip(state).mask.lockAspect);
+
     // The overlay passes lockAspect XOR Shift: a corner keeps the ratio only when that is true.
     MaskEditSession *session = state.masking()->editSession();
     const QString id = pinnedMaskClip(state).id;
@@ -14676,6 +15476,196 @@ void EditorStateTest::closeGapBeforeFirstClipMovesTrackToStart()
     state.undo();
     QCOMPARE(state.project()->tracks().at(0).clips.at(0).timelineStart, drift::secondsToUs(1.5));
     QCOMPARE(state.project()->tracks().at(0).clips.at(1).timelineStart, drift::secondsToUs(5.0));
+}
+
+namespace {
+drift::Clip gapClip(const char *id, double start, double dur, drift::ClipType type = drift::ClipType::Video)
+{
+    drift::Clip clip;
+    clip.id = QString::fromLatin1(id);
+    clip.type = type;
+    clip.timelineStart = drift::secondsToUs(start);
+    clip.timelineDuration = drift::secondsToUs(dur);
+    clip.srcOut = clip.timelineDuration;
+    return clip;
+}
+double gapClipStart(const drift::Project &project, const char *id)
+{
+    for (const drift::Track &track : project.tracks())
+        for (const drift::Clip &clip : track.clips)
+            if (clip.id == QLatin1String(id))
+                return drift::usToSeconds(clip.timelineStart);
+    return -1;
+}
+} // namespace
+
+// Music on an unlinked track keeps its timing against the video when the video's gap closes.
+void EditorStateTest::closeGapOnAllTracksKeepsUnlinkedAudioInSync()
+{
+    AssetLibrary library;
+    TestController state(&library);
+    drift::Track v1{.type = drift::TrackType::Video};
+    v1.number = 1;
+    v1.clips = {gapClip("a", 0, 2), gapClip("b", 4, 2)};
+    drift::Track a1{.type = drift::TrackType::Audio};
+    a1.number = 1;
+    a1.clips = {gapClip("m1", 0, 2, drift::ClipType::Audio), gapClip("m2", 4, 5, drift::ClipType::Audio)};
+    state.project()->tracks() = {v1, a1};
+    state.notifyTracksChanged();
+
+    state.closeGapOnAllTracks(0, 2.0);
+    QCOMPARE(gapClipStart(*state.project(), "b"), 2.0);
+    QCOMPARE(gapClipStart(*state.project(), "m2"), 2.0);
+    QCOMPARE(state.lastMessage(), QStringLiteral("Gap closed on 2 track(s)"));
+
+    state.undo();
+    QCOMPARE(gapClipStart(*state.project(), "b"), 4.0);
+    QCOMPARE(gapClipStart(*state.project(), "m2"), 4.0);
+}
+
+void EditorStateTest::closeGapOnAllTracksReportsBlockedAndLockedTracks()
+{
+    AssetLibrary library;
+    TestController state(&library);
+    drift::Track v1{.type = drift::TrackType::Video};
+    v1.number = 1;
+    v1.clips = {gapClip("a", 0, 2), gapClip("b", 4, 2)};
+    drift::Track a2{.type = drift::TrackType::Audio};
+    a2.number = 2;
+    a2.clips = {gapClip("span", 1, 4, drift::ClipType::Audio), gapClip("tail", 7, 1, drift::ClipType::Audio)};
+    drift::Track v2{.type = drift::TrackType::Video};
+    v2.number = 2;
+    v2.locked = true;
+    v2.clips = {gapClip("held", 5, 1)};
+    v1.id = QStringLiteral("t-v1");
+    a2.id = QStringLiteral("t-a2");
+    v2.id = QStringLiteral("t-v2");
+    state.project()->tracks() = {v1, a2, v2};
+    state.notifyTracksChanged();
+
+    state.closeGapOnAllTracks(0, 2.0);
+    QCOMPARE(gapClipStart(*state.project(), "b"), 2.0);
+    QCOMPARE(gapClipStart(*state.project(), "tail"), 7.0);
+    QCOMPARE(gapClipStart(*state.project(), "held"), 5.0);
+    QCOMPARE(state.lastMessage(), QStringLiteral("Gap closed on 1 track(s). Not moved: Audio 2, Video 2"));
+}
+
+// 8.04 s is 8039999 us once truncated to microseconds; the clip ends at exactly 8040000.
+void EditorStateTest::closeGapOnAllTracksFindsAClipEndingOnTheGapStart()
+{
+    AssetLibrary library;
+    TestController state(&library);
+    const auto clipUs = [](const char *id, drift::TimeUs start, drift::TimeUs dur, drift::ClipType type) {
+        drift::Clip clip;
+        clip.id = QString::fromLatin1(id);
+        clip.type = type;
+        clip.timelineStart = start;
+        clip.timelineDuration = dur;
+        clip.srcOut = dur;
+        return clip;
+    };
+    drift::Track v1{.type = drift::TrackType::Video};
+    v1.number = 1;
+    v1.clips = {clipUs("a", 0, 8'040'000, drift::ClipType::Video),
+                clipUs("b", 10'000'000, 2'000'000, drift::ClipType::Video)};
+    drift::Track a1{.type = drift::TrackType::Audio};
+    a1.number = 1;
+    a1.clips = {clipUs("m", 10'000'000, 3'000'000, drift::ClipType::Audio)};
+    state.project()->tracks() = {v1, a1};
+    state.notifyTracksChanged();
+
+    state.closeGapOnAllTracks(0, 8.04);
+    QCOMPARE(state.lastMessage(), QStringLiteral("Gap closed on 2 track(s)"));
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).timelineStart, drift::TimeUs(8'040'000));
+    QCOMPARE(state.project()->tracks().at(1).clips.at(0).timelineStart, drift::TimeUs(8'040'000));
+
+    // Also from a millisecond-rounded copy of the end (an MCP reply): 8.04 -> same, 2.033 -> 2033333.
+    state.undo();
+    state.project()->tracks()[0].clips[0].timelineDuration = 2'033'333;
+    state.project()->tracks()[0].clips[0].srcOut = 2'033'333;
+    state.notifyTracksChanged();
+    state.closeGapOnAllTracks(0, 2.033);
+    QCOMPARE(state.project()->tracks().at(0).clips.at(1).timelineStart, drift::TimeUs(2'033'333));
+}
+
+// The status line names tracks and clips; a refusal changes nothing and leaves no undo step.
+void EditorStateTest::closeGapOnAllTracksRefusesWithNamesAndChangesNothing()
+{
+    AssetLibrary library;
+    TestController state(&library);
+    drift::Track v1{.type = drift::TrackType::Video};
+    v1.number = 1;
+    v1.clips = {gapClip("a", 0, 2), gapClip("b", 4, 2)};
+    state.project()->tracks() = {v1};
+    state.notifyTracksChanged();
+    const int steps = int(state.undoHistory().size());
+    const auto unchanged = [&] {
+        QCOMPARE(gapClipStart(*state.project(), "b"), 4.0);
+        QCOMPARE(int(state.undoHistory().size()), steps);
+    };
+
+    // Locked origin: the track's label, not "Track 0".
+    state.project()->tracks()[0].locked = true;
+    state.closeGapOnAllTracks(0, 2.0);
+    QCOMPARE(state.lastMessage(), QStringLiteral("Video 1 is locked"));
+    unchanged();
+    state.project()->tracks()[0].locked = false;
+
+    // A clip in the gap on the origin's own group: the clip's name, and the track's label.
+    state.project()->tracks()[0].clips[1].name = QStringLiteral("Interview");
+    state.project()->tracks()[0].clips[0].timelineDuration = drift::secondsToUs(3.0);
+    state.project()->tracks()[0].clips[1].timelineStart = drift::secondsToUs(4.0);
+    drift::Track a1{.type = drift::TrackType::Audio};
+    a1.number = 1;
+    drift::Clip over = gapClip("over", 1, 4, drift::ClipType::Audio);
+    over.name = QStringLiteral("Voice");
+    over.linkId = QStringLiteral("pair");
+    a1.clips = {over};
+    state.project()->tracks()[0].clips[0].linkId = QStringLiteral("pair");
+    state.project()->tracks().append(a1);
+    state.notifyTracksChanged();
+    state.closeGapOnAllTracks(0, 3.0);
+    QVERIFY2(state.lastMessage().contains(QStringLiteral("Voice")) || state.lastMessage().contains(QStringLiteral("Audio 1")),
+             qPrintable(state.lastMessage()));
+    QVERIFY(!state.lastMessage().contains(QStringLiteral("over")));
+    QVERIFY(!state.lastMessage().contains(QStringLiteral("Track 0")));
+    unchanged();
+
+    // An adjustment track is never the origin (close_gaps refuses it too).
+    drift::Track fx{.type = drift::TrackType::Adjustment};
+    fx.number = 1;
+    fx.clips = {gapClip("g1", 0, 1, drift::ClipType::Adjustment), gapClip("g2", 3, 1, drift::ClipType::Adjustment)};
+    state.project()->tracks().append(fx);
+    state.notifyTracksChanged();
+    state.closeGapOnAllTracks(int(state.project()->tracks().size()) - 1, 1.0);
+    QVERIFY2(state.lastMessage().contains(QStringLiteral("adjustment track")), qPrintable(state.lastMessage()));
+    QVERIFY(!state.lastMessage().contains(QStringLiteral("Track ")));
+    unchanged();
+}
+
+void EditorStateTest::closeGapOnAllTracksActsOnOpenTimelineOnly()
+{
+    AssetLibrary library;
+    TestController state(&library);
+    appendTwoVideoClips(*state.project());
+    state.notifyTracksChanged();
+    state.newTimeline();
+    QVERIFY(!state.activeSequenceId().isEmpty());
+    drift::Track v1{.type = drift::TrackType::Video};
+    v1.number = 1;
+    v1.clips = {gapClip("ca", 0, 2), gapClip("cb", 4, 2)};
+    drift::Track a1{.type = drift::TrackType::Audio};
+    a1.number = 1;
+    a1.clips = {gapClip("cm", 4, 3, drift::ClipType::Audio)};
+    state.project()->tracks() = {v1, a1};
+    state.notifyTracksChanged();
+
+    state.closeGapOnAllTracks(0, 2.0);
+    QCOMPARE(gapClipStart(*state.project(), "cb"), 2.0);
+    QCOMPARE(gapClipStart(*state.project(), "cm"), 2.0);
+    state.openSequence(QString());
+    QCOMPARE(gapClipStart(*state.project(), "clip-0"), 0.0);
+    QCOMPARE(gapClipStart(*state.project(), "clip-1"), 2.0);
 }
 
 void EditorStateTest::clipsModelDerivesGapsAndOverlaps()
@@ -16841,6 +17831,41 @@ void EditorStateTest::trackerShortcutsAreRegistered()
     QCOMPARE(state.actionForArrowChord(Qt::Key_Left, Qt::ControlModifier), QStringLiteral("jumpBackFar"));
 }
 
+// Every action the keymap page lists has to be bindable. setShortcut() refuses an id that
+// defaultShortcuts() has no key for, and it reports that refusal the same way it reports success
+// (an empty string), so the row captures a chord, says nothing, and stores nothing. An action that
+// is unbound by default therefore still needs an entry here, with an empty chord.
+void EditorStateTest::everyListedActionCanBeBound()
+{
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftTestBindableActions"));
+    const auto restore = qScopeGuard([&] {
+        QSettings().remove(QStringLiteral("shortcuts"));
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+    });
+    QSettings().remove(QStringLiteral("shortcuts"));
+
+    AssetLibrary library;
+    AppController state(&library);
+
+    // No default uses a function key, so this can never be refused for clashing with one.
+    const QString probe = QStringLiteral("Ctrl+Alt+Shift+F12");
+    const QVariantList actions = state.actions();
+    QVERIFY(!actions.isEmpty());
+    for (const QVariant &action : actions) {
+        const QString id = action.toMap().value(QStringLiteral("id")).toString();
+        QVERIFY(!id.isEmpty());
+        const QString was = state.shortcutFor(id);
+        QCOMPARE(state.setShortcut(id, probe), QString());
+        QVERIFY2(state.shortcutFor(id) == probe, qPrintable(id));
+        state.setShortcut(id, was);
+        QCOMPARE(state.shortcutFor(id), was);
+    }
+}
+
 void EditorStateTest::trackingClipIdOverloadsMatchTheIndexCalls()
 {
     AssetLibrary library;
@@ -17261,6 +18286,55 @@ void EditorStateTest::maskingCutoutPatchSurvivesInspectorEdits()
     QCOMPARE(edited.mediaPatches.firstKey(), 5 * fx.frame);
 }
 
+// A transition draws both clips across a window centred on the cut, so a bake inside one half
+// depends on the clip on the other side, which does not overlap the bake's range.
+void EditorStateTest::bakeFingerprintTracksTransitionPartner()
+{
+    drift::Project project;
+    project.setResolution(1280, 720);
+    project.setFps(30);
+    project.tracks().clear();
+    drift::Track track{.type = drift::TrackType::Shape};
+    track.id = QStringLiteral("t1");
+    drift::Clip a = boxShape(QStringLiteral("a"), QRectF(0, 0, 100, 100)); // 0 s – 5 s
+    drift::Clip b = boxShape(QStringLiteral("b"), QRectF(0, 0, 100, 100));
+    b.timelineStart = drift::secondsToUs(5.0);                                // 5 s – 10 s
+    track.clips = {a, b};
+    drift::Transition crossfade;
+    crossfade.id = QStringLiteral("x");
+    crossfade.fromClipId = QStringLiteral("a");
+    crossfade.toClipId = QStringLiteral("b");
+    crossfade.durationUs = drift::secondsToUs(0.5); // window 4.75 s – 5.25 s
+    track.transitions = {crossfade};
+    project.tracks().append(track);
+
+    // Frames at 30 fps: the cut is frame 150.
+    const QByteArray incomingHalf = drift::bakeFingerprint(project, 150, 156); // 5.0 s – 5.2 s
+    const QByteArray outgoingHalf = drift::bakeFingerprint(project, 144, 150); // 4.8 s – 5.0 s
+    const QByteArray earlyA = drift::bakeFingerprint(project, 0, 60);          // outside the window
+    const QByteArray lateB = drift::bakeFingerprint(project, 240, 300);        // outside the window
+
+    // Editing the outgoing clip stales the bake inside the incoming half...
+    project.tracks()[0].clips[0].opacity.setKeyframe(0, 0.5);
+    QVERIFY(drift::bakeFingerprint(project, 150, 156) != incomingHalf);
+    // ...but not one of B outside the window.
+    QCOMPARE(drift::bakeFingerprint(project, 240, 300), lateB);
+    project.tracks()[0].clips[0].opacity = a.opacity;
+    QCOMPARE(drift::bakeFingerprint(project, 150, 156), incomingHalf);
+
+    // And the other way round.
+    project.tracks()[0].clips[1].opacity.setKeyframe(0, 0.5);
+    QVERIFY(drift::bakeFingerprint(project, 144, 150) != outgoingHalf);
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), earlyA);
+    project.tracks()[0].clips[1].opacity = b.opacity;
+
+    // Disabling the other side drops the transition there, so that stales it too.
+    project.tracks()[0].clips[0].enabled = false;
+    QVERIFY(drift::bakeFingerprint(project, 150, 156) != incomingHalf);
+    project.tracks()[0].clips[0].enabled = true;
+    QCOMPARE(drift::bakeFingerprint(project, 150, 156), incomingHalf);
+}
+
 void EditorStateTest::bakeFingerprintTracksRangeEdits()
 {
     drift::Project project;
@@ -17299,6 +18373,214 @@ void EditorStateTest::bakeFingerprintTracksRangeEdits()
     QVERIFY(drift::bakeFingerprint(project, 0, 60) != drift::bakeFingerprint(project, 300, 360));
     project.setResolution(1920, 1080);
     QVERIFY(drift::bakeFingerprint(project, 0, 60) != original);
+}
+
+void EditorStateTest::unsafeProjectIdStaysInItsFolders()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString evilKey = drift::projectPathKey(QStringLiteral("../x"));
+    const QString outside = QDir(drift::cacheRoot()).filePath(QStringLiteral("x.driftbake"));
+    const QString bakeFile =
+        QDir(drift::cacheRoot()).filePath(QStringLiteral("bakes/") + evilKey + QStringLiteral(".driftbake"));
+    const auto cleanup = qScopeGuard([&] {
+        QFile::remove(outside);
+        QFile::remove(bakeFile);
+        QDir(QDir(appData).filePath(QStringLiteral("projects/") + evilKey)).removeRecursively();
+        QDir(QDir(appData).filePath(QStringLiteral("projects/") + drift::projectPathKey(QStringLiteral("../evil"))))
+            .removeRecursively();
+        QStandardPaths::setTestModeEnabled(false);
+    });
+
+    // Where the unsanitised id "../x" would have pointed the bake file: a file that isn't one.
+    QVERIFY(QDir().mkpath(QFileInfo(outside).absolutePath()));
+    {
+        QFile planted(outside);
+        QVERIFY(planted.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        planted.write("not a bake");
+    }
+
+    AssetLibrary library;
+    TestController state(&library);
+    drift::Project &project = *state.project();
+    drift::Track track{.type = drift::TrackType::Shape};
+    track.id = QStringLiteral("s1");
+    track.clips.append(boxShape(QStringLiteral("in"), QRectF(0, 0, 100, 100)));
+    project.tracks().append(track);
+    project.setId(QStringLiteral("../x"));
+    state.notifyTracksChanged();
+    QCOMPARE(readFile(outside), QByteArray("not a bake"));
+
+    project.setWorkAreaInUs(0);
+    project.setWorkAreaOutUs(drift::secondsToUs(1.0));
+    state.bakes()->bakeWorkArea();
+    state.bakes()->cancelBake();
+    QTRY_VERIFY_WITH_TIMEOUT(!state.bakes()->busy(), 120000);
+    QCOMPARE(readFile(outside), QByteArray("not a bake"));
+    QVERIFY(QFile::exists(bakeFile));
+    state.bakes()->deleteAllBakes();
+
+    const QString projects = QDir::cleanPath(appData + QStringLiteral("/projects"));
+    const QString media = AppController::projectMediaDir(QStringLiteral("../evil"));
+    QVERIFY(QDir::cleanPath(media).startsWith(projects + QLatin1Char('/')));
+    const QString edited = drift::newEditedMediaPath(QStringLiteral("../evil"), QStringLiteral("video"));
+    QVERIFY(QDir::cleanPath(QFileInfo(edited).absolutePath()).startsWith(projects + QLatin1Char('/')));
+    QVERIFY(!QFileInfo::exists(QDir(appData).filePath(QStringLiteral("evil"))));
+}
+
+void EditorStateTest::bakeFingerprintIgnoresMixAndExportFlags()
+{
+    drift::Project project;
+    project.setResolution(1280, 720);
+    project.setFps(30);
+    project.tracks().clear();
+    for (const QString &id : {QStringLiteral("t1"), QStringLiteral("t2")}) {
+        drift::Track track{.type = drift::TrackType::Shape};
+        track.id = id;
+        project.tracks().append(track);
+    }
+    drift::Clip outside = boxShape(QStringLiteral("out"), QRectF(0, 0, 100, 100));
+    outside.timelineStart = drift::secondsToUs(10.0);
+    project.tracks()[0].clips.append(boxShape(QStringLiteral("in"), QRectF(0, 0, 100, 100)));
+    project.tracks()[1].clips.append(outside);
+
+    const QByteArray original = drift::bakeFingerprint(project, 0, 60);
+    const QByteArray later = drift::bakeFingerprint(project, 300, 360);
+    // Heard, not seen: mute, solo and exclude from export on a non-audio track keep the bake fresh.
+    project.tracks()[0].muted = true;
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), original);
+    project.tracks()[0].solo = true;
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), original);
+    project.tracks()[0].excludeFromExport = true;
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), original);
+    project.tracks()[1].muted = true;
+    project.tracks()[1].solo = true;
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), original);
+    // Hiding the track drawn in the range does stale it.
+    project.tracks()[0].hidden = true;
+    QVERIFY(drift::bakeFingerprint(project, 0, 60) != original);
+    project.tracks()[0].hidden = false;
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), original);
+    // A track with nothing in the range: hiding it or adding an empty one changes nothing there...
+    project.tracks()[1].hidden = true;
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), original);
+    drift::Track empty{.type = drift::TrackType::Video};
+    empty.id = QStringLiteral("t3");
+    project.tracks().insert(0, empty);
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), original);
+    // ...but it does over its own clip's range.
+    QVERIFY(drift::bakeFingerprint(project, 300, 360) != later);
+    // Muting or soloing an Audio or Video track changes the Timeline mix audio-reactive visuals read,
+    // so it does stale a bake whose range holds a clip on it.
+    drift::Track audio{.type = drift::TrackType::Audio};
+    audio.id = QStringLiteral("a1");
+    audio.clips.append(boxShape(QStringLiteral("snd"), QRectF(0, 0, 100, 100)));
+    project.tracks().append(audio);
+    const QByteArray withAudio = drift::bakeFingerprint(project, 0, 60);
+    project.tracks().last().muted = true;
+    QVERIFY(drift::bakeFingerprint(project, 0, 60) != withAudio);
+    project.tracks().last().muted = false;
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), withAudio);
+    project.tracks().last().solo = true;
+    QVERIFY(drift::bakeFingerprint(project, 0, 60) != withAudio);
+    project.tracks().last().solo = false;
+    QCOMPARE(drift::bakeFingerprint(project, 0, 60), withAudio);
+}
+
+void EditorStateTest::bakeStaysFreshAfterMuteSoloAndExclude()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const QString org = QCoreApplication::organizationName();
+    const QString app = QCoreApplication::applicationName();
+    QCoreApplication::setOrganizationName(QStringLiteral("DriftEditorStateTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("DriftEditorStateTest"));
+    // cacheRoot() is fixed once per process: always remove the file.
+    const QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString path = QDir(drift::cacheRoot()).filePath(QStringLiteral("bakes/%1.driftbake").arg(uuid));
+    const auto cleanup = qScopeGuard([&] {
+        QFile::remove(path);
+        QCoreApplication::setOrganizationName(org);
+        QCoreApplication::setApplicationName(app);
+        QStandardPaths::setTestModeEnabled(false);
+    });
+
+    AssetLibrary library;
+    TestController state(&library);
+    state.project()->tracks().clear();
+    for (const QString &id : {QStringLiteral("t1"), QStringLiteral("t2")}) {
+        drift::Track track{.type = drift::TrackType::Shape};
+        track.id = id;
+        state.project()->tracks().append(track);
+    }
+    state.project()->tracks()[0].clips.append(boxShape(QStringLiteral("in"), QRectF(0, 0, 100, 100)));
+    state.project()->setId(uuid);
+    const int fps = state.project()->fps();
+    QVERIFY(QDir().mkpath(QFileInfo(path).absolutePath()));
+    {
+        auto file = drift::BakeFile::open(path);
+        QVERIFY(file);
+        const QString id = file->beginBake(0, fps, 2, 2, 1, QByteArrayLiteral("x"),
+                                           drift::bakeFingerprint(*state.project(), 0, fps));
+        QVERIFY(!id.isEmpty());
+        QVERIFY(file->appendGop(id, 0, QByteArray(fps, 'x'), QVector<quint32>(fps, 1)));
+        QVERIFY(file->commit());
+    }
+    state.notifyTracksChanged();
+    QCOMPARE(state.bakes()->bakes().size(), 1);
+    QVERIFY(state.bakes()->staleBakesIn(0, 1e9).isEmpty());
+
+    state.setTrackMuted(0, true);
+    QVERIFY(state.bakes()->staleBakesIn(0, 1e9).isEmpty());
+    state.setTrackSolo(0, true);
+    QVERIFY(state.bakes()->staleBakesIn(0, 1e9).isEmpty());
+    state.setTrackExcludedFromExport(0, true);
+    QVERIFY(state.bakes()->staleBakesIn(0, 1e9).isEmpty());
+    state.setTrackMuted(1, true);
+    state.setTrackSolo(1, true);
+    state.setTrackExcludedFromExport(1, true);
+    QVERIFY(state.bakes()->staleBakesIn(0, 1e9).isEmpty());
+
+    // Hiding the track with nothing in the bake's range leaves it fresh too.
+    state.setTrackHidden(1, true);
+    QVERIFY(state.bakes()->staleBakesIn(0, 1e9).isEmpty());
+    state.undo();
+
+    state.setTrackHidden(0, true);
+    QCOMPARE(state.bakes()->staleBakesIn(0, 1e9).size(), 1);
+    state.undo();
+    QVERIFY(state.bakes()->staleBakesIn(0, 1e9).isEmpty());
+}
+
+// A transform layer covers tracks by position down to its span-end track, so moving that track
+// (which has nothing in the range) past an in-range track changes what the layer moves.
+void EditorStateTest::bakeFingerprintTracksTransformSpanEndMoves()
+{
+    drift::Project project;
+    project.setResolution(1280, 720);
+    project.setFps(30);
+    project.tracks().clear();
+    drift::Track layer{.type = drift::TrackType::Adjustment};
+    layer.id = QStringLiteral("L");
+    layer.adjustmentScope = drift::AdjustmentScope::Range;
+    layer.spanEndTrackId = QStringLiteral("E");
+    drift::Track a{.type = drift::TrackType::Shape};
+    a.id = QStringLiteral("A");
+    drift::Track e{.type = drift::TrackType::Shape};
+    e.id = QStringLiteral("E");
+    drift::Track b{.type = drift::TrackType::Shape};
+    b.id = QStringLiteral("B");
+    layer.clips.append(boxShape(QStringLiteral("l"), QRectF(0, 0, 100, 100)));
+    a.clips.append(boxShape(QStringLiteral("a"), QRectF(0, 0, 100, 100)));
+    b.clips.append(boxShape(QStringLiteral("b"), QRectF(0, 0, 100, 100)));
+    drift::Clip far = boxShape(QStringLiteral("e"), QRectF(0, 0, 100, 100));
+    far.timelineStart = drift::secondsToUs(10.0);
+    e.clips.append(far);
+    project.tracks() = {layer, a, e, b};
+    QVERIFY(project.tracks()[0].isTransformLayer());
+
+    const QByteArray before = drift::bakeFingerprint(project, 0, 60);
+    project.tracks().move(2, 3);
+    QVERIFY(drift::bakeFingerprint(project, 0, 60) != before);
 }
 
 QTEST_MAIN(EditorStateTest)

@@ -1788,6 +1788,14 @@
         <source>Analyzing…</source>
         <translation>විශ්ලේෂණය කරමින්…</translation>
     </message>
+    <message>
+        <source>Close gap on all tracks</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Close the gap after the clip on every free track</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>AndroidMyVideosTab</name>
@@ -2261,6 +2269,10 @@
         <translation>විචල්‍ය රාමු අනුපාතය. මෙම ක්ලිපය එහි ශ්‍රව්‍ය සමඟ අසමමුහුර්ත විය හැක. එය මත දකුණු ක්ලික් කර &apos;සංස්කරණයට පහසු ආකෘතියකට පරිවර්තනය කරන්න&apos; තෝරන්න.</translation>
     </message>
     <message>
+        <source>Media file not found. Use Replace media… on this item to point it at the file again.</source>
+        <translation type="unfinished">මාධ්‍ය ගොනුව හමු නොවීය. නැවත එම ගොනුව වෙත යොමු කිරීමට මෙම අයිතමය මත &apos;මාධ්‍ය ප්‍රතිස්ථාපනය කරන්න…&apos; භාවිතා කරන්න.</translation>
+    </message>
+    <message>
         <source>Transform layer: moves, scales and turns every track its bracket covers</source>
         <translation>පරිවර්තන ස්තරය: එහි වරහන මඟින් ආවරණය වන සෑම ට්‍රැකයක්ම ගෙනයයි, පරිමාණය කරයි සහ කරකවයි</translation>
     </message>
@@ -2287,6 +2299,10 @@
     <message>
         <source>Close gap</source>
         <translation>හිඩැස වසන්න</translation>
+    </message>
+    <message>
+        <source>Close gap on all tracks</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2459,6 +2475,14 @@
         <translation>සජීවිකරණය</translation>
     </message>
     <message>
+        <source>Edit this animation in Forge</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Create a new animation in Forge</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Fade and motion combine — fade also ramps the volume.</source>
         <translation>Fade සහ චලනය එකතු වේ — fade මඟින් ශබ්ද මට්ටමද වෙනස් කරයි.</translation>
     </message>
@@ -2598,6 +2622,10 @@
         <translation>වත්මන් වේලාවේදී තෝරාගත් ක්ලිපය බෙදන්න</translation>
     </message>
     <message>
+        <source>Split every track at current time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add transition at playhead</source>
         <translation>ප්ලේහෙඩය ඇති ස්ථානයේ සංක්‍රාන්තියක් එක් කරන්න</translation>
     </message>
@@ -2692,6 +2720,18 @@
     <message>
         <source>Select tool</source>
         <translation>තේරීමේ මෙවලම</translation>
+    </message>
+    <message>
+        <source>Lasso mask tool</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Intelligent scissors mask tool</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Magic wand mask tool</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Search…</source>
@@ -2816,6 +2856,70 @@
     <message>
         <source>Clip duplicated</source>
         <translation>ක්ලිපය අනුපිටපත් කරන ලදී</translation>
+    </message>
+    <message>
+        <source>Detect beats first</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Split on beats</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No beats fall inside the clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Split on %n beat(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No cuts were made</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Snapped %n clip(s) to the beat</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No clips were close enough to a beat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Beat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Added %n marker(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No new markers to add</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No gaps to close</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Gaps are blocked by linked clips</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Closed %n gap(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
     </message>
     <message>
         <source>Your text here</source>
@@ -3091,6 +3195,10 @@
         <translation>%1 dB</translation>
     </message>
     <message>
+        <source>A locked track would be changed or deleted. Unlock it first</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Media rotated</source>
         <translation>මාධ්‍ය කරකවන ලදී</translation>
     </message>
@@ -3101,6 +3209,10 @@
     <message>
         <source>Paste attributes…</source>
         <translation>ගුණාංග අලවන්න…</translation>
+    </message>
+    <message>
+        <source>Split selection, or every track, at current time</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Go to previous cut point</source>
@@ -3295,6 +3407,10 @@
         <translation>හිඩැස් වසන ලදී</translation>
     </message>
     <message>
+        <source>Slip clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Clips swapped</source>
         <translation>ක්ලිප් මාරු කරන ලදී</translation>
     </message>
@@ -3337,6 +3453,17 @@
     <message>
         <source>Transition curve updated</source>
         <translation>සංක්‍රාන්ති වක්‍රය යාවත්කාලීන කරන ලදී</translation>
+    </message>
+    <message numerus="yes">
+        <source>Imported “%1” (%n sticker(s))</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Sticker pack removed</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Shape added</source>
@@ -3417,6 +3544,78 @@
     <message>
         <source>Camera uses its own rotation</source>
         <translation>කැමරාව එහිම භ්‍රමණය භාවිත කරයි</translation>
+    </message>
+    <message>
+        <source>Dolly in</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Dolly out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Push in (zoom)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pull out (zoom)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pan left</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pan right</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tilt up</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tilt down</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Truck left</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Truck right</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Crane up</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Crane down</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Orbit left</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Orbit right</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Camera move</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>That move changes nothing</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select a camera clip first</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The camera clip does not cover that span</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Edit clip</source>
@@ -4361,6 +4560,14 @@
         <translation>කීෆ්‍රේම සකසන ලදී</translation>
     </message>
     <message>
+        <source>Reframed, but the crop enlarges the source %1x</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reframed the clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Reset camera</source>
         <translation>කැමරාව යළි සකසන්න</translation>
     </message>
@@ -4782,6 +4989,14 @@
         <translation>පොත් සලකුණ යාවත්කාලීන විය</translation>
     </message>
     <message>
+        <source>Colour bookmark</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bookmark colour changed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>No video at the current time</source>
         <translation>වත්මන් වේලාවේ වීඩියෝවක් නැත</translation>
     </message>
@@ -5042,6 +5257,104 @@
         <source>Clip labelled</source>
         <translation>ක්ලිපය ලේබල් කරන ලදී</translation>
     </message>
+    <message>
+        <source>%1 is an adjustment track; its clips follow the clips they apply to</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No gap at %1 s</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>a clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track %1 is locked</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 is locked</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip %1 sits in the gap on track %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 sits in the gap on %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Closing would push clip %1 onto another</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Closing would push %1 onto another clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Close gap on all tracks</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Camera</source>
+        <translation type="unfinished">කැමරාව</translation>
+    </message>
+    <message>
+        <source>Audio FX</source>
+        <translation type="unfinished">ශ්‍රව්‍ය ප්‍රයෝග</translation>
+    </message>
+    <message>
+        <source>Mask</source>
+        <translation type="unfinished">ආවරණය (Mask)</translation>
+    </message>
+    <message>
+        <source>Effects</source>
+        <translation type="unfinished">ප්‍රයෝග</translation>
+    </message>
+    <message>
+        <source>Transform %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Video %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Text %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Subtitle %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Graphic %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Adjustment %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Gap closed on %n track(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Gap closed on %n track(s). Not moved: %1</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>AppSettingsMenu</name>
@@ -5292,6 +5605,14 @@
         <translation>මාධ්‍යය අසල ගොනු සුරැකීමට නොහැකි විය</translation>
     </message>
     <message>
+        <source>Couldn’t save to the proxy folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift can’t write to the proxy folder below. It may be unplugged or read-only. New proxies and reversed clips go to Drift’s cache until it’s back.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>OK</source>
         <translation>හරි</translation>
     </message>
@@ -5533,6 +5854,45 @@
         <translation>නිශ්ශබ්දතාව තත්පර %1ක් ඉවත් කරන ලදී</translation>
     </message>
     <message>
+        <source>No audio on the other tracks under this clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Voice detection needs the Voice activity (silero.vad) addon. Install it from the addon store, or use level detection.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Voice detection could not run: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Finding speech…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Auto duck cancelled</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation type="unfinished">අවලංගු කෙරිණි</translation>
+    </message>
+    <message>
+        <source>Auto duck</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Ducked music under %n passage(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No speech found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Select exactly two clips with audio to sync</source>
         <translation>සමමුහුර්ත කිරීමට ශ්‍රව්‍ය සහිත ක්ලිප් දෙකක් පමණක් තෝරන්න</translation>
     </message>
@@ -5610,6 +5970,10 @@
     <message>
         <source>Install a custom audio effect or effect from a .driftfx or zip made in Drift Forge</source>
         <translation>.driftfx එකකින් හෝ Drift Forge හි සාදන ලද zip එකකින් අභිරුචි ශ්‍රව්‍ය ප්‍රයෝගයක් හෝ ප්‍රයෝගයක් ස්ථාපනය කරන්න</translation>
+    </message>
+    <message>
+        <source>Create a new audio effect in Audio Forge</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>My Audio Effects</source>
@@ -5696,6 +6060,10 @@
         <source>Add to favorites</source>
         <translation>ප්‍රියතමයන්ට එක් කරන්න</translation>
     </message>
+    <message>
+        <source>Edit in Forge</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>AudioEffectsInspector</name>
@@ -5738,6 +6106,427 @@
     <message>
         <source>Audio effect settings</source>
         <translation>ශ්‍රව්‍ය ප්‍රයෝග සැකසීම්</translation>
+    </message>
+</context>
+<context>
+    <name>AudioForgeAuditionBar</name>
+    <message>
+        <source>Valid</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>%n problem(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Use selection</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation type="unfinished">නවත්වන්න</translation>
+    </message>
+    <message>
+        <source>Loop play</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Follow selection</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pick an audio or video clip on the timeline to hear the pedalboard on it. Loop play repeats its first four seconds.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>AudioForgeController</name>
+    <message>
+        <source>Move nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio wiring follows pedal order. Drag a pedal to a new place or delete it.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Delete nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Duplicate nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Paste nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add node</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit value</source>
+        <translation type="unfinished">අගය සංස්කරණය කරන්න</translation>
+    </message>
+    <message>
+        <source>Switch on</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bypass</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unexpose %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Expose %1 as slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add lane</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove last lane</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove modulation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lane %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Expose as slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unexpose slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove lane</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit lane</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit steps</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit depth</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cannot open %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>That recording is larger than 16 MB.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Impulse responses must be WAV files.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select a convolution reverb first.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Import impulse response</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reorder sliders</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save preset</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Delete preset</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use lowercase letters, digits, underscores and dots, starting with a letter or digit.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unknown field.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit details</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This package was not made in Forge.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Name the package</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 is already installed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 already exists and is not a package folder.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>That project is not an audio effect.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select an audio clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select an audio clip first.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>AudioForgeGraphPanel</name>
+    <message>
+        <source>Audio Forge graph</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>New audio effect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open a saved audio effect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation type="unfinished">අහෝසි කරන්න</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation type="unfinished">නැවත කරන්න</translation>
+    </message>
+    <message>
+        <source>Install</source>
+        <translation type="unfinished">ස්ථාපනය කරන්න</translation>
+    </message>
+    <message>
+        <source>Install it into the audio effects browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation type="unfinished">නිර්යාත කරන්න</translation>
+    </message>
+    <message>
+        <source>Installed “%1”</source>
+        <translation type="unfinished">“%1” ස්ථාපනය කරන ලදී</translation>
+    </message>
+    <message>
+        <source>Replace existing?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Replace</source>
+        <translation type="unfinished">ප්‍රතිස්ථාපනය කරන්න</translation>
+    </message>
+    <message>
+        <source>“%1” is already installed. Replace it with this version?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export .driftfx…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export .driftfx</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift package (*.driftfx)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation type="unfinished">%1 වෙත නිර්යාත කරන ලදී</translation>
+    </message>
+    <message>
+        <source>Export folder…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No saved projects yet</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>AudioForgeInspectorPanel</name>
+    <message>
+        <source>Audio Forge inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sliders</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Details</source>
+        <translation type="unfinished">විස්තර</translation>
+    </message>
+</context>
+<context>
+    <name>AudioForgeNodeTab</name>
+    <message>
+        <source>Select a single node in the graph to edit its settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation type="unfinished">මකන්න</translation>
+    </message>
+    <message>
+        <source>The clip&apos;s sound enters the board here.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Whatever reaches this node is what you hear.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Mixes the lanes of its split back into one sound. It follows the split.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bypass</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Slider: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Expose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unexpose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Modulated</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Import recording…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Import impulse response</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WAV audio (*.wav)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>A short WAV recording of a room, spring or plate. Its length sets the reverb tail.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lane levels</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add lane</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove last lane</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Steps</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fewer steps</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>More steps</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Moves</source>
+        <translation type="unfinished">චලනයන්</translation>
+    </message>
+    <message>
+        <source>Moved by</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation type="unfinished">ඉවත් කරන්න</translation>
+    </message>
+    <message>
+        <source>Depth</source>
+        <translation type="unfinished">ගැඹුර (Depth)</translation>
+    </message>
+</context>
+<context>
+    <name>AudioForgePalettePanel</name>
+    <message>
+        <source>Audio Forge pedals</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search pedals</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -5854,8 +6643,124 @@
         <translation>%1 LUFS වෙත සාමාන්‍යකරණය කරන ලදී</translation>
     </message>
     <message>
+        <source>%1 dB</source>
+        <translation type="unfinished">%1 dB</translation>
+    </message>
+    <message>
+        <source>%1%</source>
+        <translation type="unfinished">%1%</translation>
+    </message>
+    <message>
+        <source>%1 ms</source>
+        <translation type="unfinished">%1 ms</translation>
+    </message>
+    <message>
+        <source>Ducked</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Audio Mixer</source>
         <translation>ශ්‍රව්‍ය මිශ්‍රකය (Audio Mixer)</translation>
+    </message>
+    <message>
+        <source>Ducking</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lower the selected music clip while other tracks are speaking</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Duck against</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>All other tracks</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The tracks whose audio lowers the music</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Detect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Auto</source>
+        <translation type="unfinished">ස්වයංක්‍රීය</translation>
+    </message>
+    <message>
+        <source>Level</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Voice</source>
+        <translation type="unfinished">කටහඬ</translation>
+    </message>
+    <message>
+        <source>Auto uses voice detection when installed, otherwise loudness. Voice ignores music and noise.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Auto uses loudness only. Install the Voice activity (silero.vad) addon to enable Voice detection.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preset</source>
+        <translation type="unfinished">පෙරසැකසුම</translation>
+    </message>
+    <message>
+        <source>Gentle</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Standard</source>
+        <translation type="unfinished">සම්මත</translation>
+    </message>
+    <message>
+        <source>Voiceover</source>
+        <translation type="unfinished">හඬ කැවීම (Voiceover)</translation>
+    </message>
+    <message>
+        <source>Silence</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom</source>
+        <translation type="unfinished">අභිරුචි</translation>
+    </message>
+    <message>
+        <source>Reduce by</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sensitivity</source>
+        <translation type="unfinished">සංවේදීතාව</translation>
+    </message>
+    <message>
+        <source>Fade down</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fade up</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Duck music</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lower the selected clip under the other tracks&apos; audio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select a music clip with other audio overlapping it</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation type="unfinished">අවලංගු කරන්න</translation>
     </message>
     <message>
         <source>Measuring… %1%</source>
@@ -6123,6 +7028,10 @@
         <translation>කථනය %1  ·  සංගීතය %2</translation>
     </message>
     <message>
+        <source>Bands</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Add speech &amp; music</source>
         <translation>කථනය සහ සංගීතය එක් කරන්න</translation>
     </message>
@@ -6212,6 +7121,10 @@
     <message>
         <source>Work area set</source>
         <translation>වැඩ ප්‍රදේශය සකසන ලදී</translation>
+    </message>
+    <message>
+        <source>Bakes are of the main timeline. Switch to it to bake.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -6358,6 +7271,10 @@
     <message>
         <source>Delete all bakes</source>
         <translation>සියලුම බේක් කිරීම් මකන්න</translation>
+    </message>
+    <message>
+        <source>Bakes are of the main timeline. Switch to it to bake.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -6617,6 +7534,14 @@
     <message>
         <source>Zoom, focal length (36 × 24 mm film) and field of view are one setting in three units. Zooming does not move the camera. While this camera is running it replaces each clip&apos;s own Perspective value, because a scene has one viewer.</source>
         <translation>විශාලනය (Zoom), නාභීය දුර (36 × 24 mm පටල) සහ දෘෂ්ටි ක්ෂේත්‍රය යනු ඒකක තුනකින් දැක්වෙන එකම සැකසුමකි. විශාලනය කිරීමෙන් කැමරාව චලනය නොවේ. මෙම කැමරාව ක්‍රියාත්මක වන විට එය එක් එක් ක්ලිපයේම Perspective අගය ප්‍රතිස්ථාපනය කරයි, මන්ද දර්ශනයකට ඇත්තේ එක් නරඹන්නෙකු පමණි.</translation>
+    </message>
+    <message>
+        <source>Add camera move</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Keys a named move (dolly, pan, crane, orbit…) over the work area, else this clip, from the camera&apos;s current framing.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Reset camera</source>
@@ -8482,6 +9407,10 @@
         <translation>“%1” ට ගැලපෙන ප්‍රයෝග නැත.</translation>
     </message>
     <message>
+        <source>Create a new effect in Forge</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Delete effect</source>
         <translation>ප්‍රයෝගය මකා දමන්න</translation>
     </message>
@@ -8573,6 +9502,10 @@
     <message>
         <source>Add to favorites</source>
         <translation>ප්‍රියතමයන්ට එක් කරන්න</translation>
+    </message>
+    <message>
+        <source>Edit in Forge</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Delete from My Effects</source>
@@ -9071,6 +10004,10 @@
     <message>
         <source>Save as preset…</source>
         <translation>පෙරසැකසුමක් ලෙස සුරකින්න…</translation>
+    </message>
+    <message>
+        <source>Remove all</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -10184,6 +11121,500 @@
     </message>
 </context>
 <context>
+    <name>ForgeCodeTab</name>
+    <message>
+        <source>Copy</source>
+        <translation type="unfinished">පිටපත් කරන්න</translation>
+    </message>
+    <message>
+        <source>Nothing compiled yet.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>ForgeController</name>
+    <message>
+        <source>Move nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Delete nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Duplicate nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Paste nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add node</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit value</source>
+        <translation type="unfinished">අගය සංස්කරණය කරන්න</translation>
+    </message>
+    <message>
+        <source>Unexpose %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Expose %1 as slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Disconnect all</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preview %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preview this node</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preview output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit option</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Expose as slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unexpose slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reorder sliders</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save preset</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Delete preset</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use lowercase letters, digits, underscores and dots, starting with a letter or digit.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unknown field.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Edit details</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This package was not made in Forge.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Name the package</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 is already installed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 already exists and is not a package folder.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cannot open %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio effects are not supported yet.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Built-in sample</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cut: %1 to %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clip: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>ForgeDetailsTab</name>
+    <message>
+        <source>Name</source>
+        <translation type="unfinished">නම</translation>
+    </message>
+    <message>
+        <source>Identifier</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Category</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Description</source>
+        <translation type="unfinished">විස්තරය</translation>
+    </message>
+    <message>
+        <source>Author</source>
+        <translation type="unfinished">කර්තෘ</translation>
+    </message>
+    <message>
+        <source>Version</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Plays as</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>In</source>
+        <translation type="unfinished">පිවිසුම (In)</translation>
+    </message>
+    <message>
+        <source>Out</source>
+        <translation type="unfinished">පිටවීම (Out)</translation>
+    </message>
+    <message>
+        <source>Default duration</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>ms</source>
+        <translation type="unfinished">ms</translation>
+    </message>
+</context>
+<context>
+    <name>ForgeGraphPanel</name>
+    <message>
+        <source>Forge node graph</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Effect</source>
+        <translation type="unfinished">ප්‍රයෝගය</translation>
+    </message>
+    <message>
+        <source>Transition</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Animation</source>
+        <translation type="unfinished">සජීවිකරණය</translation>
+    </message>
+    <message>
+        <source>New %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open a saved Forge project</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation type="unfinished">අහෝසි කරන්න</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation type="unfinished">නැවත කරන්න</translation>
+    </message>
+    <message>
+        <source>Install</source>
+        <translation type="unfinished">ස්ථාපනය කරන්න</translation>
+    </message>
+    <message>
+        <source>Install it into the effect, transition or animation browsers</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export</source>
+        <translation type="unfinished">නිර්යාත කරන්න</translation>
+    </message>
+    <message>
+        <source>Installed “%1”</source>
+        <translation type="unfinished">“%1” ස්ථාපනය කරන ලදී</translation>
+    </message>
+    <message>
+        <source>Replace existing?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Replace</source>
+        <translation type="unfinished">ප්‍රතිස්ථාපනය කරන්න</translation>
+    </message>
+    <message>
+        <source>“%1” is already installed. Replace it with this version?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export .driftfx…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export .driftfx</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift package (*.driftfx)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exported to %1</source>
+        <translation type="unfinished">%1 වෙත නිර්යාත කරන ලදී</translation>
+    </message>
+    <message>
+        <source>Export folder…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No saved projects yet</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>ForgeInspectorPanel</name>
+    <message>
+        <source>Forge inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Node</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sliders</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Details</source>
+        <translation type="unfinished">විස්තර</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>ForgeNodeTab</name>
+    <message>
+        <source>Slider: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select a single node in the graph to edit its settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connected</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Expose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unexpose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Comma-separated choices</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Not exposed</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>ForgePalettePanel</name>
+    <message>
+        <source>Forge node palette</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>ForgePreviewBar</name>
+    <message>
+        <source>Plays across the cut; Loop repeats the transition window.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loop repeats the in or out window of the clip.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shown on the target clip with the current slider values.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Previewing a single node</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Compiles</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>%n error(s)</source>
+        <translation type="unfinished">
+            <numerusform>දෝෂ %nක්</numerusform>
+            <numerusform>දෝෂ %nක්</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Use selection</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation type="unfinished">නවත්වන්න</translation>
+    </message>
+    <message>
+        <source>Loop play</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preview output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Follow selection</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>In</source>
+        <translation type="unfinished">පිවිසුම (In)</translation>
+    </message>
+    <message>
+        <source>Out</source>
+        <translation type="unfinished">පිටවීම (Out)</translation>
+    </message>
+    <message>
+        <source>ms</source>
+        <translation type="unfinished">ms</translation>
+    </message>
+</context>
+<context>
+    <name>ForgeSlidersTab</name>
+    <message>
+        <source>Reset values</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preset name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save preset</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Delete preset</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No sliders yet. Right-click a node and choose Expose as slider, or use Expose in the Node tab.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation type="unfinished">ලේබලය</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation type="unfinished">ඉහළට ගෙන යන්න</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation type="unfinished">පහළට ගෙන යන්න</translation>
+    </message>
+    <message>
+        <source>Remove slider</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>identifier</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Min</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Max</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation type="unfinished">පෙරනිමි</translation>
+    </message>
+    <message>
+        <source>On by default</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Default color</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Comma-separated options</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Group</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation type="unfinished">පෙරදසුන</translation>
+    </message>
+    <message>
+        <source>Nothing uses this slider.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>GeneralInspector</name>
     <message>
         <source>Video</source>
@@ -10765,9 +12196,115 @@
         <source>Start</source>
         <translation>ආරම්භය</translation>
     </message>
+    <message numerus="yes">
+        <source>%n step(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n state(s) in memory</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
     <message>
         <source>History</source>
         <translation>ඉතිහාසය</translation>
+    </message>
+    <message>
+        <source>Clear history…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clear history</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation type="unfinished">හිස් කරන්න</translation>
+    </message>
+    <message>
+        <source>Frees undo memory. Undone steps (redo) are dropped too, and cleared steps can&apos;t be restored.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Keep last steps</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Snapshots</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Named copies of the project at this step, kept outside the undo stack</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save snapshot…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save snapshot</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This project…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Undo history settings for this project</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No snapshots yet.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation type="unfinished">ප්‍රතිසාධනය කරන්න</translation>
+    </message>
+    <message>
+        <source>Before colour pass</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Restore snapshot</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Replaces the project with this snapshot. A snapshot that is no longer in the undo history starts a new history, so steps after it can&apos;t be restored.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>History settings for this project</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation type="unfinished">යොදන්න</translation>
+    </message>
+    <message>
+        <source>This project overrides the app&apos;s undo history settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Following the app&apos;s undo history settings (Settings, General).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Undo steps kept (-1 unlimited, 0 off)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save history with the project</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use app settings</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Nothing to undo yet. Your edits will be listed here.</source>
@@ -11212,6 +12749,10 @@
         <translation>ආවරණ මෘදු බව (Feather)</translation>
     </message>
     <message>
+        <source>Auto-smooth keyframes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Edit keyframe curve</source>
         <translation>කීෆ්‍රේම වක්‍රය සංස්කරණය කරන්න</translation>
     </message>
@@ -11289,6 +12830,18 @@
     <message>
         <source>Find beats and hits in the audio under this clip</source>
         <translation>මෙම ක්ලිපය යටතේ ඇති ශ්‍රව්‍යයේ බීට් සහ හිට්ස් හඳුනාගන්න</translation>
+    </message>
+    <message>
+        <source>Add timeline markers at the detected beats</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Auto-smooth the focused curve</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Auto-smooth every shown curve</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>More keyframe tools</source>
@@ -11402,6 +12955,10 @@
         <translation>කීෆ්‍රේම සංස්කාරකය</translation>
     </message>
     <message>
+        <source>Auto-smooth keyframes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Scale</source>
         <translation>පරිමාණය (Scale)</translation>
     </message>
@@ -11450,6 +13007,10 @@
     <message>
         <source>Clear all keyframes of the selected properties</source>
         <translation>තෝරාගත් ගුණාංගවල සියලුම කීෆ්‍රේම හිස් කරන්න</translation>
+    </message>
+    <message>
+        <source>Auto-smooth the selected keyframes, or every key of the selected properties</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Lanes</source>
@@ -12686,6 +14247,22 @@
         <translation>%1 %</translation>
     </message>
     <message>
+        <source>Drag to draw an outline, release to fill it · Right-drag or Alt to subtract</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Click along an edge to place points · Right-click or Alt to subtract</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 points · Click the first point or Enter to close · Backspace to undo · Esc to cancel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Click to select a region of similar colour · Shift adds, Alt or right-click subtracts</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Paint to add · Right-drag or %1 to erase · [ ] or Shift-drag to resize · Ctrl+scroll to zoom</source>
         <translation>එක් කිරීමට තීන්ත ආලේප කරන්න · මැකීමට දකුණු-ඇදීම හෝ %1 කරන්න · ප්‍රතිප්‍රමාණය කිරීමට [ ] හෝ Shift-ඇදීම · විශාලනය කිරීමට Ctrl+scroll</translation>
     </message>
@@ -12902,6 +14479,26 @@
         <translation>Cutout රාමුව නිවැරදි කරන ලදී</translation>
     </message>
     <message>
+        <source>Lasso selection</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Scissors selection</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This clip has no picture to follow edges on</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This clip has no picture to select from</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Magic wand</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Could not save the brush mask. The next stroke will try again</source>
         <translation>බුරුසු ආවරණය සුරැකීමට නොහැකි විය. මීළඟ පහරේදී නැවත උත්සාහ කරනු ඇත</translation>
     </message>
@@ -13057,6 +14654,18 @@
         <translation>බුරුසුව</translation>
     </message>
     <message>
+        <source>Lasso</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Scissors</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Magic wand</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>AI object</source>
         <translation>AI වස්තුව</translation>
     </message>
@@ -13071,6 +14680,38 @@
     <message>
         <source>Off</source>
         <translation>අක්‍රියයි</translation>
+    </message>
+    <message>
+        <source>Click to select the region of similar colour. It is added to the same still mask the Brush paints.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drag around an area to fill it into the same still mask the Brush paints.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Click along an object&apos;s edge; the outline snaps to it. Close the outline to fill it into the same still mask the Brush paints.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tolerance</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Wand tolerance</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Contiguous</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Click adds to the mask. Shift also adds</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Click removes from the mask. Alt or right-click also subtracts</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Size</source>
@@ -13111,6 +14752,10 @@
     <message>
         <source>Left-drag erases</source>
         <translation>වම්-ක්ලික් කර ඇදීමෙන් මකා දමයි</translation>
+    </message>
+    <message>
+        <source>Fill closed loops</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Pressure changes size</source>
@@ -13628,8 +15273,8 @@
         <translation>විෂය ලුහුබැඳ ප්‍රතිඵලය ආවරණ ස්තරයක් ලෙස රඳවන්න</translation>
     </message>
     <message>
-        <source>Select a video clip first</source>
-        <translation>පළමුව වීඩියෝ ක්ලිප් එකක් තෝරන්න</translation>
+        <source>Select a video or image clip first</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Download people cutout (about 20 MB)</source>
@@ -13662,13 +15307,6 @@
     <message>
         <source>All files (*)</source>
         <translation>සියලු ගොනු (*)</translation>
-    </message>
-</context>
-<context>
-    <name>McpController</name>
-    <message>
-        <source>Relink media</source>
-        <translation>මාධ්‍ය නැවත සම්බන්ධ කරන්න</translation>
     </message>
 </context>
 <context>
@@ -13836,6 +15474,14 @@
         <translation>මාධ්‍ය ප්‍රතිස්ථාපනය කරන්න…</translation>
     </message>
     <message>
+        <source>Reload from disk</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Couldn’t reload this media. It may not be a file on disk, or is already being read.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Use as mask</source>
         <translation>ආවරණයක් ලෙස භාවිතා කරන්න</translation>
     </message>
@@ -13980,6 +15626,22 @@
         <translation>මාධ්‍ය සොයන්න</translation>
     </message>
     <message>
+        <source>Search by sound, e.g. heavy rain</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search by sound</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search by sound needs the audio tagging add-on. Click to get it.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clear search</source>
+        <translation type="unfinished">සෙවීම හිස් කරන්න</translation>
+    </message>
+    <message>
         <source>Expand all</source>
         <translation>සියල්ල විහිදන්න</translation>
     </message>
@@ -14018,6 +15680,22 @@
     <message>
         <source>This folder is empty</source>
         <translation>මෙම ෆෝල්ඩරය හිස්ය</translation>
+    </message>
+    <message>
+        <source>Listening to the bin…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Type a sound, like heavy rain or applause, and press Enter.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Not a sound Drift knows. Closest: %1</source>
+        <translation type="unfinished">Drift හඳුනන ශබ්දයක් නොවේ. ආසන්නතම: %1</translation>
+    </message>
+    <message>
+        <source>Nothing in the bin sounds like that.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Drag media here, or import more.</source>
@@ -14323,6 +16001,14 @@
     <message>
         <source>Level (0°)</source>
         <translation>මට්ටම (0°)</translation>
+    </message>
+    <message>
+        <source>Auto-fit</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The crop box shrinks to stay inside the straightened picture</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Pause</source>
@@ -14949,10 +16635,91 @@
     </message>
 </context>
 <context>
+    <name>NodeGraphEditor</name>
+    <message>
+        <source>Zoom out</source>
+        <translation type="unfinished">කුඩා කරන්න</translation>
+    </message>
+    <message>
+        <source>Zoom in</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fit all</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Minimap</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add node…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation type="unfinished">අලවන්න</translation>
+    </message>
+    <message>
+        <source>Disconnect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Select all</source>
+        <translation type="unfinished">සියල්ල තෝරන්න</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation type="unfinished">අහෝසි කරන්න</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation type="unfinished">නැවත කරන්න</translation>
+    </message>
+    <message>
+        <source>Open inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation type="unfinished">පිටපත් කරන්න</translation>
+    </message>
+    <message>
+        <source>Duplicate</source>
+        <translation type="unfinished">අනුපිටපත් කරන්න</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation type="unfinished">මකන්න</translation>
+    </message>
+</context>
+<context>
+    <name>NodeInputControl</name>
+    <message>
+        <source>Randomize</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>NodeMinimap</name>
+    <message>
+        <source>Empty</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>NotificationHistoryRow</name>
     <message>
         <source>%1  (×%2)</source>
         <translation>%1  (×%2)</translation>
+    </message>
+    <message>
+        <source>Copied</source>
+        <translation type="unfinished">පිටපත් කරන ලදී</translation>
+    </message>
+    <message>
+        <source>Copy message</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -15422,6 +17189,26 @@
 </context>
 <context>
     <name>PreferencesController</name>
+    <message>
+        <source>Choosing a folder isn’t supported on this device.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose a folder by its full path.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>That folder doesn’t exist.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>That is Drift’s own cache. Choose another folder, or pick “In Drift’s cache”.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift can’t write to that folder.</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <source>Faster preview takes effect after you restart Drift.</source>
         <translation>වේගවත් පෙරදසුන Drift නැවත ආරම්භ කිරීමෙන් පසුව ක්‍රියාත්මක වේ.</translation>
@@ -16194,10 +17981,6 @@ If playback stutters, try another.</source>
         <translation>මෙම ව්‍යාපෘතිය ස්ථාපනය කර නොමැති &quot;%1&quot; භාවිත කරයි — එය නොපෙන්වයි. එය ස්ථාපනය කිරීමට අමතර අංග විවෘත කරන්න.</translation>
     </message>
     <message>
-        <source>This project uses %1 effects or transitions that aren’t installed (%2%3) — they won’t show. Open Extras to install them.</source>
-        <translation>මෙම ව්‍යාපෘතිය ස්ථාපනය කර නොමැති ප්‍රයෝග හෝ සංක්‍රාන්ති %1ක් භාවිත කරයි (%2%3) — ඒවා නොපෙන්වයි. ඒවා ස්ථාපනය කිරීමට අමතර අංග විවෘත කරන්න.</translation>
-    </message>
-    <message>
         <source>, …</source>
         <translation>, …</translation>
     </message>
@@ -16251,6 +18034,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Failed to open Premiere Pro project</source>
         <translation>Premiere Pro ව්‍යාපෘතිය විවෘත කිරීමට අසමත් විය</translation>
+    </message>
+    <message>
+        <source>This project uses %1 effects, transitions or animations that aren’t installed (%2%3) — they won’t show. Open Extras to install them.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Couldn’t write %1</source>
@@ -16389,6 +18176,152 @@ If playback stutters, try another.</source>
     <message>
         <source>Started new session</source>
         <translation>නව සැසියක් ආරම්භ කරන ලදී</translation>
+    </message>
+</context>
+<context>
+    <name>ProjectHealthDialog</name>
+    <message>
+        <source>Missing media</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing asset</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Asset mismatch</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Past end of media</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Orphaned effect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Broken link</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Dangling transition</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Empty lane</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Overlap</source>
+        <translation type="unfinished">අතිච්ඡාදනය (Overlap)</translation>
+    </message>
+    <message>
+        <source>Unused asset</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Project health</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation type="unfinished">වසන්න</translation>
+    </message>
+    <message numerus="yes">
+        <source>Relinked %n file(s), %1 still missing</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>Relinked %n file(s)</source>
+        <translation type="unfinished">
+            <numerusform>ගොනු %nක් නැවත සම්බන්ධ කරන ලදී</numerusform>
+            <numerusform>ගොනු %nක් නැවත සම්බන්ධ කරන ලදී</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Search folder for missing media</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove unused assets</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation type="unfinished">ඉවත් කරන්න</translation>
+    </message>
+    <message numerus="yes">
+        <source>Removed %n asset(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>These %n asset(s) are not used by any clip. Removing them can be undone.</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Relink folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Relink</source>
+        <translation type="unfinished">නැවත සම්බන්ධ කරන්න</translation>
+    </message>
+    <message>
+        <source>Missing files under the old folder are pointed at the same place under the new one.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Old folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>D:/footage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>New folder</source>
+        <translation type="unfinished">නව ෆෝල්ඩරය</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No problems found.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>%n finding(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>(first %1 listed)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove unused assets…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Relink folder…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search folder for missing media…</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -16992,6 +18925,21 @@ If playback stutters, try another.</source>
     </message>
 </context>
 <context>
+    <name>QuickAddPopup</name>
+    <message>
+        <source>Add and connect…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Search nodes…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No matching nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>QuickSetup</name>
     <message>
         <source>Drift setup</source>
@@ -17445,6 +19393,10 @@ If playback stutters, try another.</source>
         <translation>ව්‍යාපෘති ගුණාංග…</translation>
     </message>
     <message>
+        <source>Project health…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Close project</source>
         <translation>ව්‍යාපෘතිය වසන්න</translation>
     </message>
@@ -17852,6 +19804,32 @@ If playback stutters, try another.</source>
         <source>Scene detection cancelled</source>
         <translation>දර්ශන හඳුනාගැනීම අවලංගු විය</translation>
     </message>
+    <message>
+        <source>No scene cuts fall inside this clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Split into %n scene(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Scene</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message numerus="yes">
+        <source>Added %n marker(s)</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>No new markers to add</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>ScenesShotRow</name>
@@ -17885,6 +19863,22 @@ If playback stutters, try another.</source>
     <message>
         <source>Clear</source>
         <translation>හිස් කරන්න</translation>
+    </message>
+    <message>
+        <source>Split at scenes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cut the selected clip at every detected shot boundary</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add markers at scenes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drop a timeline marker at every detected shot boundary</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Identify objects</source>
@@ -18186,10 +20180,6 @@ If playback stutters, try another.</source>
 <context>
     <name>SegmentationController</name>
     <message>
-        <source>Select a video clip to cut out</source>
-        <translation>වෙන් කිරීමට වීඩියෝ ක්ලිපයක් තෝරන්න</translation>
-    </message>
-    <message>
         <source>Wait for the frame to finish loading</source>
         <translation>රාමුව පටවා අවසන් වන තෙක් රැඳී සිටින්න</translation>
     </message>
@@ -18252,6 +20242,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Cutout complete</source>
         <translation>විෂය වෙන් කිරීම සම්පූර්ණයි</translation>
+    </message>
+    <message>
+        <source>Select a video or image clip to cut out</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>That object mask changed while it was being refined</source>
@@ -19566,6 +21560,50 @@ If playback stutters, try another.</source>
         <translation>ප්‍රොක්සි විභේදනය</translation>
     </message>
     <message>
+        <source>Save proxies and reversed clips</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Where Drift saves the files it makes from your media. Changing the folder doesn’t move or delete anything. Proxies in the previous folder are no longer found; choosing that folder again finds them.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Folder for proxies</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Beside the original</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>In Drift’s cache</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>In this folder…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No folder chosen</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drift’s files in this folder: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>0 B</source>
+        <translation type="unfinished">0 B</translation>
+    </message>
+    <message>
+        <source>Drift’s cache is pruned when it passes its size limit.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Size of new proxies. Proxies made at another size are not used until you create them again.</source>
         <translation>නව ප්‍රොක්සිවල ප්‍රමාණය. වෙනත් ප්‍රමාණයකින් සාදන ලද ප්‍රොක්සි ඔබ ඒවා නැවත සාදන තුරු භාවිත නොවේ.</translation>
     </message>
@@ -19667,8 +21705,8 @@ If playback stutters, try another.</source>
         <translation>මවුස් රෝදය මඟින් කාලරේඛාවේ ගෙනයන දේ. අනෙක් දිශාව සඳහා Shift ඔබාගෙන සිටින්න; මැද-ක්ලික් කර ඇදීමෙන්ද පෑන් වේ.</translation>
     </message>
     <message>
-        <source>Tracks (up and down)</source>
-        <translation>ට්‍රැක් (ඉහළ සහ පහළ)</translation>
+        <source>Tracks, or time when they fit</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Time (left and right)</source>
@@ -20519,6 +22557,69 @@ If playback stutters, try another.</source>
     <message>
         <source>“%1” is already used by %2.</source>
         <translation>“%1” දැනටමත් %2 මඟින් භාවිත කෙරේ.</translation>
+    </message>
+</context>
+<context>
+    <name>SoundEffectDialog</name>
+    <message>
+        <source>Sound effect</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sound effects come from ElevenLabs. Add your API key in Settings to use them.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Allow sending prompts to ElevenLabs in Settings to use sound effects.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open settings</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Describe the sound</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Heavy wooden door creaking open</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Let the model pick the length</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Prompt influence</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Higher values follow the prompt more literally and vary less</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Make it loop seamlessly</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Place at the playhead</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Generate</source>
+        <translation type="unfinished">ජනනය කරන්න</translation>
+    </message>
+    <message>
+        <source>Billed by ElevenLabs to your account</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation type="unfinished">අවලංගු කරන්න</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation type="unfinished">වසන්න</translation>
     </message>
 </context>
 <context>
@@ -21688,6 +23789,14 @@ If playback stutters, try another.</source>
         <translation>ජනනය කිරීම නවත්වන්න</translation>
     </message>
     <message>
+        <source>Sound effect…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Generate a sound effect from a text prompt (ElevenLabs)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Record a voice</source>
         <translation>හඬක් පටිගත කරන්න</translation>
     </message>
@@ -22234,6 +24343,57 @@ If playback stutters, try another.</source>
     </message>
 </context>
 <context>
+    <name>StickerPackImport</name>
+    <message>
+        <source>The pack has too many images</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No .png or .webp images found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not create the sticker folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The pack is too large</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not write the sticker files</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not install the sticker pack</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom stickers</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not open %1</source>
+        <translation type="unfinished">%1 විවෘත කිරීමට නොහැකි විය</translation>
+    </message>
+    <message>
+        <source>%1 is not a .zip archive</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 has too many files</source>
+        <translation type="unfinished">%1 හි ගොනු අධික ප්‍රමාණයක් පවතී</translation>
+    </message>
+    <message>
+        <source>“%1” is not an imported sticker pack</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not delete “%1”</source>
+        <translation type="unfinished">“%1” මැකීමට නොහැකි විය</translation>
+    </message>
+</context>
+<context>
     <name>StickerPresetCard</name>
     <message>
         <source>%1 — click to add, or drag to the timeline or preview</source>
@@ -22255,12 +24415,36 @@ If playback stutters, try another.</source>
 <context>
     <name>StickersTab</name>
     <message>
+        <source>Import sticker pack</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zip archives (*.zip)</source>
+        <translation type="unfinished">Zip සංරක්ෂිත (*.zip)</translation>
+    </message>
+    <message>
         <source>Search stickers</source>
         <translation>ස්ටිකර් සොයන්න</translation>
     </message>
     <message>
         <source>More emoji</source>
         <translation>තවත් ඉමෝජි</translation>
+    </message>
+    <message>
+        <source>Import or manage sticker packs</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Import sticker pack (.zip)…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Import sticker folder…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remove “%1”</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>No sticker packs installed</source>
@@ -23420,6 +25604,62 @@ If playback stutters, try another.</source>
         <source>My style %1</source>
         <translation>මගේ විලාසය %1</translation>
     </message>
+    <message>
+        <source>Import animation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Animation presets (*.json *.lottie)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Couldn’t import that animation.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Imported, but some features aren’t supported: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Animation imported.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export animation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Animation preset (*.json)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Animation exported.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Couldn’t export the animation.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename animation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation type="unfinished">නම වෙනස් කරන්න</translation>
+    </message>
+    <message>
+        <source>Delete animation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation type="unfinished">මකන්න</translation>
+    </message>
+    <message>
+        <source>Remove “%1” from your imported animations? It is also cleared from the selected clip.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>TextInspectorAccentSection</name>
@@ -23577,6 +25817,29 @@ If playback stutters, try another.</source>
     <message>
         <source>Plays for every caption</source>
         <translation>සෑම උපසිරැසියක් සඳහාම ධාවනය වේ</translation>
+    </message>
+</context>
+<context>
+    <name>TextInspectorAnimatePage</name>
+    <message>
+        <source>Import…</source>
+        <translation type="unfinished">ආයාත කරන්න…</translation>
+    </message>
+    <message>
+        <source>Import an animation from a Lottie or exported preset file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rename…</source>
+        <translation type="unfinished">නම වෙනස් කරන්න…</translation>
+    </message>
+    <message>
+        <source>Export…</source>
+        <translation type="unfinished">නිර්යාත කරන්න…</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation type="unfinished">මකන්න</translation>
     </message>
 </context>
 <context>
@@ -24266,6 +26529,53 @@ If playback stutters, try another.</source>
     </message>
 </context>
 <context>
+    <name>TimelineAutoReframeDialog</name>
+    <message>
+        <source>Auto reframe</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reframe</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Track</source>
+        <translation type="unfinished">ලුහුබඳින්න</translation>
+    </message>
+    <message>
+        <source>Follow face</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Keep centred</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Follows the clip&apos;s face track. Without one, the crop stays centred.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shape</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Vertical 9:16</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Square 1:1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Portrait 4:5</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Wide 16:9</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>TimelineBakeContextMenu</name>
     <message>
         <source>Re-bake</source>
@@ -24316,6 +26626,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Rename…</source>
         <translation>නම වෙනස් කරන්න…</translation>
+    </message>
+    <message>
+        <source>Default colour</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Delete</source>
@@ -24381,6 +26695,22 @@ If playback stutters, try another.</source>
         <translation>වත්මන් වේලාවේදී අංගය වෙන් කරන්න</translation>
     </message>
     <message>
+        <source>Split on beats</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Snap clips to beats</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Swap with previous clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Swap with next clip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Separate audio</source>
         <translation>ශ්‍රව්‍ය වෙන් කරන්න</translation>
     </message>
@@ -24409,6 +26739,10 @@ If playback stutters, try another.</source>
         <translation>නිශ්ශබ්දතාව ඉවත් කරන්න</translation>
     </message>
     <message>
+        <source>Auto duck…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Sync by audio</source>
         <translation>ශ්‍රව්‍ය මඟින් සමමුහුර්ත කරන්න</translation>
     </message>
@@ -24435,6 +26769,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Crop…</source>
         <translation>කප්පාදු කරන්න…</translation>
+    </message>
+    <message>
+        <source>Auto reframe…</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Enhance video…</source>
@@ -24495,6 +26833,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Paste effects</source>
         <translation>ප්‍රයෝග අලවන්න</translation>
+    </message>
+    <message>
+        <source>Remove all effects</source>
+        <translation type="unfinished">සියලුම ප්‍රයෝග ඉවත් කරන්න</translation>
     </message>
     <message>
         <source>Save effects as preset…</source>
@@ -24582,6 +26924,28 @@ If playback stutters, try another.</source>
     </message>
 </context>
 <context>
+    <name>TimelineKeyframeMenu</name>
+    <message>
+        <source>Easing…</source>
+        <translation type="unfinished">Easing…</translation>
+    </message>
+    <message numerus="yes">
+        <source>Delete %n keyframe(s) here</source>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Set playhead here</source>
+        <translation type="unfinished">ප්ලේහෙඩ් එක මෙහි සකසන්න</translation>
+    </message>
+    <message>
+        <source>Edit keyframes…</source>
+        <translation type="unfinished">කීෆ්‍රේම සංස්කරණය කරන්න…</translation>
+    </message>
+</context>
+<context>
     <name>TimelineLandingOutline</name>
     <message>
         <source>Importing…</source>
@@ -24656,6 +27020,10 @@ If playback stutters, try another.</source>
         <translation>පරිවර්තන ස්තරය: එහි වරහන මඟින් ආවරණය වන සෑම ට්‍රැකයක්ම ගෙනයයි, ප්‍රමාණය වෙනස් කරයි සහ කරකවයි</translation>
     </message>
     <message>
+        <source>Keyframe. Right-click for easing presets, or to open the Keyframes tab.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Save effect preset</source>
         <translation>ප්‍රයෝග පෙරසැකසුම සුරකින්න</translation>
     </message>
@@ -24678,6 +27046,14 @@ If playback stutters, try another.</source>
     <message>
         <source>Paste here</source>
         <translation>මෙහි අලවන්න</translation>
+    </message>
+    <message>
+        <source>Close gaps in work area</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Close all gaps on track</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Add bookmark here</source>
@@ -24774,6 +27150,10 @@ If playback stutters, try another.</source>
     <message>
         <source>Close Gap</source>
         <translation>හිඩැස වසන්න</translation>
+    </message>
+    <message>
+        <source>Close Gap on All Tracks</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -25173,6 +27553,10 @@ If playback stutters, try another.</source>
         <source>Pre-render the work area for smooth playback and export</source>
         <translation>සුමට ධාවනය සහ නිර්යාතය සඳහා කාර්ය ප්‍රදේශය පූර්ව-රෙන්ඩර් කරන්න</translation>
     </message>
+    <message>
+        <source>Bakes are of the main timeline. Switch to it to bake.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>ToastHost</name>
@@ -25190,6 +27574,14 @@ If playback stutters, try another.</source>
             <numerusform>තවත් දැනුම්දීම් %nක්</numerusform>
             <numerusform>තවත් දැනුම්දීම් %nක්</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Copied</source>
+        <translation type="unfinished">පිටපත් කරන ලදී</translation>
+    </message>
+    <message>
+        <source>Copy message</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Dismiss</source>
@@ -26785,12 +29177,20 @@ If playback stutters, try another.</source>
         <source>Add to favorites</source>
         <translation>ප්‍රියතමයන්ට එක් කරන්න</translation>
     </message>
+    <message>
+        <source>Edit in Forge</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>TransitionsTab</name>
     <message>
         <source>Install a custom transition or effect from a .driftfx or zip made in Drift Forge</source>
         <translation>Drift Forge හි සාදන ලද .driftfx හෝ zip එකකින් අභිරුචි සංක්‍රාන්තියක් හෝ ප්‍රයෝගයක් ස්ථාපනය කරන්න</translation>
+    </message>
+    <message>
+        <source>Create a new transition in Forge</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -26806,6 +29206,14 @@ If playback stutters, try another.</source>
     <message>
         <source>Cancelled</source>
         <translation>අවලංගු කෙරිණි</translation>
+    </message>
+    <message>
+        <source>Sound effect added to the timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sound effect added to the media bin</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Speech added to the timeline</source>
@@ -28105,6 +30513,30 @@ If playback stutters, try another.</source>
     <message>
         <source>Procedural Console</source>
         <translation>Procedural කොන්සෝලය</translation>
+    </message>
+    <message>
+        <source>Forge Graph</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Forge Nodes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Forge Inspector</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio Forge Graph</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio Forge Pedals</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio Forge Inspector</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Media</source>

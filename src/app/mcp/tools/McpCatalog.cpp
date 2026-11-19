@@ -65,7 +65,8 @@ QJsonObject transitionIdProp()
 QJsonObject effectKindProp()
 {
     return enumProp(QStringLiteral("Which catalog the package belongs to"),
-                    {QStringLiteral("effect"), QStringLiteral("transition"), QStringLiteral("audio_effect")});
+                    {QStringLiteral("effect"), QStringLiteral("transition"), QStringLiteral("animation"),
+                     QStringLiteral("audio_effect")});
 }
 
 QJsonObject animPropProp()
@@ -125,6 +126,7 @@ QJsonObject maskSchema()
         {QStringLiteral("roundness"),
          numberProp(QStringLiteral("rectangle only: corner rounding, 0 sharp to 1 pill (default 0)"), 0, 1)},
         {QStringLiteral("invert"), boolProp(QStringLiteral("Invert coverage (default false)"))},
+        {QStringLiteral("lockAspect"), boolProp(QStringLiteral("Editing only: the corner handles and the inspector keep w:h; rendering ignores it. Omitted: the clip's current lock is kept"))},
         {QStringLiteral("points"),
          arrayProp({{QStringLiteral("type"), QJsonArray{QStringLiteral("array"), QStringLiteral("object")}}},
                    QStringLiteral("freeform only: [{x,y}, …] as inspect emits it, or [[x,y], …]; normalised 0..1"))},
@@ -145,7 +147,7 @@ QJsonObject maskSchema()
                                                    {QStringLiteral("host"), QStringLiteral("adjustment")})},
     });
     s.insert(QStringLiteral("description"),
-             QStringLiteral("The whole mask; every omitted key reverts to its default and omitting shape turns the mask off"));
+             QStringLiteral("The whole mask; every omitted key reverts to its default (lockAspect excepted: it is kept) and omitting shape turns the mask off"));
     return s;
 }
 
@@ -489,6 +491,8 @@ QJsonObject model3dLightsProp()
 QJsonObject exportSettingsProps()
 {
     return {
+        {QStringLiteral("bakes"), enumProp(QStringLiteral("Range bakes the export may reuse: fresh (default) skips stale ones and renders their range live; all reuses stale ones too (the old picture, faster); none renders everything live"),
+                                           {QStringLiteral("fresh"), QStringLiteral("all"), QStringLiteral("none")})},
         {QStringLiteral("scale"), stringProp(QStringLiteral("Scale id from list_export_options"))},
         {QStringLiteral("height"), integerProp(QStringLiteral("Target height in pixels; 0 = project height"))},
         {QStringLiteral("fps"), QJsonObject{{QStringLiteral("type"), QJsonArray{QStringLiteral("number"), QStringLiteral("string")}},
@@ -608,7 +612,7 @@ const QList<Op> &ops()
           "proxy_status. Preview only reads them with useProxies on "
           "(set_ui_preferences). Not undoable: a proxy is a cache. Returns {queued:[ids], already:"
           "[{asset, state}], skipped:[{asset|clip, reason: not_video|missing|no_media|gone}], not_slow? (all_slow), queue:"
-          "{busy, progress, current, queued}, useProxies, proxySize}.",
+          "{busy, progress, current, queued}, useProxies, proxySize, proxyLocation, proxyFolder}.",
           objectSchema({{QStringLiteral("assets"),
                          arrayProp(assetRefProp(), QStringLiteral("Asset ids, names or indexes"))},
                         {QStringLiteral("clips"),
@@ -620,9 +624,9 @@ const QList<Op> &ops()
           "Per-asset proxy state for video assets: none, queued, building, ready (made by Drift at "
           "the current size) or linked (a file made elsewhere, matched by name). A failed build reads "
           "none with error. Default every video asset; or pick assets/clips. Returns {proxies:[{asset, "
-          "name, state, error?}], counts:{state: n}, truncated? (rows cut at 500), queue:{busy, "
-          "progress, current, queued}, useProxies, proxySize}; picked assets or clips with no video "
-          "come back in skipped.",
+          "name, state, error?, location?, path?}], counts:{state: n}, truncated? (rows cut at 500), queue:{busy, "
+          "progress, current, queued}, useProxies, proxySize, proxyLocation, proxyFolder}; picked assets or clips with no video "
+          "come back in skipped. location (ready/linked rows): beside, folder, cache or linked.",
           objectSchema({{QStringLiteral("assets"),
                          arrayProp(assetRefProp(), QStringLiteral("Asset ids, names or indexes"))},
                         {QStringLiteral("clips"),
@@ -633,7 +637,7 @@ const QList<Op> &ops()
           "Drop queued proxies, stop one being built and delete the proxies Drift made at the current "
           "size (assets, clips or all:true). A linked proxy (made elsewhere) is never deleted. Not "
           "undoable. Returns {removed:[ids], kept:[{asset|clip, reason: none|linked|not_video|"
-          "no_media}], queue, useProxies, proxySize}.",
+          "no_media}], queue, useProxies, proxySize, proxyLocation, proxyFolder}.",
           objectSchema({{QStringLiteral("assets"),
                          arrayProp(assetRefProp(), QStringLiteral("Asset ids, names or indexes"))},
                         {QStringLiteral("clips"),
@@ -644,10 +648,11 @@ const QList<Op> &ops()
         { "cancel_proxies", "media", "Stop building proxies",
           "Empty the proxy queue (automatic ones from import included) and stop the one being built; "
           "one whose last frames already landed may still finish. Proxies already made stay. Returns "
-          "{cancelled, queue, useProxies, proxySize}.",
+          "{cancelled, queue, useProxies, proxySize, proxyLocation, proxyFolder}.",
           objectSchema({}) },
         { "rename_asset", "media", "Rename a bin row",
-          "Rename an asset in the bin. Does not rename the file on disk.",
+          "Rename an asset in the bin. Does not rename the file on disk. On a composite asset it renames "
+          "that timeline, tab included.",
           objectSchema({{QStringLiteral("asset"), assetRefProp()},
                         {QStringLiteral("name"), stringProp(QStringLiteral("New display name"))}},
                        {QStringLiteral("asset"), QStringLiteral("name")}) },
@@ -675,7 +680,8 @@ const QList<Op> &ops()
           "Delete a media-bin folder. By default its assets and subfolders move up to its parent, "
           "as in the app. recursive:true instead removes every subfolder and every asset under it "
           "from the bin; it fails in_use (changing nothing) if any of those assets has clips on the "
-          "timeline. One undo step. Returns {deleted:[folder ids], removedAssets}.",
+          "timeline, and locked if one of them is a timeline with a locked track. One undo step. Returns "
+          "{deleted:[folder ids], removedAssets}.",
           objectSchema({{QStringLiteral("folder"), stringProp(QStringLiteral("Folder id (or unique name)"))},
                         {QStringLiteral("recursive"), boolProp(QStringLiteral("Also remove subfolders and their assets (default false)"))}},
                        {QStringLiteral("folder")}),
@@ -736,15 +742,21 @@ const QList<Op> &ops()
           objectSchema({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))}},
                        {QStringLiteral("track")}),
           false, true },
-        { "set_track", "timeline", "Mute, hide, lock or keep a lane out of export",
-          "Set track muted/hidden/locked. exclude_from_export:true makes it a review track: still "
+        { "set_track", "timeline", "Mute, solo, hide, lock or keep a lane out of export",
+          "Set track muted/hidden/locked/solo. solo:true makes only soloed tracks heard (mute and hide "
+          "still apply to a soloed track), in every timeline mix: playback, get_waveform, loudness and "
+          "range measurements, export_video; solo:false clears it. The picture is unaffected, it is "
+          "saved with the project, and inspect marks the track solo:true. Only an audio or video track "
+          "can be soloed; solo:false works on any track. "
+          "exclude_from_export:true makes it a review track: still "
           "shown and heard while editing, but left out of export_video and flatten_composite (e.g. a "
-          "subtitle lane with the VO script to read along); bakes overlapping it aren't reused. Refused "
+          "subtitle lane with the VO script to read along); export_video doesn't reuse a bake where its clips show (the preview still plays it). Refused "
           "on a transform or camera layer. Undoable.",
           objectSchema(mergeProps({{QStringLiteral("track"), integerProp(QStringLiteral("Track index"))},
                                    {QStringLiteral("muted"), boolProp(QStringLiteral("Mute"))},
                                    {QStringLiteral("hidden"), boolProp(QStringLiteral("Hide from composite"))},
                                    {QStringLiteral("locked"), boolProp(QStringLiteral("Lock against edits"))},
+                                   {QStringLiteral("solo"), boolProp(QStringLiteral("Hear only soloed tracks (audio; the picture is unaffected)"))},
                                    {QStringLiteral("exclude_from_export"), boolProp(QStringLiteral("Keep this track out of export (a review track)"))}},
                                   {}),
                        {QStringLiteral("track")}) },
@@ -754,7 +766,8 @@ const QList<Op> &ops()
           "reason:\"gap\" when they differ. Note `track` means two different things: with "
           "new_track:true it is the insert position of the new track, otherwise it is the destination "
           "track and a type mismatch fails type_mismatch. With `track` omitted, the first track "
-          "accepting this asset is used, and a new track is created if none does.",
+          "accepting this asset is used, and a new track is created if none does. A composite asset "
+          "(a timeline) goes on the main timeline only, and only once it has content.",
           objectSchema(mergeProps({{QStringLiteral("asset"), assetRefProp()},
                                    {QStringLiteral("at"), numberProp(QStringLiteral("Timeline start seconds (default: playhead)"))},
                                    {QStringLiteral("track"), integerProp(QStringLiteral("Destination track, or insert position when new_track is true"))},
@@ -859,6 +872,20 @@ const QList<Op> &ops()
                                     propWithDefault(boolProp(QStringLiteral("Later clips follow the new length")), false)}},
                                   clipRefProps()),
                        {QStringLiteral("in"), QStringLiteral("out")}) },
+        { "slip_clip", "timeline", "Show another part of the media in the same slot",
+          "Slip: move the clip's source window and keep its start and length. by: source seconds "
+          "(+ = later in the media, at any speed or direction), or in: the new source in point. Linked "
+          "audio slips with it; a loosely linked clip doesn't. Stops at the media's ends: the reply has "
+          "requested (echoes by, or the in point), slipped (the applied move, a delta in source seconds), and reason:\"media_start\"|\"media_end\" when it stopped short. A looped "
+          "clip shifts its repeat instead, with no limit (by only; the reply adds loop_offset). "
+          "Keyframes, fades, effects and transitions stay on the timeline. Face, depth, tracker and matte "
+          "data follow the source but only cover the range they were analysed on (source_data lists "
+          "them), and keys baked from them stay (baked_keys). Generated captions follow their words; "
+          "cues whose words slip out are removed, and a caption clip left empty goes too (retimed_subtitles). One undo step. Refused for clips "
+          "with no media (titles, shapes, stills, adjustments) and on a locked track, including a locked caption track or a locked lane holding a pinned effect of a removed caption clip (the whole slip is refused).",
+          objectSchema(mergeProps({{QStringLiteral("by"), numberProp(QStringLiteral("Source seconds to move the window; + is later in the media"))},
+                                   {QStringLiteral("in"), numberProp(QStringLiteral("New source in point, seconds"))}},
+                                  clipRefProps())) },
         { "move_to_track", "timeline", "Move a clip to another lane",
           "Move a clip to another track. Type must match the destination, else type_mismatch.",
           objectSchema(mergeProps({{QStringLiteral("to_track"), integerProp(QStringLiteral("Destination track"))},
@@ -1059,6 +1086,56 @@ const QList<Op> &ops()
           "Remove the In/Out work area. Afterwards export_video with work_area:true fails bad_args, "
           "and inspect stops reporting work_in/work_out.",
           objectSchema({}) },
+        { "list_bakes", "playback", "See pre-rendered ranges and which went stale",
+          "List the range bakes: stretches of the main timeline rendered once into the app's cache so "
+          "the preview plays them smoothly (Video menu > Bakes in the app). Returns {bakes:[{id, start, "
+          "end, state, bytes, quality, width, height, progress?}], n, stale, busy, progress?, queued, "
+          "file_bytes, quality} by start. A bake is the whole picture, every track. state is fresh, "
+          "stale (something drawn under it changed since: a clip, transition or track, the canvas, or "
+          "a source file; undoing the edit makes it fresh again) or baking; the running bake is the "
+          "row id \"pending\" until its first frames land. bytes counts the GOPs a bake is first to "
+          "hold, so a split piece can read 0. Staleness is re-checked on every call. A "
+          "stale bake still plays in the preview (unless the canvas size or fps changed); export_video renders its range live unless bakes:\"all\"; "
+          "capture and frames always render live. quality is the preset new bakes get (compact, "
+          "balanced, high; the user picks it in the Bakes dialog). Bakes aren't part of the project: "
+          "not saved with it, not undoable, never dirty it.",
+          objectSchema({}), true },
+        { "bake_range", "playback", "Pre-render a heavy stretch so playback stays smooth",
+          "Queue a bake of main-timeline seconds [from, to), widened to whole frames and cut at the "
+          "timeline's end, at the user's bake quality. The work area is left alone. Async: returns "
+          "{start, end, busy, queued} at once; wait_idle({kinds:[\"bake\"]}) or poll list_bakes. Bakes "
+          "run one at a time, and starting one pauses playback; the same range twice is queued once. "
+          "A new bake replaces what older bakes hold under it (they are trimmed, or split into a piece "
+          "with a new id). bad_args when the range holds no frame, and while a composite is open "
+          "(bakes are of the main timeline: open_composite({main:true}) first); io_error when the "
+          "cache file can't be opened. Not undoable; the project is not changed.",
+          objectSchema({{QStringLiteral("from"), numberProp(QStringLiteral("Start, main-timeline seconds (>= 0)"))},
+                        {QStringLiteral("to"), numberProp(QStringLiteral("End seconds; must be greater than from"))}},
+                       {QStringLiteral("from"), QStringLiteral("to")}) },
+        { "rebake", "playback", "Re-render a stale bake, or every stale one",
+          "Bake bake id's range again (any state), or every stale bake with stale:true, at the user's "
+          "bake quality. Pass one of id or stale. The new bake gets a new id: read list_bakes once it's "
+          "done. Async like bake_range: returns {start, end} for id or {n} (stale bakes queued, or already queued) for "
+          "stale, plus {busy, queued}. conflict while a bake runs or waits (wait_idle or cancel_bake "
+          "first). not_found for an unknown id, \"pending\" included; bad_args when the bake now lies "
+          "past the timeline's end; io_error when the cache can't be opened. Not undoable.",
+          objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Bake id from list_bakes"))},
+                        {QStringLiteral("stale"), boolProp(QStringLiteral("Every stale bake instead of one id"))}}) },
+        { "delete_bake", "playback", "Drop a bake, or all of them, to free cache space",
+          "Delete bake id, or every bake with all:true; playback and export render that range live "
+          "again. The project is not changed and only the bake cache is touched (its space is reused by "
+          "later bakes). With id: conflict while a bake runs (cancel_bake or "
+          "wait_idle({kinds:[\"bake\"]}) first). all:true also stops the running bake and empties the "
+          "queue; then pending:true, and the bakes go once it has stopped. Returns {deleted:[ids as of the call], "
+          "pending?, busy, queued}. Not undoable.",
+          objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("Bake id from list_bakes"))},
+                        {QStringLiteral("all"), boolProp(QStringLiteral("Every bake"))}}),
+          false, true },
+        { "cancel_bake", "playback", "Stop the running bake and empty the queue",
+          "Stop the running bake and empty the queue. The frames it baked so far stay, as a shorter "
+          "bake. Returns {cancelled, busy, queued}: cancelled is false when nothing ran or waited. The "
+          "bake stops shortly after; wait_idle({kinds:[\"bake\"]}) to be sure.",
+          objectSchema({}) },
 
         { "add_text", "text", "Put a title or caption on the timeline",
           "Add a text clip on a text track, creating one if needed, and return the new clip's id. "
@@ -1099,6 +1176,13 @@ const QList<Op> &ops()
                         {QStringLiteral("cat"), stringProp(QStringLiteral("Category name from the default reply"))},
                         {QStringLiteral("q"), stringProp(QStringLiteral("Case-insensitive substring over id/label/cat"))},
                         {QStringLiteral("limit"), propWithDefault(integerProp(QStringLiteral("Max rows for q"), 1, 500), 50)}}),
+          true, false, true },
+        { "list_animations", "effects", "See shader-based in/out animation packages",
+          "Lists installed animation packages (bundled, add-ons and your own): {animations:[{id, "
+          "displayName, category, directions, defaultDurationMs}], n}. Pass the id as `kind` to "
+          "set_animation; built-in kinds (slideUp, pop, …) are not listed here.",
+          objectSchema({{QStringLiteral("id"), stringProp(QStringLiteral("One animation id"))},
+                        {QStringLiteral("q"), stringProp(QStringLiteral("Case-insensitive substring over id/name/category"))}}),
           true, false, true },
         { "add_effect", "effects", "Put a video effect on a clip",
           "Append a video effect to the end of the clip's stack. Returns effectIndex — its stack "
@@ -1300,7 +1384,11 @@ const QList<Op> &ops()
           "inspect().export.{active,progress} or export_status until active is false. Fails export_busy "
           "when an encode is already running — cancel_export first. The output path is normalised: a "
           "directory gets <project name>.<ext> appended and a suffix-less path gets the container "
-          "extension added, so use the path echoed in the reply, not the one you sent. Omitted settings "
+          "extension added, so use the path echoed in the reply, not the one you sent. "
+          "Range bakes (list_bakes) are reused where fresh; a stale one is rendered live unless bakes:\"all\". "
+          "The reply adds bakes (the mode) and bakes_reused:{n, stale, stale_skipped} (bakes read, stale ones "
+          "among them, stale ones rendered live); GIF and audio-only exports read no bakes and get no "
+          "bakes_reused. bakes is never inherited from an earlier export. Omitted settings "
           "inherit from the last export in this app profile, then defaults — pass every setting you "
           "care about rather than relying on them.",
           objectSchema(mergeProps({{QStringLiteral("path"), stringProp(QStringLiteral("Absolute output path, or a directory to auto-name inside"))}},
@@ -1484,7 +1572,7 @@ const QList<Op> &ops()
 
         { "get_ui_preferences", "ui", "Read editor UI settings",
           "Returns {theme:{overridden, dark}, autoKey, mediaGrid, reopenLastProject, proxySuggestion, "
-          "useProxies, proxySize, agentNotifications}. autoKey matters "
+          "useProxies, proxySize, proxyLocation, proxyFolder, agentNotifications}. autoKey matters "
           "for set_transform: when true, transform writes become keyframes at the playhead (or its `at`), which must be inside the clip.",
           objectSchema({}), true, false, true },
         { "set_theme", "ui", "Set dark or light theme",
@@ -1648,7 +1736,8 @@ QStringList undoExemptOps()
         QStringLiteral("market_cancel_download"), QStringLiteral("market_retry_download"),
         QStringLiteral("market_open"),
         QStringLiteral("seek"),                QStringLiteral("play"),
-        QStringLiteral("open_composite"),      QStringLiteral("flatten_composite"),
+        QStringLiteral("open_composite"),      QStringLiteral("close_timeline"),
+        QStringLiteral("flatten_composite"),
         QStringLiteral("pause"),               QStringLiteral("undo"),
         QStringLiteral("redo"),                QStringLiteral("undo_to"),
         QStringLiteral("take_snapshot"),       QStringLiteral("restore_snapshot"),
@@ -1660,6 +1749,8 @@ QStringList undoExemptOps()
         QStringLiteral("clear_cache"),         QStringLiteral("set_performance"),
         QStringLiteral("create_proxies"),      QStringLiteral("remove_proxies"),
         QStringLiteral("cancel_proxies"),
+        // Range bakes: a cache outside the project.
+        QStringLiteral("bake_range"), QStringLiteral("rebake"), QStringLiteral("delete_bake"), QStringLiteral("cancel_bake"),
         QStringLiteral("set_theme"),        QStringLiteral("set_preview_view"),
         QStringLiteral("set_shortcut"),        QStringLiteral("reset_shortcuts"),
         QStringLiteral("export_theme"),        QStringLiteral("import_theme"),
@@ -1680,6 +1771,8 @@ QStringList undoExemptOps()
         QStringLiteral("sfx_generate"),        QStringLiteral("local_tts_status"),
         QStringLiteral("add_voice"),           QStringLiteral("rename_voice"),
         QStringLiteral("remove_voice"),        QStringLiteral("voiceover_from_subtitles"),
+        // Saved with the project but kept out of undo, as the panel keeps it.
+        QStringLiteral("set_teleprompter"),
         // Preset stores live on disk, outside the project and its history.
         QStringLiteral("rename_user_text_preset"),      QStringLiteral("delete_user_text_preset"),
         QStringLiteral("export_user_text_preset"),      QStringLiteral("import_user_text_preset"),
@@ -1768,6 +1861,10 @@ QString agentGuideText()
         "bytes hash to the same value; restore_snapshot loads a disk copy only if it has fallen off\n"
         "the stack (and resets Origin).\n"
         "\n"
+        "Timelines: the main one plus one per composite (list_composites). new_timeline({name}) starts\n"
+        "an empty one and opens it; every op, inspect included, then edits it until\n"
+        "open_composite({main:true}) or close_timeline({sequence}). export_video renders only the main one.\n"
+        "\n"
         "wait_idle({timeout, kinds?}) waits for all background work (probes, thumbnails, proxies,\n"
         "filmstrips, waveforms and every job below) and returns {idle, waited, busy?, suspended?}.\n"
         "Call it directly, not inside apply.\n"
@@ -1779,6 +1876,7 @@ QString agentGuideText()
         "- detect_scenes     -> jobs.sceneDetect.{active,progress,status}\n"
         "- set_clip_reverse  -> jobs.reverseRender.{active,progress,status}\n"
         "- create_proxies    -> proxy_status (queue and per-asset state; not under jobs)\n"
+        "- bake_range, rebake -> list_bakes (busy, queued; progress on the baking row) or wait_idle({kinds:[\"bake\"]})\n"
         "- market_install    -> jobs.downloads.{active,byKind} (every download, addons and updates included),\n"
         "  or market_downloads for per-job status\n"
         "- transcribe, diarize, tts_generate, sfx_generate, add_voice, voiceover_from_subtitles return {job_id}: poll get_job({id});\n"
@@ -1793,6 +1891,10 @@ QString agentGuideText()
         "3. Cut with cut_words (fillers, retakes, slips), keep_ranges (one clip's EDL) or\n"
         "   assemble (best takes across sources). Cuts land between words with a de-click.\n"
         "4. Check each cut with get_waveform({image:true}) — it draws the words — and frames.\n"
+        "\n"
+        "Voice-overs the user records: set_teleprompter({script}) puts your script in the Teleprompter\n"
+        "panel (saved with the project, not undoable). get_teleprompter first: replacing the user's own\n"
+        "script needs replace:true, so ask before you do.\n"
         "\n"
         "Working to the music (audio toolbox):\n"
         "1. detect_beats({start, duration}) blocks and returns bpm plus exact beat and onset times.\n"
@@ -1814,7 +1916,8 @@ QString agentGuideText()
         "   music. audio_sheet draws their sections and sound names when the addons are there.\n"
         "\n"
         "Custom effects (effects toolbox):\n"
-        "1. effect_authoring_guide({kind}) for the manifest grammar and parameter types.\n"
+        "1. effect_authoring_guide({kind}) for the manifest grammar, parameter types and time effects\n"
+        "   (history, previousOutput: trails, echoes, temporal smoothing).\n"
         "2. get_effect_source on a bundled effect to fork it, or write one from scratch.\n"
         "3. create_effect({kind, slug, manifest, files}) — shaders are compiled first; fix and retry\n"
         "   on shader_compile_failed. The id (user.<slug>) lands in My Effects and works with\n"
@@ -1872,6 +1975,11 @@ QString agentGuideText()
         "points, …}}); the same *_shape_layer ops as text edit its stack; keyframe shape.<key> and\n"
         "shape.layer.<id>.<field>. A fresh shape has layers \"fill\" and \"stroke\".\n"
         "\n"
+        "Masks (canvas toolbox): set_mask replaces a clip's whole mask (lockAspect is kept when left out).\n"
+        "use_as_mask({clips}) turns titles, shapes or footage into a live mask over the video track\n"
+        "below, in one step: it returns {sequence, asset, mask_clip}, and open_composite({sequence}) edits what\n"
+        "the mask shows. convert_clip_to_mask({clip}) turns one video or image clip into a luma matte.\n"
+        "\n"
         "Long sessions and scripted rounds:\n"
         "- Every undo step holds full project snapshots, so a long round of batches fills memory and,\n"
         "  unless set_history_limit({persist:false}), the saved file. Run batches that don't need their\n"
@@ -1880,6 +1988,8 @@ QString agentGuideText()
         "  it with clear_history({keep_last}) between rounds; history_stats and memory_stats show the cost.\n"
         "- With a step limit set, each new step can renumber list_history: keep hashes, not indices.\n"
         "- Decoded frames: clear_cache frees them; the frame cache cap is in Settings › Performance.\n"
+        "- A stale bake still plays in the preview. export_video renders it live (bakes:\"fresh\", the default);\n"
+        "  rebake({stale:true}) first if you want the speed. capture and frames always render live.\n"
         "- Replaced media stays in the bin. list_assets({usage:true}) counts each asset's clips;\n"
         "  remove_unused_assets({dry_run:true}) lists the unused ones; without dry_run it removes them\n"
         "  in one undo step.\n"
@@ -1899,9 +2009,9 @@ QJsonObject catalogPayload(const QJsonObject &args)
     static const Box boxes[] = {
         {"media", "Import (absolute paths only — resolve fuzzy names with your own filesystem tools), "
                    "read the media bin before placing clips, fix a sideways asset."},
-        {"timeline", "Tracks, place/move/trim/split/delete clips, ripple/gap, overlap, selection, undo."},
+        {"timeline", "Tracks, place/move/trim/split/delete clips, ripple/gap, overlap, selection, undo, timelines."},
         {"canvas", "Transform, flip, blend, mask, fade, constant speed, reverse, animation, stabilisation, orientation, shape styling (layers, geometry)."},
-        {"playback", "Seek, play, pause, In/Out work area."},
+        {"playback", "Seek, play, pause, In/Out work area, range bakes for smooth playback."},
         {"text", "Title/caption clips: style packs, shading layers, looks, gradients/effects, in/out/loop animation presets, fonts."},
         {"effects", "Video/audio effects and transitions."},
         {"project", "Canvas size, background, metadata, save, and export."},
@@ -1920,7 +2030,7 @@ QJsonObject catalogPayload(const QJsonObject &args)
         {"market", "The Cutwire marketplace: stock media, Drift assets, sound effects and community add-ons. Browse sources, preview, install (optionally onto the timeline), and manage Downloads. Stock installs spend a per-machine quota."},
         {"transcript", "Transcript-first editing: transcribe once, read phrases/words with times, cut by words or by source ranges, assemble takes, label speakers."},
         {"procedural", "Procedural 3D clips: Lua-built scenes with your own GLSL shaders. Read the guide, write packages into My Procedurals, try them with evaluate_procedural, place them as clips and animate their params with proc.<key> keyframes."},
-        {"voice", "Voices: ElevenLabs / Fish Audio text-to-speech and ElevenLabs sound effects (billable, need the user's API key), plus local Chatterbox TTS with a cloneable voice library and subtitle voiceovers (free, needs the tts-model addon)."},
+        {"voice", "Voices: ElevenLabs / Fish Audio text-to-speech and ElevenLabs sound effects (billable, need the user's API key), plus local Chatterbox TTS with a cloneable voice library and subtitle voiceovers (free, needs the tts-model addon). Teleprompter script for a self-recorded voice-over."},
     };
 
     const bool brief = args.value(QStringLiteral("brief")).toBool();
@@ -2064,7 +2174,8 @@ QJsonArray homepageTools()
         QStringLiteral("inspect"),
         QStringLiteral("When: Read state. Summary: revision, name, w, h, fps, dur, playhead, playing, overlap, "
                        "clips (count), tracks, assets, path, dirty, background, export {active, progress}, "
-                       "selection (absent when none), undo {can, canRedo, depth, index, hash (12-char)}, "
+                       "selection (absent when none), open_sequence (the composite timeline being edited; absent on the main timeline), "
+                       "undo {can, canRedo, depth, index, hash (12-char)}, "
                        "work_in/work_out when set. clips=true adds compact rows under tracks[].items; "
                        "cues=true adds subtitleCues to them. detail=true expands rows to the full clip map "
                        "(effects, mask, fade, speed, keyframes, stabilize*, ...) minus what the kind cannot "
@@ -2124,7 +2235,7 @@ QJsonArray homepageTools()
                       {QStringLiteral("dry_run"),
                        propWithDefault(boolProp(QStringLiteral(
                            "true: run nothing; check each op's args and the clips, assets and tracks it names "
-                           "(not each op's own rules, such as move_clip needing one of at/before/after). "
+                           "(not each op's own rules, such as move_clip needing one of at/before/after, or slip_clip one of by/in). "
                            "{ok:true, dry_run, n}, or {ok:false, error:\"dry_run_failed\", problems:[{i, tool, error, detail}]}. "
                            "An id an earlier op would create reads as not_found")), false)}},
                      {QStringLiteral("ops")})));

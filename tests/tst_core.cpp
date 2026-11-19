@@ -1,5 +1,7 @@
 #include <QtTest>
 
+#include "core/project/media/SourceFrameFit.h"
+
 #include <QColor>
 #include <QDir>
 #include <QFile>
@@ -8,7 +10,9 @@
 #include <QJsonObject>
 #include <QPointF>
 #include <QSet>
+#include <QRegularExpression>
 #include <QStandardPaths>
+#include <QUuid>
 
 #include "core/project/ProjectDiff.h"
 #include "core/animation/ClipAnimation.h"
@@ -47,6 +51,11 @@ class CoreTest : public QObject
     Q_OBJECT
 
 private slots:
+    void trackAudibleFollowsMixerRule_data();
+    void trackAudibleFollowsMixerRule();
+    void muteAllButClipClearsSolo();
+    void projectPathKeyKeepsUuidsAndHashesTheRest();
+    void fitCropInsideRotation();
     void imageSequencePathRoundTrip();
     void imageSequenceFpsRationals();
     void imageSequenceDisplayName();
@@ -90,6 +99,7 @@ private slots:
     void sourceFramingRoundTrip();
     void clipPose3dRoundTrip();
     void projectSerializationRoundTrip();
+    void bookmarkColourRoundTrip();
     void binFolderSerializationRoundTrip();
     void compositeSequenceRoundTrip();
     void activateSequenceSwapsTracks();
@@ -206,6 +216,7 @@ private slots:
     void bezierCurveShapesProgress();
     void bezierShapeRoundTrips();
     void clipAnimationBezierHandlesRoundTrip();
+    void clipAnimationProgressWindows();
     void textEaseParsesCubicBezier();
     void physicalOverlapTransitionWindow();
     void adjacentTransitionWindowClampsToClipExtents();
@@ -235,6 +246,9 @@ private slots:
     void cameraLayerRoundTripsAndNormalizes();
     void retargetClipToSourceKeepsPlacementAndSyncsSource();
     void retargetClipToSourceClearsPerSourceState();
+    void slipClipSourceKeepsPlacement();
+    void slipClipSourceLoopsShiftThePhase();
+    void slipClipSourceKeepsTheRamp();
     void retargetClipToSourceKeepsAGeometricMask();
     void addLinkedMaskStacksRatherThanReplacing();
     void laneMaskIsUnpinnedAndSurvivesTheLiftPass();
@@ -246,6 +260,7 @@ private slots:
     void sliceClipToTimelineRangeKeepsSourceInSync();
     void rippleGroupsFollowLinksAcrossTracks();
     void closeRippleRangesShiftsEachGroupOnce();
+    void closeGapOnEmptyTracksMovesEveryFreeTrack();
     void clipLabelsRoundTripAndNumberCopies();
     void diffProjectsReportsClipChanges();
 };
@@ -255,6 +270,15 @@ void CoreTest::timeConversion()
     QCOMPARE(drift::secondsToUs(1.0), drift::TimeUs{1'000'000});
     QCOMPARE(drift::usToSeconds(2'500'000), 2.5);
     QCOMPARE(drift::frameDurationUs(30), drift::TimeUs{33'333});
+    QCOMPARE(drift::secondsToUs(8.04), drift::TimeUs{8'040'000});
+    QCOMPARE(drift::secondsToUs(-8.04), drift::TimeUs{-8'040'000});
+    QCOMPARE(drift::secondsToUs(0.0000004), drift::TimeUs{0});
+    QCOMPARE(drift::secondsToUs(0.0000006), drift::TimeUs{1});
+    QCOMPARE(drift::secondsToUs(0.0000005), drift::TimeUs{1});    // a half rounds away from zero
+    QCOMPARE(drift::secondsToUs(-0.0000005), drift::TimeUs{-1});
+    static_assert(drift::secondsToUs(0.5) == 500'000);
+    for (drift::TimeUs us : {drift::TimeUs{8'040'000}, drift::TimeUs{1'234'567}, drift::TimeUs{3'599'999'999}})
+        QCOMPARE(drift::secondsToUs(drift::usToSeconds(us)), us);
 }
 
 void CoreTest::keyframeHoldInterpolation()
@@ -790,6 +814,37 @@ void CoreTest::projectSerializationRoundTrip()
     QVERIFY(loaded.hasWorkArea());
     QCOMPARE(loaded.workAreaInUs(), drift::secondsToUs(1.0));
     QCOMPARE(loaded.workAreaOutUs(), drift::secondsToUs(4.0));
+}
+
+void CoreTest::bookmarkColourRoundTrip()
+{
+    drift::Project project;
+    project.bookmarks().append({.timeUs = drift::secondsToUs(1.0),
+                                .label = QStringLiteral("Intro"),
+                                .color = QColor(QStringLiteral("#e5484d"))});
+    project.bookmarks().append(
+        {.timeUs = drift::secondsToUs(2.0), .label = QStringLiteral("Plain")});
+
+    const QJsonObject json = project.toJson();
+    // A flag on the theme colour writes no colour at all, so projects that never used one are
+    // unchanged and still open in a build without them.
+    const QJsonArray marks = json.value(QStringLiteral("bookmarks")).toArray();
+    QCOMPARE(marks.size(), 2);
+    QCOMPARE(marks.at(0).toObject().value(QStringLiteral("color")).toString(),
+             QStringLiteral("#e5484d"));
+    QVERIFY(!marks.at(1).toObject().contains(QStringLiteral("color")));
+
+    const drift::Project loaded = drift::Project::fromJson(json);
+    QCOMPARE(loaded.bookmarks().size(), 2);
+    QCOMPARE(loaded.bookmarks().at(0).color, QColor(QStringLiteral("#e5484d")));
+    QVERIFY(!loaded.bookmarks().at(1).color.isValid());
+
+    // A colour change alone is an edit: without it autosave and the unsaved-changes prompt
+    // would both let one go.
+    drift::Project recoloured = loaded;
+    recoloured.bookmarks()[1].color = QColor(QStringLiteral("#3e9bff"));
+    QCOMPARE(drift::diffProjects(loaded, recoloured).settings,
+             QStringList{QStringLiteral("bookmarks")});
 }
 
 void CoreTest::compositeSequenceRoundTrip()
@@ -4685,6 +4740,30 @@ void CoreTest::clipAnimationBezierHandlesRoundTrip()
     QCOMPARE(out.shape.handle2(), QPointF(0.83, 0.2));
 }
 
+void CoreTest::clipAnimationProgressWindows()
+{
+    const drift::TimeUs start = drift::secondsToUs(1.0);
+    const drift::TimeUs dur = drift::secondsToUs(2.0);
+    drift::ClipAnimation linear;
+    linear.kindId = QStringLiteral("slideUp");
+    linear.curve = drift::FadeCurve::Linear;
+    linear.durationUs = drift::secondsToUs(0.5);
+
+    QVERIFY(!drift::clipAnimationProgress(start, dur, drift::ClipAnimation{}, true, start).has_value());
+
+    QCOMPARE(drift::clipAnimationProgress(start, dur, linear, true, start).value(), 0.0);
+    QCOMPARE(drift::clipAnimationProgress(start, dur, linear, true, start + drift::secondsToUs(0.5)).value(), 1.0);
+    QCOMPARE(drift::clipAnimationProgress(start, dur, linear, true, start + drift::secondsToUs(0.25)).value(), 0.5);
+    QVERIFY(!drift::clipAnimationProgress(start, dur, linear, true, start - 1).has_value());
+    QVERIFY(!drift::clipAnimationProgress(start, dur, linear, true, start + drift::secondsToUs(0.6)).has_value());
+
+    const drift::TimeUs end = start + dur;
+    QCOMPARE(drift::clipAnimationProgress(start, dur, linear, false, end - drift::secondsToUs(0.5)).value(), 0.0);
+    QCOMPARE(drift::clipAnimationProgress(start, dur, linear, false, end).value(), 1.0);
+    QVERIFY(!drift::clipAnimationProgress(start, dur, linear, false, end - drift::secondsToUs(0.6)).has_value());
+    QVERIFY(!drift::clipAnimationProgress(start, dur, linear, false, end + 1).has_value());
+}
+
 void CoreTest::textEaseParsesCubicBezier()
 {
     using namespace drift;
@@ -6097,6 +6176,96 @@ void CoreTest::retargetClipToSourceClearsPerSourceState()
     QVERIFY(program.faceTrackPath.isEmpty());
     QCOMPARE(program.faceTrackSrcOffsetUs, drift::TimeUs{0});
     QVERIFY(!program.hasSpeedCurve());
+}
+
+void CoreTest::slipClipSourceKeepsPlacement()
+{
+    using drift::secondsToUs;
+    drift::Clip clip;
+    clip.type = drift::ClipType::Video;
+    clip.srcIn = secondsToUs(3.0);
+    clip.srcOut = secondsToUs(11.0);
+    clip.timelineStart = secondsToUs(5.0);
+    clip.timelineDuration = secondsToUs(8.0);
+    clip.opacity.setKeyframe(secondsToUs(1.0), 0.5);
+
+    const drift::SlipLimits limits = drift::slipLimits(clip, secondsToUs(20.0));
+    QCOMPARE(limits.minUs, -secondsToUs(3.0));
+    QCOMPARE(limits.maxUs, secondsToUs(9.0));
+
+    drift::slipClipSource(clip, secondsToUs(2.0));
+    QCOMPARE(clip.srcIn, secondsToUs(5.0));
+    QCOMPARE(clip.srcOut, secondsToUs(13.0));
+    QCOMPARE(clip.timelineStart, secondsToUs(5.0));
+    QCOMPARE(clip.timelineDuration, secondsToUs(8.0));
+    QVERIFY(clip.opacity.keyframes().contains(secondsToUs(1.0)));
+
+    // At 2x the length stays too.
+    drift::Clip fast = clip;
+    fast.speed = 2.0;
+    fast.timelineDuration = secondsToUs(4.0);
+    drift::slipClipSource(fast, secondsToUs(-1.0));
+    QCOMPARE(fast.srcIn, secondsToUs(4.0));
+    QCOMPARE(fast.timelineDuration, secondsToUs(4.0));
+
+    // Reversed, the clip still plays its window backward: it starts at srcOut.
+    drift::Clip back = clip;
+    back.reverse = true;
+    QCOMPARE(back.timelineToSourceUs(back.timelineStart), back.srcOut);
+    drift::slipClipSource(back, secondsToUs(2.0));
+    QCOMPARE(back.timelineToSourceUs(back.timelineStart), secondsToUs(15.0));
+}
+
+void CoreTest::slipClipSourceLoopsShiftThePhase()
+{
+    using drift::secondsToUs;
+    drift::Clip clip;
+    clip.type = drift::ClipType::Video;
+    clip.loop = true;
+    clip.srcIn = 0;
+    clip.srcOut = secondsToUs(2.0);
+    clip.timelineStart = secondsToUs(1.0);
+    clip.timelineDuration = secondsToUs(10.0);
+    QVERIFY(clip.loops());
+
+    const drift::SlipLimits limits = drift::slipLimits(clip, secondsToUs(2.0));
+    QVERIFY(limits.minUs < -secondsToUs(1000.0));
+    QVERIFY(limits.maxUs > secondsToUs(1000.0));
+
+    drift::slipClipSource(clip, secondsToUs(0.5));
+    QCOMPARE(clip.loopOffsetUs, secondsToUs(0.5));
+    QCOMPARE(clip.timelineToSourceUs(clip.timelineStart), secondsToUs(0.5));
+    drift::slipClipSource(clip, secondsToUs(1.75));
+    QCOMPARE(clip.loopOffsetUs, secondsToUs(0.25));
+    QCOMPARE(clip.srcIn, drift::TimeUs{0});
+    QCOMPARE(clip.srcOut, secondsToUs(2.0));
+    QCOMPARE(clip.timelineDuration, secondsToUs(10.0));
+
+    drift::Clip back = clip;
+    back.reverse = true;
+    back.loopOffsetUs = 0;
+    drift::slipClipSource(back, secondsToUs(0.5));
+    QCOMPARE(back.loopOffsetUs, secondsToUs(1.5));
+}
+
+void CoreTest::slipClipSourceKeepsTheRamp()
+{
+    using drift::secondsToUs;
+    drift::Clip clip;
+    clip.type = drift::ClipType::Video;
+    clip.srcIn = secondsToUs(1.0);
+    clip.srcOut = secondsToUs(5.0);
+    clip.speedCurve.setPoints({{0.0, 1.0}, {1.0, 2.0}});
+    QVERIFY(clip.hasSpeedCurve());
+    clip.syncDurationFromSpeedCurve();
+    const drift::TimeUs duration = clip.timelineDuration;
+    QCOMPARE(duration, clip.speedCurve.retimedDurationUs(clip.srcOut - clip.srcIn));
+
+    drift::slipClipSource(clip, secondsToUs(2.0));
+    QCOMPARE(clip.srcIn, secondsToUs(3.0));
+    QCOMPARE(clip.srcOut, secondsToUs(7.0));
+    clip.syncDurationFromSpeedCurve();
+    QCOMPARE(clip.timelineDuration, duration);
 }
 
 // Masks are not reachable from retargetClipToSource — they live on the adjustments pinned to the
@@ -7764,6 +7933,86 @@ void CoreTest::rippleGroupsFollowLinksAcrossTracks()
                 .isEmpty());
 }
 
+// An all-tracks close moves every track that is empty over the gap by its full width; a track with a
+// clip in the gap, or a locked one, stays and is reported.
+void CoreTest::closeGapOnEmptyTracksMovesEveryFreeTrack()
+{
+    const auto sec = [](double v) { return drift::secondsToUs(v); };
+    drift::Project project;
+    drift::Track v1{.type = drift::TrackType::Video};
+    v1.clips = {rippleClip("a", 0, 10), rippleClip("b", 12, 2)};
+    drift::Track a1{.type = drift::TrackType::Audio};
+    a1.clips = {rippleClip("m1", 0, 10), rippleClip("m2", 12, 8)};
+    drift::Track a2{.type = drift::TrackType::Audio};
+    a2.clips = {rippleClip("span", 9, 4), rippleClip("tail", 15, 1)};
+    drift::Track t1{.type = drift::TrackType::Text};
+    t1.locked = true;
+    t1.clips = {rippleClip("t", 13, 1)};
+    drift::Track adj{.type = drift::TrackType::Adjustment};
+    adj.clips = {rippleClip("g", 12, 1)};
+    // A nested lane's pinned clip sits in the gap; it neither blocks nor moves.
+    drift::Track lane{.type = drift::TrackType::Adjustment};
+    lane.adjustmentScope = drift::AdjustmentScope::ParentTrack;
+    lane.parentTrackId = QStringLiteral("p");
+    drift::Clip pinned = rippleClip("pin", 10.5, 1);
+    pinned.linkedClipId = QStringLiteral("a");
+    lane.clips = {pinned};
+    project.tracks() = {v1, a1, a2, t1, adj, lane};
+
+    drift::EmptyTracksGapClose result;
+    QVERIFY(drift::closeGapOnEmptyTracks(project, 0, sec(10), sec(12), &result));
+    QCOMPARE(rippleStart(project, "b"), 10.0);
+    QCOMPARE(rippleStart(project, "m2"), 10.0);
+    QCOMPARE(rippleStart(project, "g"), 10.0);
+    QCOMPARE(rippleStart(project, "tail"), 15.0);
+    QCOMPARE(rippleStart(project, "t"), 13.0);
+    QCOMPARE(rippleStart(project, "span"), 9.0);
+    QCOMPARE(rippleStart(project, "pin"), 10.5);
+    QCOMPARE(result.movedTracks, (QList<int>{0, 1, 4}));
+    QCOMPARE(result.skipped.size(), 2);
+    QCOMPARE(result.skipped.at(0).track, 2);
+    QCOMPARE(result.skipped.at(0).reason, QStringLiteral("clip_in_gap"));
+    QCOMPARE(result.skipped.at(0).blocker, QStringLiteral("span"));
+    QCOMPARE(result.skipped.at(1).track, 3);
+    QCOMPARE(result.skipped.at(1).reason, QStringLiteral("locked"));
+
+    // A linked group with a clip in the gap on one track stays as a whole, the other track reported.
+    drift::Project linked;
+    drift::Track lv1{.type = drift::TrackType::Video};
+    lv1.clips = {rippleClip("a", 0, 10), rippleClip("b", 12, 2)};
+    drift::Track lv2{.type = drift::TrackType::Video};
+    lv2.clips = {rippleClip("x", 12, 2, "L")};
+    drift::Track la3{.type = drift::TrackType::Audio};
+    la3.clips = {rippleClip("z", 10.5, 0.5), rippleClip("y", 12, 2, "L")};
+    linked.tracks() = {lv1, lv2, la3};
+    drift::EmptyTracksGapClose linkedResult;
+    QVERIFY(drift::closeGapOnEmptyTracks(linked, 0, sec(10), sec(12), &linkedResult));
+    QCOMPARE(rippleStart(linked, "b"), 10.0);
+    QCOMPARE(rippleStart(linked, "x"), 12.0);
+    QCOMPARE(rippleStart(linked, "y"), 12.0);
+    QCOMPARE(linkedResult.movedTracks, (QList<int>{0}));
+    QCOMPARE(linkedResult.skipped.size(), 2);
+    QCOMPARE(linkedResult.skipped.at(0).track, 1);
+    QCOMPARE(linkedResult.skipped.at(0).reason, QStringLiteral("linked"));
+    QCOMPARE(linkedResult.skipped.at(1).track, 2);
+    QCOMPARE(linkedResult.skipped.at(1).reason, QStringLiteral("clip_in_gap"));
+
+    // The origin's own group cannot close: false, nothing changed, and the reason says why.
+    drift::Track ov{.type = drift::TrackType::Video};
+    ov.clips = {rippleClip("a", 0, 10), rippleClip("b", 12, 2, "L")};
+    drift::Track oa{.type = drift::TrackType::Audio};
+    oa.clips = {rippleClip("z", 10.5, 0.5), rippleClip("y", 12, 2, "L")};
+    drift::Project origin;
+    origin.tracks() = {ov, oa};
+    drift::GapTrackSkip why;
+    drift::EmptyTracksGapClose none;
+    QVERIFY(!drift::closeGapOnEmptyTracks(origin, 0, sec(10), sec(12), &none, &why));
+    QCOMPARE(why.reason, QStringLiteral("clip_in_gap"));
+    QCOMPARE(why.blocker, QStringLiteral("z"));
+    QCOMPARE(rippleStart(origin, "b"), 12.0);
+    QCOMPARE(rippleStart(origin, "y"), 12.0);
+}
+
 void CoreTest::closeRippleRangesShiftsEachGroupOnce()
 {
     // A linked pair deleted from video and audio: one cleared range per track, but the following
@@ -8599,6 +8848,194 @@ void CoreTest::diffProjectsReportsClipChanges()
     drift::Project rotated = withAsset;
     rotated.assets()[asset.id].rotationDegrees = 90;
     QCOMPARE(drift::diffProjects(withAsset, rotated).assets.size(), 1);
+}
+
+void CoreTest::trackAudibleFollowsMixerRule_data()
+{
+    QTest::addColumn<bool>("muted");
+    QTest::addColumn<bool>("hidden");
+    QTest::addColumn<bool>("solo");
+    QTest::addColumn<bool>("anySolo");
+    QTest::addColumn<bool>("expected");
+
+    QTest::newRow("plain") << false << false << false << false << true;
+    QTest::newRow("muted") << true << false << false << false << false;
+    QTest::newRow("hidden") << false << true << false << false << false;
+    QTest::newRow("silenced by another's solo") << false << false << false << true << false;
+    QTest::newRow("soloed and muted") << true << false << true << true << false;
+    QTest::newRow("soloed") << false << false << true << true << true;
+    QTest::newRow("soloed and hidden") << false << true << true << true << false;
+}
+
+void CoreTest::trackAudibleFollowsMixerRule()
+{
+    QFETCH(bool, muted);
+    QFETCH(bool, hidden);
+    QFETCH(bool, solo);
+    QFETCH(bool, anySolo);
+    QFETCH(bool, expected);
+
+    drift::Track track;
+    track.muted = muted;
+    track.hidden = hidden;
+    track.solo = solo;
+    QCOMPARE(drift::trackAudible(track, anySolo), expected);
+
+    QList<drift::Track> tracks;
+    QVERIFY(!drift::anyTrackSoloed(tracks));
+    tracks.append(drift::Track{});
+    QVERIFY(!drift::anyTrackSoloed(tracks));
+    tracks.append(track);
+    QCOMPARE(drift::anyTrackSoloed(tracks), solo);
+}
+
+void CoreTest::muteAllButClipClearsSolo()
+{
+    drift::Project project;
+    project.tracks().clear();
+    for (int i = 0; i < 2; ++i) {
+        drift::Track track{.type = drift::TrackType::Audio};
+        drift::Clip clip;
+        clip.id = QStringLiteral("clip%1").arg(i);
+        clip.type = drift::ClipType::Audio;
+        clip.timelineDuration = drift::secondsToUs(1.0);
+        clip.srcOut = clip.timelineDuration;
+        track.clips.append(clip);
+        project.tracks().append(track);
+    }
+    project.tracks()[1].solo = true;
+
+    drift::muteAllButClip(project, QStringLiteral("clip0"));
+    QVERIFY(!drift::anyTrackSoloed(project.tracks()));
+    QVERIFY(!project.tracks().at(0).muted);
+    QVERIFY(project.tracks().at(1).muted);
+}
+
+void CoreTest::projectPathKeyKeepsUuidsAndHashesTheRest()
+{
+    const QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QCOMPARE(drift::projectPathKey(uuid), uuid);
+    QCOMPARE(drift::projectPathKey(QString()), QString());
+    const QRegularExpression hashed(QStringLiteral("^x[0-9a-f]{32}$"));
+    for (const QString &id : {QStringLiteral("../x"), QStringLiteral("a/b"), QStringLiteral(".."),
+                              QStringLiteral("C:\\x"), QStringLiteral("CON"),
+                              QStringLiteral("{") + uuid + QStringLiteral("}"), uuid.toUpper()}) {
+        const QString key = drift::projectPathKey(id);
+        QVERIFY2(hashed.match(key).hasMatch(), qPrintable(id + QStringLiteral(" -> ") + key));
+        QCOMPARE(drift::projectPathKey(id), key); // stable
+    }
+    QVERIFY(drift::projectPathKey(QStringLiteral("../x")) != drift::projectPathKey(QStringLiteral("../y")));
+    const QList<QString> extra{QString::fromLatin1("a\0b", 3), QString(10000, QLatin1Char('a')),
+                               QStringLiteral("00000000-0000-0000-0000-000000000000")};
+    for (const QString &id : extra) // the nil UUID is not one Drift mints, so it is hashed too
+        QVERIFY(hashed.match(drift::projectPathKey(id)).hasMatch());
+    // A bundle with no id gets a folder of its own, named by where it is.
+    const QString a = drift::bundleMediaKey(QString(), QStringLiteral("/tmp/a.drift"));
+    QVERIFY(QRegularExpression(QStringLiteral("^b[0-9a-f]{32}$")).match(a).hasMatch());
+    QCOMPARE(drift::bundleMediaKey(QString(), QStringLiteral("/tmp/a.drift")), a);
+    QVERIFY(a != drift::bundleMediaKey(QString(), QStringLiteral("/tmp/b.drift")));
+    QCOMPARE(drift::bundleMediaKey(uuid, QStringLiteral("/tmp/a.drift")), uuid);
+}
+
+void CoreTest::fitCropInsideRotation()
+{
+    using drift::fitCropInsideRotation;
+    using drift::sourceFrameCovered;
+    const double W = 1920, H = 1080;
+    const auto sameBox = [](const QRectF &a, const QRectF &b) {
+        return qAbs(a.x() - b.x()) < 1e-9 && qAbs(a.y() - b.y()) < 1e-9
+               && qAbs(a.width() - b.width()) < 1e-9 && qAbs(a.height() - b.height()) < 1e-9;
+    };
+    const auto pxAspect = [&](const QRectF &r) { return (r.width() * W) / (r.height() * H); };
+
+    // Angle 0 is the identity.
+    QVERIFY(sameBox(fitCropInsideRotation(QRectF(0, 0, 1, 1), 0, W, H), QRectF(0, 0, 1, 1)));
+    QVERIFY(sameBox(fitCropInsideRotation(QRectF(0.25, 0.25, 0.5, 0.5), 0, W, H), QRectF(0.25, 0.25, 0.5, 0.5)));
+
+    // 3 degrees on the full frame: the box shrinks about the centre, keeps its aspect, covers.
+    {
+        const QRectF full(0, 0, 1, 1);
+        QVERIFY(!sourceFrameCovered(full, 3, W, H));
+        const QRectF fit = fitCropInsideRotation(full, 3, W, H);
+        QVERIFY(fit.width() < 1.0 && fit.height() < 1.0);
+        QVERIFY(qAbs(pxAspect(fit) - W / H) < 1e-3);
+        QVERIFY(qAbs(fit.center().x() - 0.5) < 1e-9 && qAbs(fit.center().y() - 0.5) < 1e-9);
+        QVERIFY(sourceFrameCovered(fit, 3, W, H));
+    }
+
+    // Over a spread of angles and boxes: covered, aspect kept, never larger than the base.
+    const QList<QRectF> boxes{QRectF(0, 0, 1, 1), QRectF(0.25, 0.25, 0.5, 0.5), QRectF(0.6, 0.1, 0.3, 0.3)};
+    for (const double angle : {-45.0, -10.0, -1.0, 0.5, 5.0, 30.0, 60.0}) {
+        for (const QRectF &base : boxes) {
+            const QRectF fit = fitCropInsideRotation(base, angle, W, H);
+            QVERIFY2(sourceFrameCovered(fit, angle, W, H), qPrintable(QStringLiteral("angle %1").arg(angle)));
+            QVERIFY(qAbs(pxAspect(fit) - pxAspect(base)) < 1e-3 * pxAspect(base));
+            QVERIFY(fit.width() <= base.width() + 1e-9);
+        }
+    }
+
+    // Minimal shrink: a box that already fits is returned as it is.
+    {
+        const QRectF inside(0.3, 0.3, 0.4, 0.4);
+        QVERIFY(sourceFrameCovered(inside, 2, W, H));
+        QVERIFY(sameBox(fitCropInsideRotation(inside, 2, W, H), inside));
+    }
+
+    // A thin strip along the top: fitted, covered, and not squeezed below the size floor.
+    {
+        const QRectF strip(0, 0, 1, 0.1);
+        const QRectF fit = fitCropInsideRotation(strip, 10, W, H);
+        QVERIFY(sourceFrameCovered(fit, 10, W, H));
+        QVERIFY(fit.height() >= 0.08 - 1e-3 || qAbs(fit.center().y() - 0.5) < 1e-9);
+    }
+
+    // 90 degrees on 16:9: the biggest 16:9 box inside the portrait band is 1080 x 607.5.
+    {
+        const QRectF fit = fitCropInsideRotation(QRectF(0, 0, 1, 1), 90, W, H);
+        QVERIFY(sourceFrameCovered(fit, 90, W, H));
+        QVERIFY(qAbs(fit.width() - 0.5625) < 1e-3);
+        QVERIFY(qAbs(fit.height() - 0.5625) < 1e-3);
+    }
+
+    // Quarter-turned clip (1920x1080 shown 1080x1920): the fit uses the displayed size. A centred
+    // full-width 30%-height box at 10 degrees needs a smaller scale than with the raw size.
+    {
+        const QRectF box(0, 0.35, 1, 0.3);
+        const QRectF raw = fitCropInsideRotation(box, 10, 1920, 1080);
+        const QRectF turned = fitCropInsideRotation(box, 10, 1080, 1920);
+        QVERIFY(sourceFrameCovered(turned, 10, 1080, 1920));
+        QVERIFY(!sourceFrameCovered(raw, 10, 1080, 1920));
+        QVERIFY(turned.width() < raw.width());
+        QVERIFY(qAbs(turned.width() - 0.93) < 0.02);
+    }
+
+    // Portrait, square sources and +-180.
+    for (const QSizeF &src : {QSizeF(1080, 1920), QSizeF(1000, 1000)}) {
+        for (const double angle : {-30.0, 7.0, 45.0}) {
+            const QRectF fit = fitCropInsideRotation(QRectF(0, 0, 1, 1), angle, src.width(), src.height());
+            QVERIFY(sourceFrameCovered(fit, angle, src.width(), src.height()));
+            QVERIFY(fit.width() < 1.0);
+        }
+    }
+    for (const double angle : {180.0, -180.0}) {
+        const QRectF full(0, 0, 1, 1);
+        QVERIFY(sourceFrameCovered(full, angle, W, H));
+        QVERIFY(sameBox(fitCropInsideRotation(full, angle, W, H), full));
+        const QRectF off(0.1, 0.2, 0.3, 0.4);
+        QVERIFY(sameBox(fitCropInsideRotation(off, angle, W, H), off));
+    }
+
+    // A very thin box next to the edge is not collapsed to nothing.
+    {
+        const QRectF thin(0, 0, 1, 0.002);
+        const QRectF fit = fitCropInsideRotation(thin, 5, W, H);
+        QVERIFY(sourceFrameCovered(fit, 5, W, H));
+        QVERIFY(fit.width() > 0.1 && fit.height() > 0.0005);
+    }
+
+    // Unknown source size: identity.
+    QVERIFY(sameBox(fitCropInsideRotation(QRectF(0, 0, 1, 1), 5, 0, 0), QRectF(0, 0, 1, 1)));
+    QVERIFY(sourceFrameCovered(QRectF(0, 0, 1, 1), 5, 0, 0));
 }
 
 QTEST_MAIN(CoreTest)

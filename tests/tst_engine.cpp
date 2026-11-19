@@ -115,6 +115,8 @@
 #include "engine/face/tracking/Face111.h"
 #include "engine/face/props/FacePropCatalog.h"
 #include "engine/face/props/FacePropImport.h"
+#include "engine/packages/assets/StickerCatalog.h"
+#include "engine/packages/assets/StickerPackImport.h"
 #include "engine/face/props/FaceModelTransform.h"
 #include "engine/render3d/models/ModelAsset.h"
 #include "engine/render3d/models/ModelAnimation.h"
@@ -144,6 +146,7 @@
 #include "engine/compositor/layers/MaskApplier.h"
 #include "engine/encode/writers/MatteWriter.h"
 #include "engine/encode/proxies/ReverseProxyCache.h"
+#include "engine/encode/proxies/ProxyLocation.h"
 #include "engine/encode/proxies/ProxyNaming.h"
 #include "engine/encode/proxies/ReverseRenderer.h"
 #include "engine/encode/MediaEditor.h"
@@ -195,6 +198,8 @@ private slots:
     void proxyNamingLearnsAndMatchesRules();
     void sidecarProxiesOutrankTheCache();
     void reversedSidecarNamesRoundTrip();
+    void folderProxyNamesAreStableAndDistinct();
+    void proxyTargetFollowsTheLocationSetting();
     void reversedSidecarsOutrankTheIndex();
     void variableFrameRateIsDetected();
     void mediaEditorCropsAnImage();
@@ -256,6 +261,9 @@ private slots:
     void audioWindowOfSilenceIsFlat();
     void audioWindowSineLandsInItsLogBin();
     void audioWindowBassSplitsLowFromHigh();
+    void timelineAudioSourceFollowsSolo();
+    void timelineAudioSourceFingerprintTracksAudibility();
+    void exportAutoRangeSkipsSilencedAudio();
     void audioFrameTextureLayout();
     void clipGizmoSolvesDrags();
     void clipGizmoPivotsOnBoundsCentre();
@@ -301,6 +309,9 @@ private slots:
     void faceModelFillWireDoesNotLeakGlState();
     void faceMesh3dEffectPackageLoads();
     void facePropsEffectPackageLoads();
+    void stickerPackPlansManifestAndFolders();
+    void stickerPackImportFromZipAndCatalog();
+    void stickerPackImportRejectsUnsafePaths();
     void facePropImportFromMultiPropZip();
     void facePropImportFromFolder();
     void facePropImportRejectsUnsafeManifests();
@@ -461,6 +472,7 @@ private slots:
     void maskShapesUseBothSizeAxes();
     void maskRoundnessRoundsRectangleCorners();
     void splitMaskRevealsOneSideOfASeam();
+    void largeFeatherSpreadsAcrossTheFrame();
     void starMaskRotatesOnceNotTwice();
     void maskAdjustmentLaneMasksItsParentsClips();
     void maskLaneOpsCombineAcrossLanes();
@@ -4304,6 +4316,115 @@ void EngineTest::facePropsEffectPackageLoads()
     QVERIFY(hasScale);
 }
 
+void EngineTest::stickerPackPlansManifestAndFolders()
+{
+    // No manifest: a root image forms a category named after the pack, each folder another.
+    const StickerPackLayout plain = planStickerPack(
+        {QStringLiteral("wave.png"), QStringLiteral("faces/Smile_big.webp"), QStringLiteral("faces/sub/deep.png"),
+         QStringLiteral("animals/cat.png"), QStringLiteral("notes.txt"), QStringLiteral(".hidden/x.png")},
+        {}, QStringLiteral("Mine"));
+    QCOMPARE(plain.name, QStringLiteral("Mine"));
+    QCOMPARE(plain.categories.size(), 3);
+    QCOMPARE(plain.categories.at(0).label, QStringLiteral("Mine"));
+    QCOMPARE(plain.categories.at(0).files, QStringList{QStringLiteral("wave.png")});
+    QCOMPARE(plain.categories.at(1).label, QStringLiteral("animals"));
+    QCOMPARE(plain.categories.at(2).files.size(), 2);
+
+    const QByteArray manifest = R"({"name":"Fancy","categories":[
+        {"id":"f","name":"Faces","stickers":["faces/Smile_big.webp","../evil.png","missing.png"]},
+        {"name":"Pets","folder":"animals"},
+        {"id":"empty","name":"Nothing","folder":"nowhere"}]})";
+    const StickerPackLayout fancy = planStickerPack(
+        {QStringLiteral("faces/Smile_big.webp"), QStringLiteral("animals/cat.png"), QStringLiteral("other.png")},
+        manifest, QStringLiteral("Ignored"));
+    QCOMPARE(fancy.name, QStringLiteral("Fancy"));
+    QCOMPARE(fancy.categories.size(), 2);
+    QCOMPARE(fancy.categories.at(0).id, QStringLiteral("f"));
+    QCOMPARE(fancy.categories.at(0).files, QStringList{QStringLiteral("faces/Smile_big.webp")});
+    QCOMPARE(fancy.categories.at(1).label, QStringLiteral("Pets"));
+    QCOMPARE(fancy.categories.at(1).files, QStringList{QStringLiteral("animals/cat.png")});
+}
+
+void EngineTest::stickerPackImportFromZipAndCatalog()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString zip = tmp.filePath(QStringLiteral("pack.zip"));
+    QVERIFY(writeStoredZip(zip, {
+        {QStringLiteral("Emoji Set/manifest.json"), QByteArray(R"({"name":"Emoji Set","categories":[{"id":"a","name":"Alpha","folder":"a"}]})")},
+        {QStringLiteral("Emoji Set/a/one.png"), QByteArray("png1")},
+        {QStringLiteral("Emoji Set/a/two_two.webp"), QByteArray("webp2")},
+        {QStringLiteral("Emoji Set/readme.txt"), QByteArray("x")},
+    }));
+
+    const QString dest = tmp.filePath(QStringLiteral("stickers"));
+    const StickerPackImportResult result = importStickerPackFromZip(zip, dest);
+    QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+    QCOMPARE(result.packId, QStringLiteral("custom-emoji-set"));
+    QCOMPARE(result.count, 2);
+    QVERIFY(QFileInfo::exists(dest + QStringLiteral("/custom-emoji-set/a/one.png")));
+    QVERIFY(!QFileInfo::exists(dest + QStringLiteral("/custom-emoji-set/readme.txt")));
+
+    reloadStickerCatalog({dest});
+    const QList<StickerEntry> entries = stickers();
+    QCOMPARE(entries.size(), 2);
+    for (const StickerEntry &entry : entries) {
+        QVERIFY(entry.id.startsWith(QStringLiteral("custom-emoji-set/")));
+        QVERIFY(QFileInfo::exists(entry.path));
+    }
+    QCOMPARE(entries.at(1).label, QStringLiteral("two two"));
+    QVERIFY(stickerCategories().at(0).custom);
+    QCOMPARE(stickerCategories().at(0).label, QStringLiteral("Alpha"));
+
+    // Importing again replaces the pack instead of duplicating it.
+    QCOMPARE(importStickerPackFromZip(zip, dest).count, 2);
+    reloadStickerCatalog({dest});
+    QCOMPARE(stickers().size(), 2);
+
+    // Folder import, no manifest.
+    const QString src = tmp.filePath(QStringLiteral("My Folder"));
+    QVERIFY(QDir().mkpath(src + QStringLiteral("/smile")));
+    QVERIFY(writeTestFile(src + QStringLiteral("/smile/s.png"), QByteArray("p")));
+    QVERIFY(writeTestFile(src + QStringLiteral("/top.png"), QByteArray("p")));
+    const StickerPackImportResult folder = importStickerPackFromDirectory(src, dest);
+    QVERIFY2(folder.error.isEmpty(), qPrintable(folder.error));
+    QCOMPARE(folder.packId, QStringLiteral("custom-my-folder"));
+    reloadStickerCatalog({dest});
+    QCOMPARE(stickers().size(), 4);
+
+    QString error;
+    QVERIFY(!removeUserStickerPack(QStringLiteral("../stickers"), &error, dest));
+    QVERIFY(removeUserStickerPack(result.packId, &error, dest));
+    QVERIFY(!QFileInfo::exists(dest + QStringLiteral("/custom-emoji-set")));
+    reloadStickerCatalog();
+}
+
+void EngineTest::stickerPackImportRejectsUnsafePaths()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString zip = tmp.filePath(QStringLiteral("evil.zip"));
+    QVERIFY(writeStoredZip(zip, {
+        {QStringLiteral("../escape.png"), QByteArray("x")},
+        {QStringLiteral("/abs.png"), QByteArray("x")},
+        {QStringLiteral("a/../../escape2.png"), QByteArray("x")},
+        {QStringLiteral("notes.txt"), QByteArray("x")},
+    }));
+    const QString dest = tmp.filePath(QStringLiteral("stickers"));
+    const StickerPackImportResult result = importStickerPackFromZip(zip, dest);
+    QVERIFY(!result.error.isEmpty());
+    QVERIFY(!QFileInfo::exists(tmp.filePath(QStringLiteral("escape.png"))));
+    QVERIFY(!QFileInfo::exists(tmp.filePath(QStringLiteral("escape2.png"))));
+    QVERIFY(QDir(dest).entryList(QDir::Dirs | QDir::NoDotAndDotDot).isEmpty());
+
+    // The manifest cannot name a file outside the pack either.
+    const StickerPackLayout layout = planStickerPack(
+        {QStringLiteral("ok.png")}, QByteArray(R"({"categories":[{"name":"X","stickers":["../ok.png","/ok.png","ok.png"]}]})"),
+        QStringLiteral("P"));
+    QCOMPARE(layout.categories.size(), 1);
+    QCOMPARE(layout.categories.at(0).files, QStringList{QStringLiteral("ok.png")});
+}
+
 void EngineTest::facePropImportFromMultiPropZip()
 {
     QTemporaryDir tmp;
@@ -6092,6 +6213,103 @@ void EngineTest::reversedSidecarNamesRoundTrip()
     QVERIFY(!parseReversedSidecarName(src, head + QStringLiteral("1-5.mov")));
     QVERIFY(!parseReversedSidecarName(src, QStringLiteral("garbage")));
     QVERIFY(!parseReversedSidecarName(src, QString()));
+}
+
+void EngineTest::folderProxyNamesAreStableAndDistinct()
+{
+    using namespace drift;
+    const QString folder = QStringLiteral("/drives/proxies");
+    const QString a = QStringLiteral("/cards/a/clip01.MP4");
+    const QString b = QStringLiteral("/cards/b/clip01.MP4");
+
+    const QString key = proxySourceKey(a);
+    QCOMPARE(key.size(), 8);
+    QVERIFY(QRegularExpression(QStringLiteral("^[0-9a-f]{8}$")).match(key).hasMatch());
+    QCOMPARE(proxySourceKey(a), key);
+    QVERIFY(proxySourceKey(b) != key);
+    // An unclean spelling of the same path maps to the same key.
+    QCOMPARE(proxySourceKey(QStringLiteral("/cards/a/../a/clip01.MP4")), key);
+
+    QCOMPARE(folderProxyPath(folder, a, 720), QStringLiteral("/drives/proxies/clip01_%1_proxy_720.mp4").arg(key));
+    QVERIFY(folderProxyPath(folder, a, 720) != folderProxyPath(folder, b, 720));
+
+    // A very long stem is cut so the name stays a legal file name even in 4-byte characters.
+    const QString longSource = QStringLiteral("/cards/") + QStringLiteral("\U0001F600").repeated(150) + QStringLiteral(".mp4");
+    QVERIFY(QFileInfo(folderProxyPath(folder, longSource, 720)).fileName().toUtf8().size() <= 255);
+    QVERIFY(QFileInfo(folderReversedPath(folder, longSource, 0, 4'000'000'000)).fileName().toUtf8().size() <= 255);
+
+    // 80 CJK characters are 240 bytes: the stem is cut by bytes, whole characters only.
+    const QString cjkSource = QStringLiteral("/cards/") + QString(QChar(0x65E5)).repeated(80) + QStringLiteral(".mp4");
+    const QString cjkName = QFileInfo(folderProxyPath(folder, cjkSource, 1080)).fileName();
+    QVERIFY(cjkName.toUtf8().size() <= 255);
+    QVERIFY(QFileInfo(folderReversedPath(folder, cjkSource, 0, 4'000'000'000)).fileName().toUtf8().size() <= 255);
+    QVERIFY(cjkName.startsWith(QString(QChar(0x65E5)).repeated(60) + QLatin1Char('_')));
+    QVERIFY(!cjkName.contains(QChar::ReplacementCharacter));
+    QVERIFY(parseFolderReversedName(cjkSource, QFileInfo(folderReversedPath(folder, cjkSource, 0, 2000)).fileName()));
+
+    const QString reversed = folderReversedPath(folder, a, 1'500'400, 4'000'100);
+    QCOMPARE(reversed, QStringLiteral("/drives/proxies/clip01_%1_reversed_1500-4001.mp4").arg(key));
+    const auto range = parseFolderReversedName(a, QFileInfo(reversed).fileName());
+    QVERIFY(range);
+    QCOMPARE(range->inUs, TimeUs(1'500'000));
+    QCOMPARE(range->outUs, TimeUs(4'001'000));
+    // Another source's file, and a beside-style name, are not this source's.
+    QVERIFY(!parseFolderReversedName(b, QFileInfo(reversed).fileName()));
+    QVERIFY(!parseFolderReversedName(a, QStringLiteral("clip01_reversed_1500-4001.mp4")));
+    QVERIFY(!parseFolderReversedName(a, QStringLiteral("clip01_%1_reversed_9-5.mp4").arg(key)));
+    // The beside-style parser still takes its own names.
+    QVERIFY(parseReversedSidecarName(a, QStringLiteral("clip01_reversed_1500-4001.mp4")));
+}
+
+void EngineTest::proxyTargetFollowsTheLocationSetting()
+{
+    using namespace drift;
+    QTemporaryDir source;
+    QTemporaryDir folder;
+    QVERIFY(source.isValid() && folder.isValid());
+    const QString src = source.filePath(QStringLiteral("clip.mp4"));
+    const QString beside = generatedProxyPath(src, 720);
+    const QString inFolder = folderProxyPath(folder.path(), src, 720);
+    using Where = ProxyTarget::Where;
+
+    ProxyTarget t = chooseProxyTarget(ProxyLocation::Beside, folder.path(), src, beside, inFolder);
+    QCOMPARE(t.where, Where::Beside);
+    QCOMPARE(t.path, beside);
+    QVERIFY(!t.folderUnavailable && !t.besideRefused);
+
+    t = chooseProxyTarget(ProxyLocation::Folder, folder.path(), src, beside, inFolder);
+    QCOMPARE(t.where, Where::Folder);
+    QCOMPARE(t.path, inFolder);
+    QVERIFY(!t.folderUnavailable);
+
+    // A missing folder: the cache, flagged, and nothing is created there or beside the source.
+    const QString missing = folder.filePath(QStringLiteral("gone/deeper"));
+    t = chooseProxyTarget(ProxyLocation::Folder, missing, src, beside, folderProxyPath(missing, src, 720));
+    QCOMPARE(t.where, Where::Cache);
+    QVERIFY(t.folderUnavailable);
+    QVERIFY(!t.besideRefused);
+    QVERIFY(t.path.startsWith(reverseCacheDir()));
+    QVERIFY(!QFileInfo::exists(missing));
+    QVERIFY(QDir(source.path()).entryList(QDir::Files).isEmpty());
+
+    // Folder mode without a folder behaves the same way.
+    t = chooseProxyTarget(ProxyLocation::Folder, QString(), src, beside, QString());
+    QCOMPARE(t.where, Where::Cache);
+    QVERIFY(t.folderUnavailable);
+
+    t = chooseProxyTarget(ProxyLocation::Cache, folder.path(), src, beside, inFolder);
+    QCOMPARE(t.where, Where::Cache);
+    QVERIFY(!t.folderUnavailable && !t.besideRefused);
+
+    // A source that isn't a local file always goes to the cache, with no complaint.
+    const QString uri = QStringLiteral("content://media/x");
+    t = chooseProxyTarget(ProxyLocation::Folder, folder.path(), uri, beside, inFolder);
+    QCOMPARE(t.where, Where::Cache);
+    QVERIFY(!t.folderUnavailable && !t.besideRefused);
+
+    QCOMPARE(proxyLocationToString(ProxyLocation::Folder), QStringLiteral("folder"));
+    QVERIFY(!proxyLocationFromString(QStringLiteral("nowhere")));
+    QCOMPARE(*proxyLocationFromString(QStringLiteral("cache")), ProxyLocation::Cache);
 }
 
 void EngineTest::reversedSidecarsOutrankTheIndex()
@@ -12689,6 +12907,24 @@ void EngineTest::maskRoundnessRoundsRectangleCorners()
     QVERIFY(!back.keyframes.value(QStringLiteral("roundness")).isEmpty());
 }
 
+void EngineTest::largeFeatherSpreadsAcrossTheFrame()
+{
+    drift::Mask mask;
+    mask.shape = drift::MaskShape::Split;
+    mask.feather = 512.0;
+    QElapsedTimer timer;
+    timer.start();
+    const QImage alpha = drift::maskAlphaMap(mask, 1024, 1024);
+    QVERIFY2(timer.elapsed() < 2000, "large feather must not scale with radius");
+    QCOMPARE(alpha.size(), QSize(1024, 1024));
+    const int left = qGray(alpha.pixel(100, 512));
+    const int mid = qGray(alpha.pixel(512, 512));
+    const int right = qGray(alpha.pixel(900, 512));
+    QVERIFY(left > mid && mid > right);
+    QVERIFY(left < 255 && right > 0);
+    QVERIFY(qAbs(mid - 128) < 20);
+}
+
 void EngineTest::splitMaskRevealsOneSideOfASeam()
 {
     drift::Mask mask;
@@ -18878,6 +19114,172 @@ void EngineTest::audioWindowBassSplitsLowFromHigh()
     QVERIFY(low.bass > 0.8f);
     const AudioFrame high = analyzeWindow(sineWindow(5000.0).data(), 48000);
     QVERIFY(high.bass < 0.2f);
+}
+
+namespace {
+
+// Two audio tracks, each with a one-second tone: track 0 over 0-1 s, track 1 over 1-2 s.
+drift::Project soloTestProject(const QString &toneA, const QString &toneB)
+{
+    drift::Project project;
+    project.tracks().clear();
+    project.setSampleRate(48000);
+    const QString paths[2] = {toneA, toneB};
+    for (int i = 0; i < 2; ++i) {
+        drift::Track track{.type = drift::TrackType::Audio};
+        drift::Clip clip;
+        clip.id = QStringLiteral("tone%1").arg(i);
+        clip.type = drift::ClipType::Audio;
+        clip.path = paths[i];
+        clip.timelineStart = drift::secondsToUs(double(i));
+        clip.timelineDuration = drift::secondsToUs(1.0);
+        clip.srcIn = 0;
+        clip.srcOut = clip.timelineDuration;
+        track.clips.append(clip);
+        project.tracks().append(track);
+    }
+    project.ensureTrackIds();
+    return project;
+}
+
+float sourceEnergy(const drift::Project &project, const QString &trackId, double atSeconds)
+{
+    const QVector<float> mono = readSourceMono(project, trackId, drift::secondsToUs(atSeconds), 4800, 48000);
+    float energy = 0.0f;
+    for (const float v : mono)
+        energy += std::abs(v);
+    return energy;
+}
+
+} // namespace
+
+// The Timeline mix an audio-reactive effect reads is what the mixer plays: solo and hide apply. A
+// named track is read whatever the flags.
+void EngineTest::timelineAudioSourceFollowsSolo()
+{
+    if (ffmpegExe().isEmpty())
+        QSKIP("ffmpeg not on PATH");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString a = dir.filePath(QStringLiteral("a.wav"));
+    const QString b = dir.filePath(QStringLiteral("b.wav"));
+    QVERIFY(makeToneWav(a, 1.0, 0.5));
+    QVERIFY(makeToneWav(b, 1.0, 0.5, 880));
+
+    drift::Project project = soloTestProject(a, b);
+    QVERIFY(sourceEnergy(project, QString(), 0.5) > 1.0f);
+    QVERIFY(sourceEnergy(project, QString(), 1.5) > 1.0f);
+
+    project.tracks()[1].solo = true;
+    QVERIFY(sourceEnergy(project, QString(), 0.5) < 0.01f);
+    QVERIFY(sourceEnergy(project, QString(), 1.5) > 1.0f);
+
+    project.tracks()[1].hidden = true;
+    QVERIFY(sourceEnergy(project, QString(), 0.5) < 0.01f);
+    QVERIFY(sourceEnergy(project, QString(), 1.5) < 0.01f);
+
+    project.tracks()[1].hidden = false;
+    QVERIFY(sourceEnergy(project, project.tracks().at(0).id, 0.5) > 1.0f);
+}
+
+void EngineTest::timelineAudioSourceFingerprintTracksAudibility()
+{
+    drift::Project project = soloTestProject(QStringLiteral("a.wav"), QStringLiteral("b.wav"));
+    const QString track0 = project.tracks().at(0).id;
+    const quint64 base = audioSourceFingerprint(project, QString());
+    const quint64 baseNamed = audioSourceFingerprint(project, track0);
+
+    project.tracks()[1].solo = true;
+    QVERIFY(audioSourceFingerprint(project, QString()) != base);
+    QCOMPARE(audioSourceFingerprint(project, track0), baseNamed);
+
+    project.tracks()[1].solo = false;
+    QCOMPARE(audioSourceFingerprint(project, QString()), base);
+    project.tracks()[0].hidden = true;
+    QVERIFY(audioSourceFingerprint(project, QString()) != base);
+
+    // Soloing the only audible track leaves the audible set as it was.
+    project.tracks()[0].hidden = false;
+    project.tracks()[0].muted = true;
+    const quint64 onlyOne = audioSourceFingerprint(project, QString());
+    project.tracks()[1].solo = true;
+    QCOMPARE(audioSourceFingerprint(project, QString()), onlyOne);
+}
+
+// V1 0-20 s, A1 0-30 s, A2 0-60 s. Only timing matters, so no media is needed.
+void EngineTest::exportAutoRangeSkipsSilencedAudio()
+{
+    drift::Project project;
+    project.tracks().clear();
+    const auto addTrack = [&](drift::TrackType type, double seconds) {
+        drift::Track track{.type = type};
+        drift::Clip clip;
+        clip.id = QStringLiteral("c%1").arg(project.tracks().size());
+        clip.type = type == drift::TrackType::Audio ? drift::ClipType::Audio : drift::ClipType::Video;
+        clip.timelineStart = 0;
+        clip.timelineDuration = drift::secondsToUs(seconds);
+        clip.srcIn = 0;
+        clip.srcOut = clip.timelineDuration;
+        track.clips.append(clip);
+        project.tracks().append(track);
+    };
+    addTrack(drift::TrackType::Video, 20.0);
+    addTrack(drift::TrackType::Audio, 30.0);
+    addTrack(drift::TrackType::Audio, 60.0);
+    project.ensureTrackIds();
+
+    const auto endSeconds = [&] {
+        drift::TimeUs start = -1;
+        drift::TimeUs end = -1;
+        QString error;
+        resolveExportRange(project, ExportSettings{}, &start, &end, &error);
+        return double(end) / drift::kUsPerSecond;
+    };
+
+    QCOMPARE(endSeconds(), 60.0);
+    project.tracks()[2].muted = true;
+    QCOMPARE(endSeconds(), 30.0);
+    project.tracks()[2].muted = false;
+    project.tracks()[1].solo = true;
+    QCOMPARE(endSeconds(), 30.0);
+    // A video track still counts for its picture.
+    project.tracks()[0].clips[0].timelineDuration = drift::secondsToUs(40.0);
+    project.tracks()[0].clips[0].srcOut = drift::secondsToUs(40.0);
+    QCOMPARE(endSeconds(), 40.0);
+    project.tracks()[0].clips[0].timelineDuration = drift::secondsToUs(20.0);
+    project.tracks()[0].clips[0].srcOut = drift::secondsToUs(20.0);
+
+    // The duration recorded for the finished export follows the same rule: A1 soloed (30 s), A2
+    // 60 s, V1 20 s renders 30 s, not 60.
+    QCOMPARE(double(renderedDurationUs(project, ExportSettings{})) / drift::kUsPerSecond, 30.0);
+
+    // An explicit range is honoured whatever is silenced.
+    ExportSettings explicitRange;
+    explicitRange.startUs = drift::secondsToUs(5.0);
+    explicitRange.endUs = drift::secondsToUs(10.0);
+    drift::TimeUs start = -1;
+    drift::TimeUs end = -1;
+    QString error;
+    resolveExportRange(project, explicitRange, &start, &end, &error);
+    QVERIFY(error.isEmpty());
+    QCOMPARE(start, drift::secondsToUs(5.0));
+    QCOMPARE(end, drift::secondsToUs(10.0));
+    QCOMPARE(double(renderedDurationUs(project, explicitRange)) / drift::kUsPerSecond, 5.0);
+
+    // With every audio track silenced and no video, nothing outputs: the range falls back to the
+    // whole project.
+    project.tracks().removeFirst();
+    project.tracks()[0].muted = true;
+    project.tracks()[1].muted = true;
+    project.tracks()[0].solo = false;
+    project.ensureTrackIds();
+    start = -1;
+    end = -1;
+    error.clear();
+    resolveExportRange(project, ExportSettings{}, &start, &end, &error);
+    QVERIFY(error.isEmpty());
+    QCOMPARE(start, drift::TimeUs(0));
+    QCOMPARE(end, project.durationUs());
 }
 
 void EngineTest::audioFrameTextureLayout()
